@@ -1,0 +1,49 @@
+addr = ":8080"
+
+# BaseURL 统一配置，每个 baseurl 独立定义认证、超时、协议等
+[baseurl.anthropic]
+url = "https://api.anthropic.com"
+protocol = "anthropic"           # 协议类型: openai, anthropic, ollama
+api_key = "${ANTHROPIC_API_KEY}" # 认证密钥（支持环境变量展开）
+timeout = "120s"                 # 请求超时
+
+[baseurl.openai]
+url = "https://api.openai.com"
+protocol = "openai"
+api_key = "${OPENAI_API_KEY}"
+timeout = "60s"
+
+[baseurl.openai-fast]
+url = "https://api.openai.com"
+protocol = "openai"
+api_key = "${OPENAI_API_KEY}"
+timeout = "30s"
+default_model = "gpt-4o-mini"   # 可选：覆盖请求中的 model
+
+[baseurl.local-ollama]
+url = "http://localhost:11434"
+protocol = "ollama"
+timeout = "300s"
+
+# 路由配置，每个路由前缀引用一个或多个 baseurl，并配置工具
+[route."/anthropic"]
+baseurls = ["anthropic"]         # 引用上面定义的 baseurl 名称
+tools = ["filesystem", "web-search"]
+
+[route."/openai"]
+baseurls = ["openai", "openai-fast"]  # 多个 baseurl，按顺序 fallback 或由 model 路由
+tools = ["filesystem"]
+
+[route."/local"]
+baseurls = ["local-ollama"]
+tools = []
+
+# MCP 工具配置
+[mcp.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[mcp.web-search]
+command = "npx"
+args = ["-y", "@anthropic/mcp-server-web-search"]
+env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
