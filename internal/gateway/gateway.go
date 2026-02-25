@@ -1,138 +1,296 @@
 package gateway
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"warden/config"
-	"warden/pkg/openai"
+	"github.com/sower-proxy/deferlog/v2"
+	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/mcp"
+	"github.com/wweir/warden/internal/reqlog"
 )
 
-// Gateway 是 AI Gateway 的核心组件
+// Gateway is the core AI Gateway component.
 type Gateway struct {
-	cfg   *config.ConfigStruct
-	chain *ChainMiddleware
+	cfg         *config.ConfigStruct
+	configPath  string
+	configHash  string
+	selector    *Selector
+	mcpClients  map[string]*mcp.Client
+	logger      reqlog.Logger
+	broadcaster *reqlog.Broadcaster
+	handler     http.Handler
+	reloadFn    func() error
 }
 
-// NewGateway 创建新的 Gateway 实例
-func NewGateway(cfg *config.ConfigStruct) *Gateway {
-	// 配置中间件链
-	chain := Chain(
-		&LoggingMiddleware{},
-		&RecoveryMiddleware{},
-		&CORS{},
-	)
-
-	return &Gateway{
-		cfg:   cfg,
-		chain: chain.(*ChainMiddleware),
-	}
+// SetReloadFn sets the function called to hot-reload the gateway.
+func (g *Gateway) SetReloadFn(fn func() error) {
+	g.reloadFn = fn
 }
 
-// ServeHTTP 实现 http.Handler 接口
-func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var router http.Handler = httprouter.New()
+// NewGateway creates a new Gateway instance with routes registered once.
+func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gateway {
+	var err error
+	defer func() { deferlog.DebugError(err, "create new gateway") }()
 
-	for prefix, route := range g.cfg.Route {
-		router = http.StripPrefix(prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			g.handleRoute(w, r, route)
-		}))
-
-		http.Handle(prefix+"/", router)
+	mcpClients := make(map[string]*mcp.Client)
+	for name, mcpCfg := range cfg.MCP {
+		client, err := mcp.NewClient(mcpCfg)
+		if err != nil {
+			slog.Warn("Failed to create MCP client", "name", name, "error", err)
+			continue
+		}
+		if err := client.Start(context.Background(), mcpCfg); err != nil {
+			slog.Warn("Failed to start MCP client", "name", name, "error", err)
+			continue
+		}
+		mcpClients[name] = client
 	}
 
-	g.chain.Process(router).ServeHTTP(w, r)
-}
-
-// handleRoute 处理特定路由的请求
-func (g *Gateway) handleRoute(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
-	switch r.URL.Path {
-	case "/v1/chat/completions":
-		g.handleChatCompletion(w, r, route)
-	default:
-		http.NotFound(w, r)
+	g := &Gateway{
+		cfg:         cfg,
+		configPath:  configPath,
+		configHash:  configHash,
+		selector:    NewSelector(cfg),
+		mcpClients:  mcpClients,
+		broadcaster: reqlog.NewBroadcaster(),
 	}
-}
 
-// handleChatCompletion 处理 Chat Completion 请求
-func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
-	var req openai.ChatCompletionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
+	g.selector.RefreshModels(cfg)
 
-	// 1. 注入 MCP 工具
-	var toolsInjected bool
-	if len(route.Tools) > 0 {
-		for _, toolName := range route.Tools {
-			if route.EnabledTools[toolName] {
-				// 从 MCP 配置中获取工具信息并注入
-				req.Tools = append(req.Tools, openai.Tool{
-					Type: "function",
-					Function: openai.Function{
-						Name:        toolName,
-						Description: "MCP tool function",
-					},
-				})
-				toolsInjected = true
-			}
+	if cfg.Log != nil && cfg.Log.FileDir != "" {
+		fl, ferr := reqlog.NewFileLogger(cfg.Log.FileDir)
+		if ferr != nil {
+			slog.Warn("Failed to create file logger", "error", ferr)
+		} else {
+			g.logger = fl
 		}
 	}
 
-	slog.Debug("Request received", "route", route.Prefix, "model", req.Model, "tools_injected", toolsInjected)
+	router := httprouter.New()
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
+	router.HandleOPTIONS = false
+	router.HandleMethodNotAllowed = false
 
-	// 2. 发送到上游
-	firstBaseURL := route.BaseURLs[0] // 目前直接取第一个
-	buCfg, ok := g.cfg.BaseURL[firstBaseURL]
-	if !ok {
-		http.Error(w, "BaseURL not found", http.StatusInternalServerError)
-		return
+	// register admin routes if password is configured
+	if cfg.AdminPassword != "" {
+		g.registerAdminRoutes(router)
 	}
 
-	g.forwardRequest(w, r, buCfg, req)
+	for prefix, route := range cfg.Route {
+		router.Handle(http.MethodGet, prefix+"/models",
+			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+				g.handleModels(w, r, route)
+			})
+		router.Handle(http.MethodPost, prefix+"/chat/completions",
+			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+				g.handleChatCompletion(w, r, route)
+			})
+		router.Handle(http.MethodPost, prefix+"/responses",
+			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+				g.handleResponses(w, r, route)
+			})
+	}
+
+	// fallback: match route prefix and proxy unhandled requests
+	router.NotFound = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for prefix, route := range cfg.Route {
+			if strings.HasPrefix(r.URL.Path, prefix+"/") {
+				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+				g.handleProxy(w, r, route)
+				return
+			}
+		}
+		http.NotFound(w, r)
+	})
+
+	g.handler = Chain(
+		&RecoveryMiddleware{},
+		&CORS{},
+	).Process(router)
+
+	return g
 }
 
-// forwardRequest 转发请求到上游，并处理协议转换
-func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, buCfg *config.BaseURLConfig, req openai.ChatCompletionRequest) {
-	// 获取适配器
-	adapter, err := NewAdapter(buCfg.Protocol)
+// ServeHTTP implements http.Handler.
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	g.handler.ServeHTTP(w, r)
+}
+
+// Close shuts down all MCP clients and the request logger.
+func (g *Gateway) Close() {
+	for name, c := range g.mcpClients {
+		slog.Info("Stopping MCP client", "name", name)
+		if err := c.Close(); err != nil {
+			slog.Warn("Failed to stop MCP client", "name", name, "error", err)
+		}
+	}
+	if g.logger != nil {
+		g.logger.Close()
+	}
+}
+
+// Broadcaster returns the request log broadcaster for admin subscriptions.
+func (g *Gateway) Broadcaster() *reqlog.Broadcaster {
+	return g.broadcaster
+}
+
+// recordAndBroadcast logs a record to file (if enabled) and publishes to SSE subscribers.
+func (g *Gateway) recordAndBroadcast(r reqlog.Record) {
+	r.Sanitize()
+	if g.logger != nil {
+		g.logger.Log(r)
+	}
+	g.broadcaster.Publish(r)
+}
+
+// --- proxy ---
+
+// handleProxy transparently forwards non-chat/responses requests.
+func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
+	startTime := time.Now()
+	reqID := reqlog.GenerateID()
+
+	// always buffer request body for model extraction and alias resolution
+	reqBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	r.Body.Close()
 
-	// 协议转换
-	convertedReq, err := adapter.ConvertRequest(req)
+	// extract model from request body for provider selection
+	var peek struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(reqBody, &peek) // best-effort; non-JSON bodies are fine
+
+	var excluded []string
+	provCfg, err := g.selector.Select(g.cfg, route, peek.Model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	slog.Debug("Protocol converted", "protocol", buCfg.Protocol, "model", req.Model)
+	for {
+		slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
+			"provider", provCfg.Name, "model", peek.Model)
 
-	// 发送请求到上游
-	upstreamResp, err := sendUpstreamRequest(buCfg, convertedReq)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// resolve model alias to real model name for upstream request
+		provReqBody := resolveModelRaw(reqBody, provCfg, peek.Model)
+
+		targetURL := provCfg.URL + r.URL.Path
+		if r.URL.RawQuery != "" {
+			targetURL += "?" + r.URL.RawQuery
+		}
+
+		proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(provReqBody))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		proxyReq.Header = r.Header.Clone()
+		setAuthHeaders(proxyReq.Header, provCfg)
+
+		resp, err := provCfg.HTTPClient(provCfg.TimeoutDuration).Do(proxyReq)
+		if err != nil {
+			g.selector.RecordOutcome(provCfg.Name, err, time.Since(startTime))
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// read body upfront for failover decision on error status
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			upErr := &UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+			g.selector.RecordOutcome(provCfg.Name, upErr, time.Since(startTime))
+			if upErr.IsRetryable() {
+				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, peek.Model); next != nil {
+					provCfg = next
+					continue
+				}
+			}
+		} else {
+			g.selector.RecordOutcome(provCfg.Name, nil, time.Since(startTime))
+		}
+
+		maps.Copy(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
+
+		if g.logger != nil {
+			g.recordAndBroadcast(reqlog.Record{
+				Timestamp:  startTime,
+				RequestID:  reqID,
+				Route:      route.Prefix,
+				Endpoint:   r.URL.Path,
+				Model:      peek.Model,
+				Provider:   provCfg.Name,
+				DurationMs: time.Since(startTime).Milliseconds(),
+				Request:    reqBody,
+				Response:   respBody,
+			})
+		}
 		return
 	}
+}
 
-	// 转换响应
-	openaiResp, err := adapter.ConvertResponse(upstreamResp)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+// --- tool collection ---
+
+// collectTools gathers all enabled MCP tools for a route using cached tool list.
+func (g *Gateway) collectTools(_ context.Context, route *config.RouteConfig) ([]mcp.Tool, []string) {
+	var available []mcp.Tool
+	for _, toolName := range route.Tools {
+		if !route.IsToolEnabled(toolName) {
+			continue
+		}
+		client, exists := g.mcpClients[toolName]
+		if !exists {
+			continue
+		}
+		mcpCfg := g.cfg.MCP[toolName]
+		for _, t := range client.CachedTools() {
+			// skip tools explicitly disabled in per-tool config
+			if mcpCfg != nil {
+				if tc, ok := mcpCfg.Tools[t.Name]; ok && tc.Disabled {
+					continue
+				}
+			}
+			t.Name = toolName + "__" + t.Name
+			available = append(available, t)
+		}
 	}
 
-	// 返回响应
-	w.WriteHeader(http.StatusOK)
+	names := make([]string, len(available))
+	for i, t := range available {
+		names[i] = t.Name
+	}
+	return available, names
+}
+
+// --- models ---
+
+// handleModels returns an aggregated list of models from all providers in the route.
+func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request, route *config.RouteConfig) {
+	models := g.selector.Models(g.cfg, route)
+	if models == nil {
+		models = []json.RawMessage{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(openaiResp); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"object": "list",
+		"data":   models,
+	})
 }

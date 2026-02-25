@@ -6,26 +6,12 @@ import (
 	"net/http"
 )
 
-// Middleware 是中间件接口
+// Middleware is the middleware interface.
 type Middleware interface {
 	Process(next http.Handler) http.Handler
 }
 
-// LoggingMiddleware 请求日志中间件
-type LoggingMiddleware struct{}
-
-func (m *LoggingMiddleware) Process(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("Request received",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"remote_addr", r.RemoteAddr,
-		)
-		next.ServeHTTP(w, r)
-	})
-}
-
-// RecoveryMiddleware 恢复中间件
+// RecoveryMiddleware recovers from panics and returns 500.
 type RecoveryMiddleware struct{}
 
 func (m *RecoveryMiddleware) Process(next http.Handler) http.Handler {
@@ -43,12 +29,8 @@ func (m *RecoveryMiddleware) Process(next http.Handler) http.Handler {
 	})
 }
 
-// CORS 跨域中间件
-type CORS struct {
-	AllowOrigins []string
-	AllowMethods []string
-	AllowHeaders []string
-}
+// CORS handles Cross-Origin Resource Sharing headers.
+type CORS struct{}
 
 func (c *CORS) Process(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +47,7 @@ func (c *CORS) Process(next http.Handler) http.Handler {
 	})
 }
 
-// Chain 中间件链
+// Chain composes multiple middlewares into one.
 func Chain(middlewares ...Middleware) Middleware {
 	return &ChainMiddleware{middlewares}
 }
@@ -75,7 +57,7 @@ type ChainMiddleware struct {
 }
 
 func (c *ChainMiddleware) Process(next http.Handler) http.Handler {
-	// 反向顺序应用中间件
+	// apply middlewares in reverse order
 	for i := len(c.middlewares) - 1; i >= 0; i-- {
 		next = c.middlewares[i].Process(next)
 	}

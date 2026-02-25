@@ -1,195 +1,119 @@
 package gateway
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"time"
 
-	"warden/config"
-	"warden/pkg/openai"
+	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/pkg/anthropic"
+	"github.com/wweir/warden/pkg/openai"
+	"github.com/wweir/warden/pkg/sse"
 )
 
-// Adapter 是协议适配接口
-type Adapter[T any] interface {
-	ConvertRequest(req openai.ChatCompletionRequest) (T, error)
-	ConvertResponse(res T) (openai.ChatCompletionResponse, error)
-}
-
-// OpenAIAdapter OpenAI 协议适配器
-type OpenAIAdapter struct{}
-
-func (a *OpenAIAdapter) ConvertRequest(req openai.ChatCompletionRequest) (interface{}, error) {
-	// OpenAI 协议直接透传
-	return req, nil
-}
-
-func (a *OpenAIAdapter) ConvertResponse(res interface{}) (openai.ChatCompletionResponse, error) {
-	// 类型断言
-	openaiRes, ok := res.(openai.ChatCompletionResponse)
-	if !ok {
-		return openai.ChatCompletionResponse{}, &ProtocolError{"invalid OpenAI response type"}
+// protocolEndpoint returns the upstream API endpoint for a given protocol and API type.
+func protocolEndpoint(protocol string, isResponses bool) string {
+	if isResponses {
+		return "/responses"
 	}
-	return openaiRes, nil
-}
-
-// AnthropicAdapter Anthropic 协议适配器
-type AnthropicAdapter struct{}
-
-func (a *AnthropicAdapter) ConvertRequest(req openai.ChatCompletionRequest) (interface{}, error) {
-	// 转换为 Anthropic Claude 格式
-	type AnthropicRequest struct {
-		Model     string        `json:"model"`
-		MaxTokens int64         `json:"max_tokens"`
-		Messages  []interface{} `json:"messages"`
-	}
-
-	anthReq := &AnthropicRequest{
-		Model:     req.Model,
-		MaxTokens: 4096,
-	}
-
-	for _, msg := range req.Messages {
-		anthReq.Messages = append(anthReq.Messages, map[string]interface{}{
-			"role":    msg.Role,
-			"content": msg.Content,
-		})
-	}
-
-	return anthReq, nil
-}
-
-func (a *AnthropicAdapter) ConvertResponse(res interface{}) (openai.ChatCompletionResponse, error) {
-	// 转换回 OpenAI 格式
-	// 这是简化实现，实际需要处理复杂的转换逻辑
-	return openai.ChatCompletionResponse{
-		ID:      "chatcmpl-anthropic-123",
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   "claude-3-opus-20240229",
-		Choices: []openai.Choice{
-			{
-				Index: 0,
-				Message: openai.Message{
-					Role:    "assistant",
-					Content: "This is an Anthropic response",
-				},
-				FinishReason: "stop",
-			},
-		},
-	}, nil
-}
-
-// OllamaAdapter Ollama 协议适配器
-type OllamaAdapter struct{}
-
-func (a *OllamaAdapter) ConvertRequest(req openai.ChatCompletionRequest) (interface{}, error) {
-	// 转换为 Ollama 格式
-	type OllamaRequest struct {
-		Model    string        `json:"model"`
-		Messages []interface{} `json:"messages"`
-		Stream   bool          `json:"stream"`
-	}
-
-	ollamaReq := &OllamaRequest{
-		Model:  req.Model,
-		Stream: req.Stream,
-	}
-
-	for _, msg := range req.Messages {
-		ollamaReq.Messages = append(ollamaReq.Messages, map[string]interface{}{
-			"role":    msg.Role,
-			"content": msg.Content,
-		})
-	}
-
-	return ollamaReq, nil
-}
-
-func (a *OllamaAdapter) ConvertResponse(res interface{}) (openai.ChatCompletionResponse, error) {
-	// 转换回 OpenAI 格式
-	return openai.ChatCompletionResponse{
-		ID:      "chatcmpl-ollama-123",
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   "llama3:8b",
-		Choices: []openai.Choice{
-			{
-				Index: 0,
-				Message: openai.Message{
-					Role:    "assistant",
-					Content: "This is an Ollama response",
-				},
-				FinishReason: "stop",
-			},
-		},
-	}, nil
-}
-
-// NewAdapter 根据协议创建适配器
-func NewAdapter(protocol string) (Adapter[interface{}], error) {
 	switch protocol {
-	case "openai":
-		return &OpenAIAdapter{}, nil
 	case "anthropic":
-		return &AnthropicAdapter{}, nil
-	case "ollama":
-		return &OllamaAdapter{}, nil
+		return anthropic.Endpoint
 	default:
-		return nil, ErrUnsupportedProtocol
+		return "/chat/completions"
 	}
 }
 
-func sendUpstreamRequest(buCfg *config.BaseURLConfig, req interface{}) (interface{}, error) {
-	// 简化实现，实际应该发送 HTTP 请求
-	reqBody, err := json.Marshal(req)
+// protocolModelsEndpoint returns the models listing endpoint for a given protocol.
+func protocolModelsEndpoint(protocol string) string {
+	switch protocol {
+	case "anthropic":
+		return "/v1/models"
+	default:
+		return "/models"
+	}
+}
+
+// marshalProtocolRequest marshals a ChatCompletionRequest for the given protocol.
+// For Anthropic, it converts from OpenAI format to Anthropic Messages API format.
+// For OpenAI and Ollama, it marshals directly.
+func marshalProtocolRequest(protocol string, req openai.ChatCompletionRequest) ([]byte, error) {
+	switch protocol {
+	case "anthropic":
+		return anthropic.MarshalRequest(req)
+	default:
+		return json.Marshal(req)
+	}
+}
+
+// resolveModelRaw replaces the "model" field in raw JSON request bytes
+// with the resolved real model name if the requested model is an alias.
+func resolveModelRaw(rawBody []byte, provCfg *config.ProviderConfig, model string) []byte {
+	resolved := provCfg.ResolveModel(model)
+	if resolved == model {
+		return rawBody
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		return rawBody
+	}
+
+	body["model"], _ = json.Marshal(resolved)
+	result, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return rawBody
 	}
+	return result
+}
 
-	slog.Debug("Sending request to upstream", "url", buCfg.URL, "body", string(reqBody))
-
-	// 创建 HTTP 请求
-	httpReq, err := http.NewRequest(http.MethodPost, buCfg.URL+"/v1/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	if buCfg.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+buCfg.APIKey)
-	}
-
-	// 发送请求（使用超时）
-	client := &http.Client{
-		Timeout: buCfg.TimeoutDuration,
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &UpstreamError{
-			Code: resp.StatusCode,
-			Body: string(respBody),
+// marshalProtocolRaw converts raw OpenAI-format request bytes to the target protocol.
+// For OpenAI/Ollama, the bytes are passed through as-is (no re-serialization).
+// For Anthropic, a full decode→convert→encode is required.
+func marshalProtocolRaw(protocol string, rawBody []byte) ([]byte, error) {
+	switch protocol {
+	case "anthropic":
+		var req openai.ChatCompletionRequest
+		if err := json.Unmarshal(rawBody, &req); err != nil {
+			return nil, err
 		}
+		return anthropic.MarshalRequest(req)
+	default:
+		return rawBody, nil
 	}
+}
 
-	var openaiResp openai.ChatCompletionResponse
-	if err := json.Unmarshal(respBody, &openaiResp); err != nil {
-		return nil, err
+// unmarshalProtocolResponse unmarshals a response body into ChatCompletionResponse
+// for the given protocol. Anthropic responses are converted to OpenAI format.
+func unmarshalProtocolResponse(protocol string, body []byte) (openai.ChatCompletionResponse, error) {
+	switch protocol {
+	case "anthropic":
+		return anthropic.UnmarshalResponse(body)
+	default:
+		var resp openai.ChatCompletionResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return resp, err
+		}
+		return resp, nil
 	}
+}
 
-	return openaiResp, nil
+// newStreamParser creates a StreamParser based on protocol and API type.
+func newStreamParser(protocol string, isResponses bool) sse.StreamParser {
+	if isResponses {
+		return &openai.ResponsesStreamParser{}
+	}
+	switch protocol {
+	case "anthropic":
+		return &anthropic.StreamParser{}
+	default:
+		return &openai.ChatStreamParser{}
+	}
+}
+
+// convertStreamIfNeeded converts Anthropic SSE to OpenAI SSE format.
+// For non-Anthropic protocols, the raw bytes are returned as-is.
+func convertStreamIfNeeded(protocol string, rawSSE []byte) []byte {
+	if protocol == "anthropic" {
+		return anthropic.ConvertStreamToOpenAI(rawSSE)
+	}
+	return rawSSE
 }

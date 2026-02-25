@@ -1,0 +1,156 @@
+addr: ":8080"
+
+# Admin panel password (empty to disable admin UI at /_admin/)
+# admin_password: "your-secret-password"
+
+# Request/response logging
+# log:
+#   file_dir: "./logs"
+
+# SSH connection configurations for remote credential access and MCP execution
+# ssh:
+#   dev-server:
+#     host: "dev-server"                    # ~/.ssh/config Host entry or user@hostname
+#     port: 22                              # optional (default: ssh config)
+#     user: "deploy"                        # optional (default: ssh config)
+#     identity_file: "~/.ssh/id_ed25519"   # optional (default: ssh config)
+
+# Provider 配置 - 上游 LLM API 地址和认证信息
+provider:
+  openai-fast:
+    url: "https://api.openai.com/v1"
+    protocol: "openai"
+    api_key: "${OPENAI_API_KEY}"
+    timeout: "30s"
+    # proxy: "socks5://127.0.0.1:1080"  # optional HTTP/SOCKS proxy
+
+  openai:
+    url: "https://api.openai.com/v1"
+    protocol: "openai"
+    api_key: "${OPENAI_API_KEY}"
+    timeout: "60s"
+
+  anthropic:
+    url: "https://api.anthropic.com/v1"
+    protocol: "anthropic"
+    api_key: "${ANTHROPIC_API_KEY}"
+    timeout: "120s"
+
+  anthropic-fallback:
+    url: "https://api.anthropic.com/v1"
+    protocol: "anthropic"
+    api_key: "${ANTHROPIC_API_KEY}"
+    timeout: "300s"
+
+  ollama:
+    url: "http://localhost:11434/v1"
+    protocol: "ollama"
+    timeout: "300s"
+    # model_aliases: alias_name = real_name, alias appears in /models and is resolved before upstream request
+    # model_aliases:
+    #   gpt-4o: "llama3.3"
+
+  qwen:
+    protocol: "qwen"
+    # url: "https://portal.qwen.ai/v1"  # default (OAuth); set api_key to use dashscope instead
+    # config_dir: "~/.qwen"  # default
+    timeout: "120s"
+    models:
+      - "qwen3-coder-plus"
+      - "qwen3-coder-flash"
+      - "vision-model"
+
+  copilot:
+    protocol: "copilot"
+    # url: "https://api.githubcopilot.com"  # default
+    # config_dir: "~/.config/github-copilot"  # default; reads hosts.json or apps.json
+    timeout: "120s"
+    models:
+      - "gpt-4o"
+      - "claude-sonnet-4"
+      - "o3-mini"
+      - "gemini-2.0-flash"
+
+  # Remote provider via SSH - reads OAuth credentials from a remote host
+  # qwen-remote:
+  #   protocol: "qwen"
+  #   ssh: "dev-server"                     # references ssh.dev-server config above
+  #   config_dir: "~/.qwen"                 # remote host path (~ not expanded locally)
+  #   timeout: "120s"
+  #   models:
+  #     - "qwen3-coder-plus"
+
+# 路由配置 - 路由前缀与工具绑定
+route:
+  /openai:
+    providers:
+      - "openai"
+    tools:
+      - "web-search"
+
+  /anthropic:
+    providers:
+      - "anthropic"
+    tools:
+      - "web-search"
+      - "filesystem"
+    # system_prompts: inject a system prompt for specific models (exact match)
+    # system_prompts:
+    #   claude-sonnet-4-5-20250929: "You are a helpful assistant."
+
+  /ollama:
+    providers:
+      - "ollama"
+    tools: []
+
+# MCP 工具配置 - 启用的 MCP 工具
+mcp:
+  web-search:
+    command: "npx"
+    args:
+      - "-y"
+      - "@anthropic/mcp-server-web-search"
+    env:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+  filesystem:
+    command: "npx"
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+    env: {}
+    # Per-tool configuration: disable individual tools or attach hooks
+    # tools:
+    #   write_file:
+    #     hooks:
+    #       # exec hook: stdin receives HookContext JSON; stdout must be {"allow":bool,"reason":"..."}
+    #       # execution errors (timeout, crash) are pass-through; only allow:false blocks the call
+    #       - type: exec
+    #         when: pre
+    #         timeout: "3s"
+    #         command: "/usr/local/bin/check-write-permission"
+    #         args: []
+    #       # ai hook: calls gateway's own LLM to evaluate; {"allow":false} blocks the call
+    #       # execution errors (network, model error) are pass-through (fail-open)
+    #       - type: ai
+    #         when: pre
+    #         timeout: "15s"
+    #         route: "/openai"
+    #         model: "gpt-4o-mini"
+    #         prompt: |
+    #           You are a security guard reviewing MCP tool calls.
+    #           Tool: {{.ToolName}}
+    #           Arguments (raw): {{.Arguments}}
+    #           Arguments (parsed fields): path={{.Args.path}} content={{.Args.content}}
+    #           Respond ONLY with JSON: {"allow": true, "reason": "ok"} or {"allow": false, "reason": "explain why"}
+    #   delete_file:
+    #     disabled: true  # disable this tool entirely (won't appear in LLM tool list)
+
+  # Remote MCP server via SSH - runs the MCP process on a remote host
+  # remote-filesystem:
+  #   command: "npx"
+  #   args:
+  #     - "-y"
+  #     - "@modelcontextprotocol/server-filesystem"
+  #     - "/data"
+  #   ssh: "dev-server"                     # references ssh.dev-server config above

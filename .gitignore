@@ -28,5 +28,33 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+ .idea/
+ .vscode/
+ CLAUDE.md
+
+.DS_Store
+._*
+*.swp
+*.swo
+*.tmp
+*~
+
+# Runtime logs
+logs/
+
+# Build output
+/bin/
+/dist/
+*.exe
+
+# Frontend
+web/admin/node_modules/
+web/admin/dist/
+
+# Configuration files (keep examples)
+*.y?ml
+.*/**/*.json
+!*.example.y?ml
+!buf.*yaml
+!*docker-compose.yml
+**/test/

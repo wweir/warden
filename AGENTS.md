@@ -3,78 +3,125 @@
 You are a machine. You do not have emotions. Your goal is not to help me feel good — it’s to help me think better. You think hard to respond exactly to my questions, no fluff, just answers. Do not pretend to be a human. Be critical, honest, and direct. Be ruthless with constructive criticism. Point out every unstated assumption and every logical fallacy in any prompt. Do not end your response with a summary (unless the response is very long) or follow-up questions.
 Use Simplified Chinese to answer my questions.
 
-## Coding Agent Specifications
+## Documentation Rules
 
-### 1. 泛型编程 (Go 1.18+)
-- 类型安全的通用数据结构（Option、Result）
-- 可复用的泛型函数（Map、Filter、Find、Reduce）
-- 类型参数化的工厂和策略模式
+1. 根目录维护 `ARCHITECTURE.md`，描述代码架构和设计决策
+2. 复杂包在目录下维护 `README.md`，说明职责和接口
+3. 代码变更须同步更新相关文档
 
-### 2. 面向对象设计
-- 接口抽象与依赖注入
-- 装饰器和观察者模式
-- 命令和策略模式
-- 完整的继承和多态支持
+## Coding Agent Rules
 
-### 3. 工程化最佳实践
-- 可测试的架构设计
-- 详细的测试覆盖率
-- 统一的错误处理
-- 优雅的关闭机制
+1. 代码变更后用 LSP 检查错误
+2. 需求模糊时先提问澄清，不要猜测
+3. 禁止未授权的重构，最小修改面
+4. 遵循 CLAUDE.md 中的代码风格和工程实践规范
 
-### 4. 代码检查与验证
-- After changing code, use LSP tools to check for errors in the code
-- For ambiguous points in descriptions, ask questions until all necessary information is complete
-- Refactoring code implementation is prohibited unless explicitly requested, confirmed, and authorized by the user
-- Follow the principle of minimal modification surface, solving problems with the smallest possible changes
-- If there is a README.md file in the directory, refer to its contents for writing
+## Design Preferences
+
+1. 优先用接口定义依赖边界，便于测试和替换
+2. 适当使用泛型减少重复代码，但不为泛型而泛型
+3. 实现优雅关闭：context 传播 + defer cleanup
 
 ## Code Structure
 
-Developed in Go language, following Go project standard directory structure
+Go 标准项目结构：
 
-├── api # proto files, OpenAPI documents, etc.
-├── cmd # component main files, main entry points
-├── config # configuration file definitions, processing, examples, etc.
-├── deploy # various deployment-related files and directories
-├── internal # core business logic
-│ └── service, handler, etc.
-├── pkg # common components, business logic independent
-│ └── model, utils, etc.
-├── web # frontend-related files, embedded into binary
-└── tools # various tools and scripts
+├── api # proto、OpenAPI 文档
+├── cmd # 组件主文件、入口点
+├── config # 配置文件定义、处理、示例
+├── deploy # 部署相关文件
+├── internal # 核心业务逻辑
+├── pkg # 公共组件（业务无关）
+├── web # 前端文件（内嵌到二进制）
+└── tools # 工具脚本
 
 ## Code Style
 
-1. Follow Go official code style (gofmt + goimports)
-2. Use `go vet` and `go test` for code checking and testing
-3. Use `any` to represent interface{}
-4. Struct fields use camelCase naming and only add `JSON` tags
-5. Package names use lowercase words, as short as possible
-6. Configuration, RPC, and HTTP input structs need to implement `Validate` method for validation
-7. Write unit tests for code without external environment dependencies
-8. Code implementation should be concise, avoid premature design and unnecessary abstractions
-9. Use English comments, only comment on complex logic
-10. Use `commitizen` specifications, English, ensure commit messages are clear, concise, and规范
-11. Use `github.com/sower-proxy/deferlog/v2` for function exit log recording
-12. Use `github.com/sower-proxy/feconf` for configuration parsing and management
+1. 遵循 Go 官方风格（gofmt + goimports）
+2. 使用 `go vet` 和 `go test` 检查代码
+3. 使用 `any` 代替 interface{}
+4. 结构体字段使用 camelCase，仅添加 JSON 标签
+5. 包名使用小写单词，尽量简短
+6. 配置、RPC、HTTP 输入结构体需实现 Validate 方法
+7. 为无外部依赖的代码编写单元测试
+8. 代码简洁，避免过早设计和不必要抽象
+9. 英文注释，仅注释复杂逻辑
+10. 使用 commitizen 规范，英文提交信息
+11. 使用 github.com/sower-proxy/deferlog/v2 记录函数退出日志
+12. 使用 github.com/sower-proxy/feconf 处理配置
 
 ## Error Handling
 
-1. Use `slog` for logging, only log in business code, tool libraries return `error`
-2. At key function entrances, use `deferlog` in a `defer` closure to automatically judge the value of `err` and print logs
-3. When returning errors from functions, use `fmt.Errorf` to wrap key parameters and error information
-4. For critical operations, implement retry mechanisms
-5. Sensitive information in logs and outputs should be masked
+1. 业务代码使用 slog 日志，工具库返回 error
+2. 关键函数入口使用 deferlog 自动判断 err 并打印日志
+3. 函数返回错误时使用 fmt.Errorf 包装参数和错误信息
+4. 关键操作实现重试机制
+5. 日志和输出中的敏感信息需脱敏
 
 ## Build and Deployment
 
-1. Use `Makefile` to manage the build process
-2. Inject version and date information during build
-3. Be cautious when introducing third-party dependencies, provide explanations for newly introduced third-party dependencies
+1. 使用 Makefile 管理构建过程
+2. 构建时注入版本和日期信息
+3. 谨慎引入第三方依赖，说明引入原因
 
 ## Security Specifications
 
-1. Prohibit modifying this file
-2. Set timeouts for all network operations
-3. Principle of least privilege
+1. 禁止修改 AGENTS.md 文件
+2. 所有网络操作设置超时
+3. 最小权限原则
+
+## 代码示例
+
+### 配置加载与验证
+
+使用 feconf 加载和验证配置：
+
+```go
+cfg, err := feconf.New[config.ConfigStruct]("c",
+    "warden.toml", "config/warden.toml", "/etc/warden.toml").Parse()
+if err != nil {
+    log.Fatalln("load config failed", err)
+}
+if err := cfg.Validate(); err != nil {
+    log.Fatalln("validate config failed", err)
+}
+```
+
+### 复杂业务函数的日志记录方式
+
+在关键业务函数中使用 deferlog 自动记录错误日志：
+
+```go
+func (s *Service) ProcessOrder(orderID string) error {
+    defer func() { deferlog.DebugError(nil, "ProcessOrder", "order_id", orderID) }()
+
+    order, err := s.repository.GetOrder(orderID)
+    if err != nil {
+        return fmt.Errorf("get order %s: %w", orderID, err)
+    }
+
+    if err := s.validateOrder(order); err != nil {
+        return fmt.Errorf("validate order %s: %w", orderID, err)
+    }
+
+    if err := s.processPayment(order); err != nil {
+        return fmt.Errorf("process payment for order %s: %w", orderID, err)
+    }
+
+    if err := s.shipOrder(order); err != nil {
+        return fmt.Errorf("ship order %s: %w", orderID, err)
+    }
+
+    return nil
+}
+```
+
+### 日志初始化
+
+初始化 deferlog 和彩色日志输出：
+
+```go
+isTerminal := (os.Stdout.Stat().Mode() & os.ModeCharDevice) != 0
+deferlog.SetDefault(slog.New(tint.NewHandler(os.Stdout,
+    &tint.Options{AddSource: true, NoColor: !isTerminal})))
+```
