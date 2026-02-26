@@ -3,6 +3,7 @@ module github.com/wweir/warden
 go 1.25.0
 
 require (
+	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/lmittmann/tint v1.1.3
 	github.com/sower-proxy/deferlog/v2 v2.1.3

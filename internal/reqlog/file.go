@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FileLogger writes request/response logs as JSON files to a directory.
@@ -29,7 +30,8 @@ func (f *FileLogger) Log(r Record) {
 		return
 	}
 
-	filename := r.Timestamp.Format("20060102-150405.000") + "_" + r.RequestID + ".json"
+	route := strings.Trim(r.Route, "/")
+	filename := route + "_" + r.Timestamp.Format("0102-150405.000") + "_" + r.RequestID + ".json"
 	path := filepath.Join(f.dir, filename)
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {

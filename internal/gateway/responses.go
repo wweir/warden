@@ -72,19 +72,18 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			Model:      peek.Model,
 			Stream:     peek.Stream,
 			Provider:   provCfg.Name,
+			UserAgent:  r.UserAgent(),
 			DurationMs: time.Since(startTime).Milliseconds(),
 			Error:      errMsg,
 			Request:    rawReqBody,
 			Response:   respBody,
 			Steps:      steps,
 		}
-		// extract completed response from SSE events for readability,
-		// keep original SSE data in RawResponse for debugging
+		// extract completed response object from SSE events for logging
 		if peek.Stream && len(respBody) > 0 && errMsg == "" {
 			events := sse.ParseEvents(respBody)
 			if cr := openai.ExtractCompletedResponse(events); cr != nil {
 				if assembled, err := json.Marshal(cr); err == nil {
-					rec.RawResponse = respBody
 					rec.Response = assembled
 				}
 			}
@@ -101,7 +100,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
 				"provider", provCfg.Name, "model", peek.Model)
 
-			provReqBody := resolveModelRaw(rawReqBody, provCfg, peek.Model)
+			provReqBody := prepareRawBody(rawReqBody, provCfg, peek.Model)
 			endpoint := protocolEndpoint(provCfg.Protocol, true)
 
 			if peek.Stream {

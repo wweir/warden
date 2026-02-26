@@ -65,6 +65,12 @@ func resolveModelRaw(rawBody []byte, provCfg *config.ProviderConfig, model strin
 	return result
 }
 
+// prepareRawBody resolves the model alias and applies request patches for the provider.
+func prepareRawBody(rawBody []byte, provCfg *config.ProviderConfig, model string) []byte {
+	rawBody = resolveModelRaw(rawBody, provCfg, model)
+	return provCfg.ApplyRequestPatch(rawBody)
+}
+
 // marshalProtocolRaw converts raw OpenAI-format request bytes to the target protocol.
 // For OpenAI/Ollama, the bytes are passed through as-is (no re-serialization).
 // For Anthropic, a full decode→convert→encode is required.

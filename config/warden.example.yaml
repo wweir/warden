@@ -35,6 +35,14 @@ provider:
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
+    # request_patch applies JSON Patch (RFC 6902) operations to each request body before forwarding.
+    # Useful for stripping fields unsupported by a specific upstream (e.g. extended thinking).
+    # request_patch:
+    #   - op: "remove"
+    #     path: "/thinking"
+    #   - op: "replace"
+    #     path: "/max_tokens"
+    #     value: 8192
 
   anthropic-fallback:
     url: "https://api.anthropic.com/v1"

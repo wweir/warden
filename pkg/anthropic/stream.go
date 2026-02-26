@@ -255,3 +255,141 @@ func appendOpenAIChunk(buf []byte, id, model string, created int64, delta map[st
 	data, _ := json.Marshal(chunk)
 	return append(buf, []byte(fmt.Sprintf("data: %s\n\n", data))...)
 }
+
+// AssembleStream merges Anthropic Messages API SSE events into a single JSON
+// object equivalent to a non-streaming response. Uses map[string]any throughout
+// to tolerate non-standard or extended protocol implementations.
+//
+// Strategy:
+//   - message_start: take the nested "message" object as the base
+//   - content_block_start/delta/stop: accumulate text and tool_use blocks by index
+//   - message_delta: merge delta fields (stop_reason etc.) and update usage
+//   - all other event data is ignored
+//
+// Returns nil if no meaningful data could be extracted.
+func AssembleStream(rawSSE []byte) []byte {
+	events := sse.ParseEvents(rawSSE)
+
+	var base map[string]any
+	// index -> content block being assembled
+	type block struct {
+		data map[string]any
+		text string // accumulated text for text blocks
+	}
+	blocks := make(map[int]*block)
+
+	for _, evt := range events {
+		if evt.Data == "" {
+			continue
+		}
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(evt.Data), &msg); err != nil {
+			continue
+		}
+
+		switch msg["type"] {
+		case "message_start":
+			if m, ok := msg["message"].(map[string]any); ok {
+				base = m
+				// content will be rebuilt from deltas
+				base["content"] = []any{}
+			}
+
+		case "content_block_start":
+			idx := int(asFloat64(msg["index"]))
+			cb, _ := msg["content_block"].(map[string]any)
+			if cb == nil {
+				cb = map[string]any{}
+			}
+			// clone to avoid mutating parsed data
+			cloned := make(map[string]any, len(cb))
+			for k, v := range cb {
+				cloned[k] = v
+			}
+			blocks[idx] = &block{data: cloned}
+
+		case "content_block_delta":
+			idx := int(asFloat64(msg["index"]))
+			b := blocks[idx]
+			if b == nil {
+				break
+			}
+			delta, _ := msg["delta"].(map[string]any)
+			if delta == nil {
+				break
+			}
+			switch delta["type"] {
+			case "text_delta":
+				if t, ok := delta["text"].(string); ok {
+					b.text += t
+				}
+			case "input_json_delta":
+				if t, ok := delta["partial_json"].(string); ok {
+					prev, _ := b.data["input"].(string)
+					b.data["input"] = prev + t
+				}
+			}
+
+		case "content_block_stop":
+			// finalize the block
+
+		case "message_delta":
+			if base == nil {
+				break
+			}
+			delta, _ := msg["delta"].(map[string]any)
+			for k, v := range delta {
+				base[k] = v
+			}
+			// merge usage
+			if u, ok := msg["usage"].(map[string]any); ok {
+				existing, _ := base["usage"].(map[string]any)
+				if existing == nil {
+					existing = map[string]any{}
+				}
+				for k, v := range u {
+					existing[k] = v
+				}
+				base["usage"] = existing
+			}
+		}
+	}
+
+	if base == nil {
+		return nil
+	}
+
+	// build content array in index order
+	var content []any
+	for i := range len(blocks) {
+		b, ok := blocks[i]
+		if !ok {
+			continue
+		}
+		switch b.data["type"] {
+		case "text":
+			b.data["text"] = b.text
+		case "tool_use":
+			// parse accumulated JSON string into object for readability
+			var parsed any
+			if s, ok := b.data["input"].(string); ok && s != "" {
+				if json.Unmarshal([]byte(s), &parsed) == nil {
+					b.data["input"] = parsed
+				}
+			}
+		}
+		content = append(content, b.data)
+	}
+	base["content"] = content
+
+	out, err := json.Marshal(base)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+func asFloat64(v any) float64 {
+	f, _ := v.(float64)
+	return f
+}

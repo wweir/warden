@@ -16,6 +16,8 @@ import (
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
+	"github.com/wweir/warden/pkg/anthropic"
+	"github.com/wweir/warden/pkg/openai"
 )
 
 // Gateway is the core AI Gateway component.
@@ -186,7 +188,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			"provider", provCfg.Name, "model", peek.Model)
 
 		// resolve model alias to real model name for upstream request
-		provReqBody := resolveModelRaw(reqBody, provCfg, peek.Model)
+		provReqBody := prepareRawBody(reqBody, provCfg, peek.Model)
 
 		targetURL := provCfg.URL + r.URL.Path
 		if r.URL.RawQuery != "" {
@@ -199,6 +201,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			return
 		}
 		proxyReq.Header = r.Header.Clone()
+		proxyReq.Header.Del("Accept-Encoding")
 		setAuthHeaders(proxyReq.Header, provCfg)
 
 		resp, err := provCfg.HTTPClient(provCfg.TimeoutDuration).Do(proxyReq)
@@ -230,6 +233,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		w.Write(respBody)
 
 		if g.logger != nil {
+			logResp := assembleProxyResponse(provCfg.Protocol, respBody)
 			g.recordAndBroadcast(reqlog.Record{
 				Timestamp:  startTime,
 				RequestID:  reqID,
@@ -237,13 +241,38 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 				Endpoint:   r.URL.Path,
 				Model:      peek.Model,
 				Provider:   provCfg.Name,
+				UserAgent:  r.UserAgent(),
 				DurationMs: time.Since(startTime).Milliseconds(),
 				Request:    reqBody,
-				Response:   respBody,
+				Response:   logResp,
 			})
 		}
 		return
 	}
+}
+
+// --- tool collection ---
+
+// assembleProxyResponse converts a raw proxy response body for logging.
+// If the body is SSE, it assembles the stream into a single JSON object.
+// For Anthropic SSE, it extracts the response.completed event.
+// For other protocols, it uses OpenAI Chat Completions stream assembly.
+// Non-SSE bodies are returned as-is.
+func assembleProxyResponse(protocol string, body []byte) []byte {
+	trimmed := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(trimmed, "event:") && !strings.HasPrefix(trimmed, "data:") {
+		return body
+	}
+	if protocol == "anthropic" {
+		if assembled := anthropic.AssembleStream(body); assembled != nil {
+			return assembled
+		}
+		return body
+	}
+	if assembled, err := openai.AssembleChatStream(body); err == nil {
+		return assembled
+	}
+	return body
 }
 
 // --- tool collection ---

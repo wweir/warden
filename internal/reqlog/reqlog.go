@@ -16,11 +16,11 @@ type Record struct {
 	Model       string          `json:"model"`
 	Stream      bool            `json:"stream"`
 	Provider    string          `json:"provider"`
+	UserAgent   string          `json:"user_agent,omitempty"`
 	DurationMs  int64           `json:"duration_ms"`
 	Error       string          `json:"error,omitempty"`
 	Request     json.RawMessage `json:"request"`
 	Response    json.RawMessage `json:"response,omitempty"`
-	RawResponse json.RawMessage `json:"raw_response,omitempty"` // original SSE data for streaming requests
 	Steps       []Step          `json:"steps,omitempty"`
 }
 
@@ -65,7 +65,6 @@ func GenerateID() string {
 func (r *Record) Sanitize() {
 	r.Request = ensureJSON(r.Request)
 	r.Response = ensureJSON(r.Response)
-	r.RawResponse = ensureJSON(r.RawResponse)
 	for i := range r.Steps {
 		r.Steps[i].LLMRequest = ensureJSON(r.Steps[i].LLMRequest)
 		r.Steps[i].LLMResponse = ensureJSON(r.Steps[i].LLMResponse)

@@ -68,17 +68,16 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			Model:      peek.Model,
 			Stream:     peek.Stream,
 			Provider:   selectedProvider.Name,
+			UserAgent:  r.UserAgent(),
 			DurationMs: time.Since(startTime).Milliseconds(),
 			Error:      errMsg,
 			Request:    rawReqBody,
 			Response:   respBody,
 			Steps:      steps,
 		}
-		// assemble streaming chunks into a single response for readability,
-		// keep original SSE data in RawResponse for debugging
+		// assemble streaming chunks into a single response object for logging
 		if peek.Stream && len(respBody) > 0 && errMsg == "" {
 			if assembled, err := openai.AssembleChatStream(respBody); err == nil {
-				rec.RawResponse = respBody
 				rec.Response = assembled
 			}
 		}
@@ -91,7 +90,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
 				"provider", selectedProvider.Name, "model", peek.Model)
 
-			provReqBody := resolveModelRaw(rawReqBody, selectedProvider, peek.Model)
+			provReqBody := prepareRawBody(rawReqBody, selectedProvider, peek.Model)
 			reqBody, err := marshalProtocolRaw(selectedProvider.Protocol, provReqBody)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

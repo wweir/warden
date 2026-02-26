@@ -54,8 +54,8 @@ func TestMarshalProtocolRequest_Anthropic(t *testing.T) {
 }
 
 func TestProtocolEndpoint(t *testing.T) {
-	if got := protocolEndpoint("anthropic", false); got != "/messages" {
-		t.Errorf("anthropic endpoint = %q, want /messages", got)
+	if got := protocolEndpoint("anthropic", false); got != "/v1/messages" {
+		t.Errorf("anthropic endpoint = %q, want /v1/messages", got)
 	}
 	if got := protocolEndpoint("openai", false); got != "/chat/completions" {
 		t.Errorf("openai endpoint = %q, want /chat/completions", got)

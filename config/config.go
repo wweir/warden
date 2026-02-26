@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/pkg/copilot"
 	"github.com/wweir/warden/pkg/qwen"
@@ -49,10 +51,50 @@ type ProviderConfig struct {
 	Headers      map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models       []string          `json:"models" usage:"Supported model IDs (skips /models discovery when set)"`
 	ModelAliases map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name), alias appears in /models and is resolved before upstream request"`
+	RequestPatch []RequestPatchOp  `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
 
 	TimeoutDuration time.Duration // parsed from Timeout
 	ProxyURL        *url.URL      // parsed from Proxy
 	SSHCfg          *SSHConfig    // resolved from SSH during Validate
+}
+
+// RequestPatchOp defines a single JSON Patch operation (RFC 6902).
+// Supported ops: "add", "remove", "replace", "move", "copy", "test".
+type RequestPatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	From  string `json:"from,omitempty"`
+	Value any    `json:"value,omitempty"`
+}
+
+// ApplyRequestPatch applies the configured JSON Patch operations to rawBody.
+// Returns rawBody unchanged if RequestPatch is empty or body is not valid JSON.
+// Each operation is applied independently; failures on individual ops are skipped.
+// Remove operations targeting missing paths are silently skipped.
+func (b *ProviderConfig) ApplyRequestPatch(rawBody []byte) []byte {
+	if len(b.RequestPatch) == 0 {
+		return rawBody
+	}
+
+	doc := rawBody
+	for _, op := range b.RequestPatch {
+		opJSON, err := json.Marshal([]RequestPatchOp{op})
+		if err != nil {
+			continue
+		}
+		patch, err := jsonpatch.DecodePatch(opJSON)
+		if err != nil {
+			continue
+		}
+		result, err := patch.ApplyWithOptions(doc, &jsonpatch.ApplyOptions{
+			AllowMissingPathOnRemove: true,
+		})
+		if err != nil {
+			continue
+		}
+		doc = result
+	}
+	return doc
 }
 
 // GetAPIKey returns the effective API key for authentication.
@@ -238,6 +280,26 @@ func (c *ConfigStruct) Validate() error {
 			}
 		default:
 			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/ollama/qwen/copilot)", name, prov.Protocol)
+		}
+
+		// validate request_patch ops
+		for i, op := range prov.RequestPatch {
+			switch op.Op {
+			case "add", "replace":
+				if op.Value == nil {
+					return NewValidationError("provider %s: request_patch[%d]: op %q requires value", name, i, op.Op)
+				}
+			case "move", "copy":
+				if op.From == "" {
+					return NewValidationError("provider %s: request_patch[%d]: op %q requires from", name, i, op.Op)
+				}
+			case "remove", "test":
+			default:
+				return NewValidationError("provider %s: request_patch[%d]: unknown op %q", name, i, op.Op)
+			}
+			if op.Path == "" {
+				return NewValidationError("provider %s: request_patch[%d]: path is required", name, i)
+			}
 		}
 
 		// parse timeout
