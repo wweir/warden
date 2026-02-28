@@ -186,7 +186,6 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 	// extract model from request body for provider selection (best-effort; non-JSON bodies are fine)
 	model := gjson.GetBytes(reqBody, "model").String()
 
-	var excluded []string
 	authRetried := map[string]bool{}
 	provCfg, err := g.selector.Select(g.cfg, route, model)
 	if err != nil {
@@ -220,29 +219,23 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		upstreamStart := time.Now()
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
 		if err != nil {
+			// Network errors indicate the provider is unreachable; record for health tracking.
 			g.selector.RecordOutcome(provCfg.Name, err, time.Since(upstreamStart))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// read body upfront for failover decision on error status
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			upErr := &UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
-			g.selector.RecordOutcome(provCfg.Name, upErr, time.Since(upstreamStart))
+			// Non-inference endpoints (e.g. count_tokens, embeddings) may return errors
+			// that are unrelated to the provider's ability to serve inference requests.
+			// Do not record HTTP errors here to avoid triggering false failover.
 			if tryAuthRetry(upErr, provCfg, authRetried) {
 				continue
 			}
-			if upErr.IsRetryable() {
-				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, model); next != nil {
-					provCfg = next
-					continue
-				}
-			}
-		} else {
-			g.selector.RecordOutcome(provCfg.Name, nil, time.Since(upstreamStart))
 		}
 
 		maps.Copy(w.Header(), resp.Header)
