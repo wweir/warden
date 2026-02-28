@@ -46,6 +46,8 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	var err error
 	defer func() { deferlog.DebugError(err, "create new gateway") }()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	mcpClients := make(map[string]*mcp.Client)
 	for name, mcpCfg := range cfg.MCP {
 		client, err := mcp.NewClient(mcpCfg)
@@ -53,7 +55,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 			slog.Warn("Failed to create MCP client", "name", name, "error", err)
 			continue
 		}
-		if err := client.Start(context.Background(), mcpCfg); err != nil {
+		if err := client.Start(ctx, mcpCfg); err != nil {
 			slog.Warn("Failed to start MCP client", "name", name, "error", err)
 			continue
 		}
@@ -67,6 +69,8 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		selector:    NewSelector(cfg),
 		mcpClients:  mcpClients,
 		broadcaster: reqlog.NewBroadcaster(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 
 	g.selector.RefreshModels(cfg)
@@ -135,6 +139,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Close shuts down all MCP clients and the request logger.
 func (g *Gateway) Close() {
+	g.cancel()
 	for name, c := range g.mcpClients {
 		slog.Info("Stopping MCP client", "name", name)
 		if err := c.Close(); err != nil {
@@ -242,7 +247,9 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 		maps.Copy(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		w.Write(respBody)
+		if _, writeErr := w.Write(respBody); writeErr != nil {
+			slog.Warn("Failed to write proxy response", "error", writeErr)
+		}
 
 		durationMs := time.Since(startTime).Milliseconds()
 		logResp := assembleProxyResponse(provCfg.Protocol, respBody)

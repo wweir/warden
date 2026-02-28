@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -101,7 +102,9 @@ func pipeRawStream(w http.ResponseWriter, provCfg *config.ProviderConfig, endpoi
 		if provCfg.Protocol == "anthropic" {
 			clientBody = anthropic.ConvertStreamToOpenAI(rawBody)
 		}
-		w.Write(clientBody)
+		if _, writeErr := w.Write(clientBody); writeErr != nil {
+			slog.Warn("Failed to write stream response", "error", writeErr)
+		}
 		w.(http.Flusher).Flush()
 	}
 	// Always return the raw body even if there's an error

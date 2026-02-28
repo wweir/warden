@@ -135,14 +135,18 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
 				clientBody := convertStreamIfNeeded(selectedProvider.Protocol, respBody)
-				w.Write(clientBody)
+				if _, writeErr := w.Write(clientBody); writeErr != nil {
+					slog.Warn("Failed to write stream response", "error", writeErr)
+				}
 				w.(http.Flusher).Flush()
 				logRecord(respBody, "")
 				return
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(respBody)
+			if _, writeErr := w.Write(respBody); writeErr != nil {
+				slog.Warn("Failed to write response", "error", writeErr)
+			}
 			logRecord(respBody, "")
 			return
 		}
@@ -194,7 +198,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 			if len(injectedTools) == 0 {
 				clientBody := convertStreamIfNeeded(selectedProvider.Protocol, firstResp)
-				w.Write(clientBody)
+				if _, writeErr := w.Write(clientBody); writeErr != nil {
+					slog.Warn("Failed to write stream response", "error", writeErr)
+				}
 				w.(http.Flusher).Flush()
 				logRecord(firstResp, "")
 				return
@@ -240,7 +246,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		// no tool calls in response: passthrough raw upstream response
 		if len(resp.Choices) == 0 || len(resp.Choices[0].Message.ToolCalls) == 0 {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(respBody)
+			if _, writeErr := w.Write(respBody); writeErr != nil {
+				slog.Warn("Failed to write response", "error", writeErr)
+			}
 			logRecord(respBody, "")
 			return
 		}
@@ -249,7 +257,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 		w.Header().Set("Content-Type", "application/json")
 		finalBody, _ := json.Marshal(resp)
-		w.Write(finalBody)
+		if _, writeErr := w.Write(finalBody); writeErr != nil {
+			slog.Warn("Failed to write response", "error", writeErr)
+		}
 		logRecord(finalBody, "")
 		return
 	}
@@ -394,7 +404,9 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 
 		// no injected tool calls: replay buffered SSE to client
 		if !hasInjected {
-			w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody))
+			if _, writeErr := w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody)); writeErr != nil {
+				slog.Warn("Failed to write stream response", "error", writeErr)
+			}
 			w.(http.Flusher).Flush()
 			return rawBody, steps, nil
 		}
@@ -405,7 +417,9 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Stream: failed to execute tools", "error", err)
-			w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody))
+			if _, writeErr := w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody)); writeErr != nil {
+				slog.Warn("Failed to write stream response", "error", writeErr)
+			}
 			w.(http.Flusher).Flush()
 			return rawBody, steps, nil
 		}
