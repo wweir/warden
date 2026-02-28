@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,8 +15,7 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/sower-proxy/deferlog/v2"
-	"github.com/wweir/warden/pkg/copilot"
-	"github.com/wweir/warden/pkg/qwen"
+	"github.com/wweir/warden/pkg/provider"
 	"github.com/wweir/warden/pkg/ssh"
 )
 
@@ -29,14 +29,61 @@ type ConfigStruct struct {
 	Addr          string                     `json:"addr" usage:"Gateway listening address"`
 	AdminPassword string                     `json:"admin_password" usage:"Admin panel password (empty to disable)"`
 	Log           *LogConfig                 `json:"log" usage:"Request/response logging configuration"`
+	Webhook       map[string]*WebhookConfig  `json:"webhook" usage:"Reusable HTTP webhook configurations (referenced by log http targets)"`
 	Provider      map[string]*ProviderConfig `json:"provider" usage:"Upstream LLM provider configurations"`
 	Route         map[string]*RouteConfig    `json:"route" usage:"Route prefix configurations"`
 	MCP           map[string]*MCPConfig      `json:"mcp" usage:"MCP server configurations"`
 	SSH           map[string]*SSHConfig      `json:"ssh" usage:"SSH connection configurations"`
+	ToolHooks     []*HookRuleConfig          `json:"tool_hooks" usage:"Global tool call hook rules (supports wildcards in match pattern)"`
 }
 
 type LogConfig struct {
-	FileDir string `json:"file_dir" usage:"Directory for request/response JSON log files"`
+	Targets []*LogTarget `json:"targets" usage:"Log output targets (file, http)"`
+}
+
+// LogTarget defines a single log output destination.
+// Type must be "file" or "http".
+type LogTarget struct {
+	Type string `json:"type" usage:"Target type: file or http"`
+
+	// file type fields
+	Dir string `json:"dir" usage:"Directory for JSON log files (file type only)"`
+
+	// http type fields
+	Webhook string `json:"webhook" usage:"Webhook config name to use for HTTP push (http type only)"`
+
+	WebhookCfg *WebhookConfig `json:"-"` // resolved from Webhook during Validate
+}
+
+// WebhookConfig defines a complete HTTP webhook call configuration.
+type WebhookConfig struct {
+	URL          string            `json:"url" usage:"Target URL"`
+	Method       string            `json:"method" usage:"HTTP method, default POST"`
+	Headers      map[string]string `json:"headers" usage:"Static request headers"`
+	BodyTemplate string            `json:"body_template" usage:"Go template for request body; .Record holds the log record, sprig functions available; omit to send record as plain JSON"`
+	Timeout      string            `json:"timeout" usage:"Per-request timeout, default 5s"`
+	Retry        int               `json:"retry" usage:"Retry count on failure, default 2"`
+}
+
+// LogValue implements slog.LogValuer to print a safe summary without secrets or pointers.
+func (c *ConfigStruct) LogValue() slog.Value {
+	providers := make([]string, 0, len(c.Provider))
+	for name := range c.Provider {
+		providers = append(providers, name)
+	}
+	routes := make([]string, 0, len(c.Route))
+	for prefix := range c.Route {
+		routes = append(routes, prefix)
+	}
+	attrs := []slog.Attr{
+		slog.String("addr", c.Addr),
+		slog.Any("providers", providers),
+		slog.Any("routes", routes),
+	}
+	if c.AdminPassword != "" {
+		attrs = append(attrs, slog.String("admin_password", "***"))
+	}
+	return slog.GroupValue(attrs...)
 }
 
 type ProviderConfig struct {
@@ -45,7 +92,6 @@ type ProviderConfig struct {
 	Protocol     string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
 	APIKey       deferlog.Secret   `json:"api_key" usage:"API key for authentication"`
 	ConfigDir    string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	SSH          string            `json:"ssh" usage:"SSH config name for remote credential access"`
 	Timeout      string            `json:"timeout" usage:"Request timeout (e.g. 60s, 2m)"`
 	Proxy        string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers      map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
@@ -53,9 +99,8 @@ type ProviderConfig struct {
 	ModelAliases map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name), alias appears in /models and is resolved before upstream request"`
 	RequestPatch []RequestPatchOp  `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
 
-	TimeoutDuration time.Duration // parsed from Timeout
-	ProxyURL        *url.URL      // parsed from Proxy
-	SSHCfg          *SSHConfig    // resolved from SSH during Validate
+	clientCache   map[time.Duration]*http.Client // cached clients by timeout
+	clientCacheMu sync.RWMutex
 }
 
 // RequestPatchOp defines a single JSON Patch operation (RFC 6902).
@@ -103,24 +148,69 @@ func (b *ProviderConfig) GetAPIKey() string {
 	if b.APIKey.Value() != "" {
 		return b.APIKey.Value()
 	}
-	switch b.Protocol {
-	case "qwen":
-		token, _ := qwen.GetAccessToken(b.ConfigDir, b.SSHCfg)
-		return token
-	case "copilot":
-		token, _ := copilot.GetAccessToken(b.ConfigDir, b.SSHCfg)
+	if p := provider.Get(b.Protocol); p != nil {
+		token, _ := p.GetAccessToken(b.ConfigDir, nil)
 		return token
 	}
 	return ""
 }
 
-// HTTPClient returns an *http.Client configured with proxy (if set) and the given timeout.
-func (b *ProviderConfig) HTTPClient(timeout time.Duration) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if b.ProxyURL != nil {
-		transport.Proxy = http.ProxyURL(b.ProxyURL)
+// InvalidateAuth clears the cached OAuth credentials for qwen/copilot providers,
+// forcing a re-read from disk on the next GetAPIKey call.
+// No-op for providers with a static api_key.
+func (b *ProviderConfig) InvalidateAuth() {
+	if b.APIKey.Value() != "" {
+		return
 	}
-	return &http.Client{Timeout: timeout, Transport: transport}
+	if p := provider.Get(b.Protocol); p != nil {
+		p.InvalidateAuth(b.ConfigDir, nil)
+	}
+}
+
+// HTTPClient returns an *http.Client configured with the provider's proxy and timeout.
+// If override is non-zero it is used as the timeout; otherwise falls back to Timeout
+// (default 60s). Format errors are caught during Validate, so errors here are ignored.
+// Clients are cached by timeout value to reuse connections.
+func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
+	timeout := override
+	if timeout == 0 {
+		timeout = 60 * time.Second
+		if b.Timeout != "" {
+			if d, err := time.ParseDuration(b.Timeout); err == nil {
+				timeout = d
+			}
+		}
+	}
+
+	b.clientCacheMu.RLock()
+	if client, ok := b.clientCache[timeout]; ok {
+		b.clientCacheMu.RUnlock()
+		return client
+	}
+	b.clientCacheMu.RUnlock()
+
+	b.clientCacheMu.Lock()
+	defer b.clientCacheMu.Unlock()
+
+	// double-check after acquiring write lock
+	if client, ok := b.clientCache[timeout]; ok {
+		return client
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if b.Proxy != "" {
+		if proxyURL, err := url.Parse(b.Proxy); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+
+	if b.clientCache == nil {
+		b.clientCache = make(map[time.Duration]*http.Client)
+	}
+
+	client := &http.Client{Timeout: timeout, Transport: transport}
+	b.clientCache[timeout] = client
+	return client
 }
 
 // ResolveModel returns the real model name if the given model is an alias,
@@ -139,7 +229,7 @@ type RouteConfig struct {
 	SystemPrompts map[string]string `json:"system_prompts" usage:"Per-model system prompt injection (model_name = prompt_text)"`
 
 	mu           sync.RWMutex
-	EnabledTools map[string]bool // runtime state for dynamic toggle
+	EnabledTools map[string]bool `json:"-"` // runtime state for dynamic toggle
 }
 
 // IsToolEnabled checks if a tool is enabled (thread-safe).
@@ -158,8 +248,17 @@ func (r *RouteConfig) SetToolEnabled(name string, enabled bool) {
 
 // ToolConfig holds per-tool configuration within an MCPConfig.
 type ToolConfig struct {
-	Disabled bool         `json:"disabled" usage:"Disable this tool (default: false = enabled)"`
-	Hooks    []HookConfig `json:"hooks" usage:"Hooks to run before/after this tool call"`
+	Disabled bool `json:"disabled" usage:"Disable this tool (default: false = enabled)"`
+}
+
+// HookRuleConfig defines a hook rule that matches tool calls by pattern.
+// Match uses glob-style wildcards: "*" matches any sequence within a segment,
+// "**" matches across segments. Pattern format: "<mcp_name>__<tool_name>",
+// e.g. "my_mcp__write_*" matches all write tools in my_mcp.
+// A bare "*" matches all tool calls.
+type HookRuleConfig struct {
+	Match string       `json:"match" usage:"Tool name pattern to match (format: mcp_name__tool_name, supports * wildcard)"`
+	Hook  HookConfig   `json:"hook" usage:"Hook to run when the pattern matches"`
 }
 
 // HookConfig defines a single hook execution target.
@@ -173,7 +272,7 @@ type HookConfig struct {
 	Model   string   `json:"model" usage:"Model name for AI hook (ai type only)"`
 	Prompt  string   `json:"prompt" usage:"Prompt template for AI hook; supports {{.ToolName}}, {{.Arguments}}, {{.Result}}, {{.CallID}} (ai type only)"`
 
-	TimeoutDuration time.Duration // parsed from Timeout during Validate
+	TimeoutDuration time.Duration `json:"-"` // parsed from Timeout during Validate
 }
 
 type MCPConfig struct {
@@ -184,11 +283,49 @@ type MCPConfig struct {
 	SSH     string                 `json:"ssh" usage:"SSH config name for remote MCP execution"`
 	Tools   map[string]*ToolConfig `json:"tools" usage:"Per-tool configuration (disabled flag and hooks)"`
 
-	SSHCfg *SSHConfig // resolved from SSH during Validate
+	SSHCfg *SSHConfig `json:"-"` // resolved from SSH during Validate
 }
 
 // Validate checks configuration validity.
 func (c *ConfigStruct) Validate() error {
+	// validate log targets
+	if c.Log != nil {
+		for i, t := range c.Log.Targets {
+			switch t.Type {
+			case "file":
+				if t.Dir == "" {
+					return NewValidationError("log.targets[%d]: dir is required for file type", i)
+				}
+			case "http":
+				if t.Webhook == "" {
+					return NewValidationError("log.targets[%d]: webhook is required for http type", i)
+				}
+				webhookCfg, ok := c.Webhook[t.Webhook]
+				if !ok {
+					return NewValidationError("log.targets[%d]: unknown webhook %q", i, t.Webhook)
+				}
+				t.WebhookCfg = webhookCfg
+			default:
+				return NewValidationError("log.targets[%d]: invalid type %q (must be file or http)", i, t.Type)
+			}
+		}
+	}
+
+	// validate webhook configs
+	for name, wh := range c.Webhook {
+		if wh.URL == "" {
+			return NewValidationError("webhook %s: url is required", name)
+		}
+		if _, err := url.Parse(wh.URL); err != nil {
+			return NewValidationError("webhook %s: invalid url %s: %v", name, wh.URL, err)
+		}
+		if wh.Timeout != "" {
+			if _, err := time.ParseDuration(wh.Timeout); err != nil {
+				return NewValidationError("webhook %s: invalid timeout %s: %v", name, wh.Timeout, err)
+			}
+		}
+	}
+
 	// validate SSH configs
 	for name, sshCfg := range c.SSH {
 		sshCfg.Name = name
@@ -217,15 +354,6 @@ func (c *ConfigStruct) Validate() error {
 	for name, prov := range c.Provider {
 		prov.Name = name
 
-		// resolve SSH reference
-		if prov.SSH != "" {
-			sshCfg, ok := c.SSH[prov.SSH]
-			if !ok {
-				return NewValidationError("provider %s: unknown ssh config %q", name, prov.SSH)
-			}
-			prov.SSHCfg = sshCfg
-		}
-
 		// apply protocol defaults
 		switch prov.Protocol {
 		case "qwen":
@@ -248,8 +376,8 @@ func (c *ConfigStruct) Validate() error {
 			}
 		}
 
-		// expand ~ in config_dir (only for local access, SSH paths are remote)
-		if prov.SSHCfg == nil && strings.HasPrefix(prov.ConfigDir, "~/") {
+		// expand ~ in config_dir
+		if strings.HasPrefix(prov.ConfigDir, "~/") {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return NewValidationError("provider %s: cannot determine home directory: %v", name, err)
@@ -264,18 +392,13 @@ func (c *ConfigStruct) Validate() error {
 		// validate protocol
 		switch prov.Protocol {
 		case "openai", "anthropic", "ollama":
-		case "qwen":
-			// verify oauth creds file is readable at startup
+		case "qwen", "copilot":
+			// verify OAuth credentials file is readable at startup (no network IO)
 			if prov.APIKey.Value() == "" {
-				if _, err := qwen.GetAccessToken(prov.ConfigDir, prov.SSHCfg); err != nil {
-					return NewValidationError("provider %s: %v", name, err)
-				}
-			}
-		case "copilot":
-			// verify GitHub OAuth token is readable at startup
-			if prov.APIKey.Value() == "" {
-				if _, err := copilot.GetAccessToken(prov.ConfigDir, prov.SSHCfg); err != nil {
-					return NewValidationError("provider %s: %v", name, err)
+				if p := provider.Get(prov.Protocol); p != nil {
+					if err := p.CheckCredsReadable(prov.ConfigDir, nil); err != nil {
+						return NewValidationError("provider %s: %v", name, err)
+					}
 				}
 			}
 		default:
@@ -302,24 +425,18 @@ func (c *ConfigStruct) Validate() error {
 			}
 		}
 
-		// parse timeout
+		// validate timeout format
 		if prov.Timeout != "" {
-			dur, err := time.ParseDuration(prov.Timeout)
-			if err != nil {
+			if _, err := time.ParseDuration(prov.Timeout); err != nil {
 				return NewValidationError("provider %s: invalid timeout %s: %v", name, prov.Timeout, err)
 			}
-			prov.TimeoutDuration = dur
-		} else {
-			prov.TimeoutDuration = 60 * time.Second
 		}
 
-		// parse proxy
+		// validate proxy URL format
 		if prov.Proxy != "" {
-			proxyURL, err := url.Parse(prov.Proxy)
-			if err != nil {
+			if _, err := url.Parse(prov.Proxy); err != nil {
 				return NewValidationError("provider %s: invalid proxy URL %s: %v", name, prov.Proxy, err)
 			}
-			prov.ProxyURL = proxyURL
 		}
 	}
 
@@ -359,46 +476,55 @@ func (c *ConfigStruct) Validate() error {
 			mcp.SSHCfg = sshCfg
 		}
 
-		// validate per-tool hook configs
-		for toolName, toolCfg := range mcp.Tools {
-			for i := range toolCfg.Hooks {
-				hook := &toolCfg.Hooks[i]
-				switch hook.Type {
-				case "exec":
-					if hook.Command == "" {
-						return NewValidationError("mcp %s tool %s hook[%d]: command is required for exec type", name, toolName, i)
-					}
-				case "ai":
-					if hook.Route == "" {
-						return NewValidationError("mcp %s tool %s hook[%d]: route is required for ai type", name, toolName, i)
-					}
-					if hook.Model == "" {
-						return NewValidationError("mcp %s tool %s hook[%d]: model is required for ai type", name, toolName, i)
-					}
-					if hook.Prompt == "" {
-						return NewValidationError("mcp %s tool %s hook[%d]: prompt is required for ai type", name, toolName, i)
-					}
-				default:
-					return NewValidationError("mcp %s tool %s hook[%d]: invalid type %q (must be exec or ai)", name, toolName, i, hook.Type)
-				}
-				switch hook.When {
-				case "pre", "post":
-				default:
-					return NewValidationError("mcp %s tool %s hook[%d]: invalid when %q (must be pre or post)", name, toolName, i, hook.When)
-				}
-				timeout := hook.Timeout
-				if timeout == "" {
-					timeout = "5s"
-				}
-				dur, err := time.ParseDuration(timeout)
-				if err != nil {
-					return NewValidationError("mcp %s tool %s hook[%d]: invalid timeout %q: %v", name, toolName, i, timeout, err)
-				}
-				hook.TimeoutDuration = dur
-			}
+	}
+
+	// validate global tool hook rules
+	for i, rule := range c.ToolHooks {
+		if rule.Match == "" {
+			return NewValidationError("tool_hooks[%d]: match is required", i)
+		}
+		if err := validateHookConfig(fmt.Sprintf("tool_hooks[%d]", i), &rule.Hook); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// validateHookConfig validates a single HookConfig and parses its timeout.
+func validateHookConfig(ctx string, hook *HookConfig) error {
+	switch hook.Type {
+	case "exec":
+		if hook.Command == "" {
+			return NewValidationError("%s: command is required for exec type", ctx)
+		}
+	case "ai":
+		if hook.Route == "" {
+			return NewValidationError("%s: route is required for ai type", ctx)
+		}
+		if hook.Model == "" {
+			return NewValidationError("%s: model is required for ai type", ctx)
+		}
+		if hook.Prompt == "" {
+			return NewValidationError("%s: prompt is required for ai type", ctx)
+		}
+	default:
+		return NewValidationError("%s: invalid type %q (must be exec or ai)", ctx, hook.Type)
+	}
+	switch hook.When {
+	case "pre", "post":
+	default:
+		return NewValidationError("%s: invalid when %q (must be pre or post)", ctx, hook.When)
+	}
+	timeout := hook.Timeout
+	if timeout == "" {
+		timeout = "5s"
+	}
+	dur, err := time.ParseDuration(timeout)
+	if err != nil {
+		return NewValidationError("%s: invalid timeout %q: %v", ctx, timeout, err)
+	}
+	hook.TimeoutDuration = dur
 	return nil
 }
 

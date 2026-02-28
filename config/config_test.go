@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestApplyRequestPatch(t *testing.T) {
@@ -150,5 +151,34 @@ func TestApplyRequestPatch_YAMLObjectValue(t *testing.T) {
 	}
 	if thinking["type"] != "enabled" {
 		t.Errorf("thinking.type = %q, want enabled; result: %s", thinking["type"], result)
+	}
+}
+
+func TestProviderConfig_HTTPClient_Caching(t *testing.T) {
+	prov := &ProviderConfig{
+		Name:    "test",
+		URL:     "http://localhost:8080",
+		Timeout: "30s",
+	}
+
+	// Get client for default timeout
+	client1 := prov.HTTPClient(0)
+	client2 := prov.HTTPClient(0)
+
+	// Should return same cached instance
+	if client1 != client2 {
+		t.Error("HTTPClient should return cached instance for same timeout")
+	}
+
+	// Get client for different timeout
+	client3 := prov.HTTPClient(60 * time.Second)
+	if client1 == client3 {
+		t.Error("HTTPClient should return different instance for different timeout")
+	}
+
+	// Get client for same custom timeout again
+	client4 := prov.HTTPClient(60 * time.Second)
+	if client3 != client4 {
+		t.Error("HTTPClient should cache instance for custom timeout")
 	}
 }

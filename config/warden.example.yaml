@@ -3,9 +3,37 @@ addr: ":8080"
 # Admin panel password (empty to disable admin UI at /_admin/)
 # admin_password: "your-secret-password"
 
-# Request/response logging
+# Webhook configurations for HTTP log push targets
+# webhook:
+#   my-log-sink:
+#     url: "https://your-log-sink/api/ingest"
+#     method: POST                           # optional, default POST
+#     headers:
+#       Authorization: "Bearer your-token"
+#       X-Source: "warden"
+#     # body_template: Go template rendered for each record; sprig functions available.
+#     # .Record exposes all fields of the log record.
+#     # Omit body_template to send the record as plain JSON.
+#     body_template: |
+#       {
+#         "timestamp": "{{ .Record.Timestamp | date `2006-01-02T15:04:05Z07:00` }}",
+#         "request_id": "{{ .Record.RequestID }}",
+#         "route": "{{ .Record.Route }}",
+#         "model": "{{ .Record.Model }}",
+#         "provider": "{{ .Record.Provider }}",
+#         "duration_ms": {{ .Record.DurationMs }},
+#         "error": "{{ .Record.Error }}"
+#       }
+#     timeout: "5s"                          # optional, default 5s
+#     retry: 2                               # optional, default 2
+
+# Request/response logging targets (file and/or http)
 # log:
-#   file_dir: "./logs"
+#   targets:
+#     - type: file
+#       dir: "./logs"
+#     - type: http
+#       webhook: "my-log-sink"              # references webhook above
 
 # SSH connection configurations for remote credential access and MCP execution
 # ssh:
@@ -34,7 +62,7 @@ provider:
     url: "https://api.anthropic.com/v1"
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "120s"
+    timeout: "60s"
     # request_patch applies JSON Patch (RFC 6902) operations to each request body before forwarding.
     # Useful for stripping fields unsupported by a specific upstream (e.g. extended thinking).
     # request_patch:
@@ -62,7 +90,7 @@ provider:
     protocol: "qwen"
     # url: "https://portal.qwen.ai/v1"  # default (OAuth); set api_key to use dashscope instead
     # config_dir: "~/.qwen"  # default
-    timeout: "120s"
+    timeout: "60s"
     models:
       - "qwen3-coder-plus"
       - "qwen3-coder-flash"
@@ -72,21 +100,12 @@ provider:
     protocol: "copilot"
     # url: "https://api.githubcopilot.com"  # default
     # config_dir: "~/.config/github-copilot"  # default; reads hosts.json or apps.json
-    timeout: "120s"
+    timeout: "60s"
     models:
       - "gpt-4o"
       - "claude-sonnet-4"
       - "o3-mini"
       - "gemini-2.0-flash"
-
-  # Remote provider via SSH - reads OAuth credentials from a remote host
-  # qwen-remote:
-  #   protocol: "qwen"
-  #   ssh: "dev-server"                     # references ssh.dev-server config above
-  #   config_dir: "~/.qwen"                 # remote host path (~ not expanded locally)
-  #   timeout: "120s"
-  #   models:
-  #     - "qwen3-coder-plus"
 
 # 路由配置 - 路由前缀与工具绑定
 route:
