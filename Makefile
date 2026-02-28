@@ -19,8 +19,11 @@ build: web
 		-o bin/warden ./cmd/warden
 
 run: build
-	sudo pkill warden || true
-	./bin/warden
+	bin/warden
+
+install: build
+	sudo install -D -m755 bin/warden /usr/local/bin/warden
+	sudo /usr/local/bin/warden -r
 
 clean:
 	rm -f bin/warden

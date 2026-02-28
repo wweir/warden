@@ -58,3 +58,4 @@ web/admin/dist/
 !buf.*yaml
 !*docker-compose.yml
 **/test/
+warden
