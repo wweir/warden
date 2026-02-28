@@ -15,6 +15,7 @@ import NavBar from './components/NavBar.vue'
 :root {
   --c-primary: #4f6ef7;
   --c-primary-hover: #3b5ae0;
+  --c-primary-light: #60a5fa;
   --c-primary-bg: #eef1fe;
   --c-success: #10b981;
   --c-success-bg: #d1fae5;
@@ -151,6 +152,7 @@ code {
 }
 .msg-success, .msg.success { background: var(--c-success-bg); color: #065f46; }
 .msg-error, .msg.error { background: var(--c-danger-bg); color: #991b1b; }
+.msg-warning, .msg.warning { background: var(--c-warning-bg); color: #92400e; }
 
 /* ---- Tables ---- */
 .data-table {

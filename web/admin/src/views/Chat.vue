@@ -8,7 +8,7 @@
     <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
     <!-- Sidebar -->
     <aside :class="['chat-sidebar', { open: sidebarOpen }]">
-      <button class="btn btn-primary sidebar-new" @click="newConversation(); sidebarOpen = false">+ New Chat</button>
+      <button class="btn btn-primary sidebar-new" @click="newConversation(); sidebarOpen = false">{{ $t('chat.newChat') }}</button>
       <div class="conv-list">
         <div
           v-for="c in conversations"
@@ -16,10 +16,10 @@
           :class="['conv-item', { active: c.id === currentId }]"
           @click="switchTo(c.id); sidebarOpen = false"
         >
-          <span class="conv-title">{{ c.title || 'New Chat' }}</span>
-          <button class="conv-del" @click.stop="deleteConversation(c.id)" title="Delete">&times;</button>
+          <span class="conv-title">{{ c.title || $t('chat.newChat') }}</span>
+          <button class="conv-del" @click.stop="deleteConversation(c.id)" :title="$t('chat.deleteChat')">&times;</button>
         </div>
-        <div v-if="conversations.length === 0" class="empty" style="padding:12px">No conversations</div>
+        <div v-if="conversations.length === 0" class="empty" style="padding:12px">{{ $t('chat.noConversations') }}</div>
       </div>
     </aside>
 
@@ -28,33 +28,20 @@
       <!-- Top bar: route & model selector -->
       <div class="chat-topbar">
         <div class="topbar-group">
-          <label>Route</label>
+          <label>{{ $t('chat.route') }}</label>
           <select class="form-input topbar-select" v-model="currentRoute" @change="onRouteChange">
             <option v-for="r in routes" :key="r" :value="r">{{ r }}</option>
           </select>
         </div>
         <div class="topbar-group">
-          <label>Model</label>
-          <div class="model-combobox" ref="comboboxRef">
-            <input
-              class="form-input topbar-model"
-              v-model="modelQuery"
-              placeholder="Select model"
-              @focus="showModelDropdown = true"
-              @keydown.down.prevent="moveHighlight(1)"
-              @keydown.up.prevent="moveHighlight(-1)"
-              @keydown.enter.prevent="confirmHighlight"
-              @keydown.escape="showModelDropdown = false"
-            >
-            <ul v-if="showModelDropdown && filteredModels.length > 0" class="model-dropdown">
-              <li
-                v-for="(m, i) in filteredModels"
-                :key="m"
-                :class="{ highlighted: i === highlightIndex }"
-                @mousedown.prevent="selectModel(m)"
-              >{{ m }}</li>
-            </ul>
-          </div>
+          <label>{{ $t('chat.model') }}</label>
+          <ModelCombobox
+            v-model="modelQuery"
+            :models="models"
+            :placeholder="$t('chat.selectModel')"
+            input-class="topbar-model"
+            @update:modelValue="updateConvMeta"
+          />
         </div>
       </div>
 
@@ -62,7 +49,7 @@
       <div class="chat-messages" ref="messagesRef">
         <div v-if="currentMessages.length === 0" class="chat-empty">
           <div class="chat-empty-icon">W</div>
-          <p>Send a message to start</p>
+          <p>{{ $t('chat.sendHint') }}</p>
         </div>
         <div v-for="(msg, idx) in currentMessages" :key="idx" :class="['chat-msg', 'msg-' + msg.role]">
           <div class="msg-avatar">{{ msg.role === 'user' ? 'U' : 'A' }}</div>
@@ -99,14 +86,14 @@
           </div>
         </div>
         <div class="input-row">
-          <button class="btn btn-secondary btn-icon input-attach" @click="triggerFileInput" title="Attach image">
+          <button class="btn btn-secondary btn-icon input-attach" @click="triggerFileInput" :title="$t('chat.attachImage')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
           </button>
           <textarea
             ref="inputRef"
             class="chat-textarea"
             v-model="userInput"
-            placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
+            :placeholder="$t('chat.inputPlaceholder')"
             rows="1"
             @keydown="onKeydown"
             @paste="onPaste"
@@ -123,9 +110,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import { fetchStatus, fetchRouteModels, sendRouteRequest } from '../api.js'
+import ModelCombobox from '../components/ModelCombobox.vue'
+
+const { t } = useI18n()
 
 // --- State ---
 const sidebarOpen = ref(false)
@@ -135,9 +126,6 @@ const routes = ref([])
 const models = ref([])
 const currentRoute = ref('')
 const modelQuery = ref('')
-const showModelDropdown = ref(false)
-const highlightIndex = ref(-1)
-const comboboxRef = ref(null)
 const messagesRef = ref(null)
 const inputRef = ref(null)
 const fileInputRef = ref(null)
@@ -246,7 +234,7 @@ async function loadRoutes() {
     }
     await loadModels()
   } catch (e) {
-    error.value = 'Failed to load routes: ' + e.message
+    error.value = t('chat.loadRoutesFailed', { error: e.message })
   }
 }
 
@@ -263,40 +251,6 @@ async function onRouteChange() {
   await loadModels()
   if (models.value.length > 0 && !models.value.includes(modelQuery.value)) {
     modelQuery.value = ''
-  }
-}
-
-const filteredModels = computed(() => {
-  const q = modelQuery.value.toLowerCase()
-  if (!q) return models.value
-  return models.value.filter(m => m.toLowerCase().includes(q))
-})
-
-function selectModel(m) {
-  modelQuery.value = m
-  showModelDropdown.value = false
-  highlightIndex.value = -1
-  updateConvMeta()
-}
-
-function moveHighlight(dir) {
-  if (!showModelDropdown.value) { showModelDropdown.value = true; return }
-  const len = filteredModels.value.length
-  if (len === 0) return
-  highlightIndex.value = (highlightIndex.value + dir + len) % len
-}
-
-function confirmHighlight() {
-  if (highlightIndex.value >= 0 && highlightIndex.value < filteredModels.value.length) {
-    selectModel(filteredModels.value[highlightIndex.value])
-  } else {
-    showModelDropdown.value = false
-  }
-}
-
-function onClickOutside(e) {
-  if (comboboxRef.value && !comboboxRef.value.contains(e.target)) {
-    showModelDropdown.value = false
   }
 }
 
@@ -353,8 +307,8 @@ async function sendMessage() {
   const text = userInput.value.trim()
   const images = [...pendingImages.value]
   if (!text && images.length === 0) return
-  if (!modelQuery.value) { error.value = 'Please select a model'; return }
-  if (!currentRoute.value) { error.value = 'Please select a route'; return }
+  if (!modelQuery.value) { error.value = t('chat.selectModelError'); return }
+  if (!currentRoute.value) { error.value = t('chat.selectRouteError'); return }
 
   error.value = ''
 
@@ -450,15 +404,9 @@ function scrollToBottom() {
 onMounted(async () => {
   loadConversations()
   await loadRoutes()
-  // restore or create first conversation
   if (conversations.value.length > 0) {
     switchTo(conversations.value[0].id)
   }
-  document.addEventListener('click', onClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', onClickOutside)
 })
 </script>
 
@@ -561,37 +509,6 @@ onUnmounted(() => {
   padding: 5px 8px !important;
   font-size: 12px !important;
 }
-.model-combobox {
-  position: relative;
-}
-.model-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin: 2px 0 0;
-  padding: 0;
-  list-style: none;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  max-height: 260px;
-  overflow-y: auto;
-  z-index: 20;
-  box-shadow: var(--shadow-md);
-}
-.model-dropdown li {
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: var(--font-mono);
-  cursor: pointer;
-  transition: background var(--transition);
-}
-.model-dropdown li:hover,
-.model-dropdown li.highlighted {
-  background: var(--c-primary-bg);
-}
-
 /* Messages */
 .chat-messages {
   flex: 1;

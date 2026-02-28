@@ -1,34 +1,34 @@
 <template>
   <div>
     <div class="breadcrumb">
-      <router-link to="/">Dashboard</router-link>
+      <router-link to="/">{{ $t('dashboard.title') }}</router-link>
       <span class="sep">/</span>
-      <span class="current">MCP: {{ name }}</span>
+      <span class="current">{{ $t('mcpDetail.breadcrumbMcp', { name }) }}</span>
     </div>
 
     <div v-if="error" class="msg msg-error">{{ error }}</div>
 
     <div v-if="detail" class="detail-layout">
       <section class="info-section">
-        <h3>Basic Info</h3>
+        <h3>{{ $t('mcpDetail.basicInfo') }}</h3>
         <table class="info-table">
-          <tr><td>Name</td><td>{{ detail.name }}</td></tr>
-          <tr><td>Command</td><td><code>{{ detail.command }} {{ (detail.args || []).join(' ') }}</code></td></tr>
-          <tr v-if="detail.ssh"><td>SSH</td><td>{{ detail.ssh }}</td></tr>
-          <tr><td>Status</td><td :class="detail.connected ? 'text-success' : 'text-error'">{{ detail.connected ? 'Connected' : 'Disconnected' }}</td></tr>
+          <tr><td>{{ $t('mcpDetail.name') }}</td><td>{{ detail.name }}</td></tr>
+          <tr><td>{{ $t('mcpDetail.command') }}</td><td><code>{{ detail.command }} {{ (detail.args || []).join(' ') }}</code></td></tr>
+          <tr v-if="detail.ssh"><td>{{ $t('mcpDetail.ssh') }}</td><td>{{ detail.ssh }}</td></tr>
+          <tr><td>{{ $t('mcpDetail.status') }}</td><td :class="detail.connected ? 'text-success' : 'text-error'">{{ detail.connected ? $t('common.connected') : $t('common.disconnected') }}</td></tr>
         </table>
       </section>
 
       <section v-if="detail.routes && detail.routes.length > 0" class="info-section">
-        <h3>Used by Routes</h3>
+        <h3>{{ $t('mcpDetail.usedByRoutes') }}</h3>
         <div class="route-tags">
           <code v-for="r in detail.routes" :key="r" class="route-tag">{{ r }}</code>
         </div>
       </section>
 
       <section class="info-section">
-        <h3>Tools ({{ detail.tools.length }})</h3>
-        <div v-if="detail.tools.length === 0" class="empty">No tools discovered</div>
+        <h3>{{ $t('mcpDetail.tools', { n: detail.tools.length }) }}</h3>
+        <div v-if="detail.tools.length === 0" class="empty">{{ $t('mcpDetail.noTools') }}</div>
         <div v-else class="tool-list">
           <router-link
             v-for="t in detail.tools"

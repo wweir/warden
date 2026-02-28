@@ -1,25 +1,25 @@
 <template>
   <div>
     <div class="breadcrumb">
-      <router-link to="/">Dashboard</router-link>
+      <router-link to="/">{{ $t('dashboard.title') }}</router-link>
       <span class="sep">/</span>
-      <span class="current">Route: {{ routePrefix }}</span>
+      <span class="current">{{ $t('routeDetail.breadcrumbRoute', { prefix: routePrefix }) }}</span>
     </div>
 
     <div v-if="error" class="msg msg-error">{{ error }}</div>
 
     <div v-if="detail" class="detail-layout">
       <section class="info-section">
-        <h3>Basic Info</h3>
+        <h3>{{ $t('routeDetail.basicInfo') }}</h3>
         <table class="info-table">
-          <tr><td>Prefix</td><td><code>{{ detail.prefix }}</code></td></tr>
+          <tr><td>{{ $t('routeDetail.prefix') }}</td><td><code>{{ detail.prefix }}</code></td></tr>
         </table>
       </section>
 
       <section v-if="detail.system_prompts && Object.keys(detail.system_prompts).length > 0" class="info-section">
-        <h3>System Prompts</h3>
+        <h3>{{ $t('routeDetail.systemPrompts') }}</h3>
         <table class="data-table">
-          <thead><tr><th>Model</th><th>Prompt</th></tr></thead>
+          <thead><tr><th>{{ $t('routeDetail.modelCol') }}</th><th>{{ $t('routeDetail.promptCol') }}</th></tr></thead>
           <tbody>
             <tr v-for="(prompt, model) in detail.system_prompts" :key="model">
               <td><code>{{ model }}</code></td>
@@ -30,17 +30,17 @@
       </section>
 
       <section class="info-section">
-        <h3>Providers ({{ detail.providers.length }})</h3>
-        <div v-if="detail.providers.length === 0" class="empty">No providers configured</div>
+        <h3>{{ $t('routeDetail.providers', { n: detail.providers.length }) }}</h3>
+        <div v-if="detail.providers.length === 0" class="empty">{{ $t('routeDetail.noProviders') }}</div>
         <table v-else class="data-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Requests</th>
-              <th>Success</th>
-              <th>Failure</th>
-              <th>Avg Latency</th>
-              <th>Status</th>
+              <th>{{ $t('routeDetail.name') }}</th>
+              <th>{{ $t('routeDetail.requests') }}</th>
+              <th>{{ $t('routeDetail.success') }}</th>
+              <th>{{ $t('routeDetail.failure') }}</th>
+              <th>{{ $t('routeDetail.avgLatency') }}</th>
+              <th>{{ $t('routeDetail.status') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -53,9 +53,9 @@
               <td>{{ p.failure_count }}</td>
               <td>{{ p.total_requests > 0 ? p.avg_latency_ms.toFixed(0) + 'ms' : '-' }}</td>
               <td>
-                <span v-if="p.suppressed" class="badge badge-error">Suppressed</span>
-                <span v-else-if="p.consecutive_failures > 0" class="badge badge-warn">{{ p.consecutive_failures }} failures</span>
-                <span v-else class="badge badge-ok">OK</span>
+                <span v-if="p.suppressed" class="badge badge-error">{{ $t('common.suppressed') }}</span>
+                <span v-else-if="p.consecutive_failures > 0" class="badge badge-warn">{{ $t('routeDetail.failures', { n: p.consecutive_failures }) }}</span>
+                <span v-else class="badge badge-ok">{{ $t('common.ok') }}</span>
               </td>
             </tr>
           </tbody>
@@ -63,75 +63,61 @@
       </section>
 
       <section class="info-section">
-        <h3>MCP Tools ({{ detail.tools.length }})</h3>
-        <div v-if="detail.tools.length === 0" class="empty">No MCP tools configured</div>
+        <h3>{{ $t('routeDetail.mcpTools', { n: detail.tools.length }) }}</h3>
+        <div v-if="detail.tools.length === 0" class="empty">{{ $t('routeDetail.noMcpTools') }}</div>
         <table v-else class="data-table">
           <thead>
-            <tr><th>Name</th><th>Connected</th><th>Tools</th></tr>
+            <tr><th>{{ $t('routeDetail.name') }}</th><th>{{ $t('routeDetail.connected') }}</th><th>{{ $t('routeDetail.tools') }}</th></tr>
           </thead>
           <tbody>
-            <tr v-for="t in detail.tools" :key="t.name">
+            <tr v-for="mc in detail.tools" :key="mc.name">
               <td>
-                <router-link :to="'/mcp/' + encodeURIComponent(t.name)" class="resource-link">{{ t.name }}</router-link>
+                <router-link :to="'/mcp/' + encodeURIComponent(mc.name)" class="resource-link">{{ mc.name }}</router-link>
               </td>
               <td>
-                <span :class="['badge', t.connected ? 'badge-ok' : 'badge-error']">
-                  {{ t.connected ? 'Connected' : 'Disconnected' }}
+                <span :class="['badge', mc.connected ? 'badge-ok' : 'badge-error']">
+                  {{ mc.connected ? $t('routeDetail.connected') : $t('common.disconnected') }}
                 </span>
               </td>
-              <td>{{ t.tool_count }}</td>
+              <td>{{ mc.tool_count }}</td>
             </tr>
           </tbody>
         </table>
       </section>
 
       <section class="info-section">
-        <h3>Send Request</h3>
+        <h3>{{ $t('routeDetail.sendRequest') }}</h3>
         <div class="send-form">
           <div class="form-row">
-            <label>Endpoint:</label>
+            <label>{{ $t('routeDetail.endpoint') }}</label>
             <select v-model="endpoint">
               <option value="chat/completions">chat/completions</option>
               <option value="responses">responses</option>
             </select>
           </div>
           <div class="form-row">
-            <label>Model:</label>
-            <div class="model-combobox" ref="comboboxRef">
-              <input
-                v-model="modelQuery"
-                class="model-input"
-                placeholder="Search or type model name"
-                @focus="showDropdown = true"
-                @keydown.down.prevent="moveHighlight(1)"
-                @keydown.up.prevent="moveHighlight(-1)"
-                @keydown.enter.prevent="confirmHighlight"
-                @keydown.escape="showDropdown = false"
-              >
-              <ul v-if="showDropdown && filteredModels.length > 0" class="model-dropdown">
-                <li
-                  v-for="(m, i) in filteredModels"
-                  :key="m"
-                  :class="{ highlighted: i === highlightIndex }"
-                  @mousedown.prevent="selectModel(m)"
-                >{{ m }}</li>
-              </ul>
-            </div>
+            <label>{{ $t('routeDetail.model') }}</label>
+            <ModelCombobox
+              v-model="modelQuery"
+              :models="models"
+              :placeholder="$t('routeDetail.searchModel')"
+              @update:modelValue="updateTemplate"
+            />
           </div>
           <div class="form-row">
-            <label>Stream:</label>
+            <label>{{ $t('routeDetail.stream') }}</label>
             <label class="toggle">
               <input type="checkbox" v-model="stream" @change="updateTemplate">
-              <span>{{ stream ? 'On' : 'Off' }}</span>
+              <span>{{ stream ? $t('common.on') : $t('common.off') }}</span>
             </label>
           </div>
           <div class="form-row">
-            <label>Request Body:</label>
+            <label>{{ $t('routeDetail.requestBody') }}</label>
             <textarea v-model="requestBody" rows="10" class="form-input json-input" spellcheck="false"></textarea>
           </div>
           <div class="form-row">
             <button @click="send" class="btn btn-primary" :disabled="sending">
-              {{ sending ? 'Sending...' : 'Send' }}
+              {{ sending ? $t('routeDetail.sending') : $t('routeDetail.send') }}
             </button>
           </div>
         </div>
@@ -139,17 +125,17 @@
         <div v-if="response" class="response-section">
           <div class="response-meta">
             <span :class="['status-code', response.ok ? 'ok' : 'error']">{{ response.status }}</span>
-            <span class="latency">{{ response.done ? response.duration + 'ms' : 'streaming...' }}</span>
+            <span class="latency">{{ response.done ? response.duration + 'ms' : $t('routeDetail.streaming') }}</span>
           </div>
 
           <template v-if="response.streaming">
             <div class="stream-panels">
               <div class="stream-panel">
-                <h4>Content</h4>
-                <pre class="code-block" ref="contentRef">{{ response.content || '(waiting...)' }}</pre>
+                <h4>{{ $t('routeDetail.contentLabel') }}</h4>
+                <pre class="code-block" ref="contentRef">{{ response.content || $t('routeDetail.waiting') }}</pre>
               </div>
               <div class="stream-panel">
-                <h4>Raw Events <span class="event-count">({{ response.eventCount }})</span></h4>
+                <h4>{{ $t('routeDetail.rawEvents') }} <span class="event-count">({{ response.eventCount }})</span></h4>
                 <pre class="code-block raw-events" ref="eventsRef">{{ response.events }}</pre>
               </div>
             </div>
@@ -165,7 +151,11 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { fetchRouteDetail, fetchRouteModels, sendRouteRequest, createLogStream } from '../api.js'
+import ModelCombobox from '../components/ModelCombobox.vue'
+
+const { t } = useI18n()
 
 const props = defineProps({ prefix: String })
 
@@ -174,9 +164,6 @@ const error = ref('')
 const endpoint = ref('chat/completions')
 const modelQuery = ref('')
 const models = ref([])
-const showDropdown = ref(false)
-const highlightIndex = ref(-1)
-const comboboxRef = ref(null)
 const stream = ref(false)
 const requestBody = ref('')
 const sending = ref(false)
@@ -185,40 +172,6 @@ const contentRef = ref(null)
 const eventsRef = ref(null)
 
 const routePrefix = computed(() => '/' + props.prefix)
-
-const filteredModels = computed(() => {
-  const q = modelQuery.value.toLowerCase()
-  if (!q) return models.value
-  return models.value.filter(m => m.toLowerCase().includes(q))
-})
-
-function selectModel(m) {
-  modelQuery.value = m
-  showDropdown.value = false
-  highlightIndex.value = -1
-}
-
-function moveHighlight(dir) {
-  if (!showDropdown.value) { showDropdown.value = true; return }
-  const len = filteredModels.value.length
-  if (len === 0) return
-  highlightIndex.value = (highlightIndex.value + dir + len) % len
-}
-
-function confirmHighlight() {
-  if (highlightIndex.value >= 0 && highlightIndex.value < filteredModels.value.length) {
-    selectModel(filteredModels.value[highlightIndex.value])
-  } else {
-    showDropdown.value = false
-  }
-}
-
-// close dropdown on outside click
-function onClickOutside(e) {
-  if (comboboxRef.value && !comboboxRef.value.contains(e.target)) {
-    showDropdown.value = false
-  }
-}
 
 function buildTemplate() {
   const m = modelQuery.value
@@ -377,55 +330,16 @@ function startStream() {
 onMounted(() => {
   load()
   startStream()
-  document.addEventListener('click', onClickOutside)
 })
 
 onUnmounted(() => {
   if (stopStream) stopStream()
-  document.removeEventListener('click', onClickOutside)
 })
 </script>
 
 <style scoped>
 .model-combobox {
-  position: relative;
   flex: 1;
-}
-.model-input {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-family: var(--font-mono);
-  box-sizing: border-box;
-}
-.model-input:focus { border-color: var(--c-primary); outline: none; }
-.model-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin: 2px 0 0;
-  padding: 0;
-  list-style: none;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  max-height: 220px;
-  overflow-y: auto;
-  z-index: 10;
-  box-shadow: var(--shadow-md);
-}
-.model-dropdown li {
-  padding: 6px 10px;
-  font-size: 13px;
-  font-family: var(--font-mono);
-  cursor: pointer;
-}
-.model-dropdown li:hover,
-.model-dropdown li.highlighted {
-  background: var(--c-primary-bg);
 }
 .toggle {
   display: flex;

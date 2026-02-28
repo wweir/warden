@@ -1,16 +1,24 @@
 <template>
 	<div>
 		<div class="header-row">
-			<h2 class="page-title">Request Logs</h2>
+			<h2 class="page-title">{{ $t('logs.title') }}</h2>
 			<button @click="togglePause" class="btn btn-secondary btn-sm">
-				{{ paused ? "Resume" : "Pause" }}
+				{{ paused ? $t('logs.resume') : $t('logs.pause') }}
 			</button>
-			<button @click="clear" class="btn btn-secondary btn-sm">Clear</button>
+			<button @click="clear" class="btn btn-secondary btn-sm">{{ $t('logs.clear') }}</button>
 		</div>
 
 		<div v-if="error" class="msg msg-error">{{ error }}</div>
 
 		<div class="tabs" v-if="routeKeys.length">
+			<button
+				class="tab"
+				:class="{ active: activeTab === '' }"
+				@click="activeTab = ''"
+			>
+				{{ $t('logs.all') }}
+				<span class="badge">{{ chainedLogs.length }}</span>
+			</button>
 			<button
 				v-for="key in routeKeys"
 				:key="key"
@@ -19,48 +27,110 @@
 				@click="activeTab = key"
 			>
 				{{ key }}
-				<span class="badge">{{ groupedLogs[key].length }}</span>
+				<span class="badge">{{ chainsByRoute[key] || 0 }}</span>
+			</button>
+		</div>
+
+		<div class="sessions" v-if="sessionChips.length">
+			<span class="sessions-label">{{ $t('logs.sessions') }}</span>
+			<button
+				v-for="chip in sessionChips"
+				:key="chip.id"
+				class="tab session-chip"
+				:class="{ active: activeSession === chip.id }"
+				@click="activeSession = activeSession === chip.id ? null : chip.id"
+			>
+				{{ sessionName(chip) }}
+				<span class="badge">{{ chip.logs.length }} {{ $t('logs.reqs') }}</span>
 			</button>
 		</div>
 
 		<div class="table-wrap panel" ref="tableWrap">
-			<table v-if="chainedLogs.length" class="data-table">
+			<table v-if="logs.length" class="data-table">
 				<thead>
 					<tr>
 						<th class="th-toggle"></th>
-						<th>Time</th>
-						<th>Prompt</th>
-						<th>Endpoint</th>
-						<th>Model</th>
-						<th>Provider</th>
-						<th>Duration</th>
-						<th>Tools</th>
-						<th>Status</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.time') }}</span>
+							</div>
+						</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.prompt') }}</span>
+								<input
+									v-model="filters.prompt"
+									class="col-filter"
+									:class="{ active: filters.prompt }"
+									:placeholder="$t('common.filter')"
+									@click.stop
+								/>
+							</div>
+						</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.model') }}</span>
+								<input
+									v-model="filters.model"
+									class="col-filter"
+									:class="{ active: filters.model }"
+									:placeholder="$t('common.filter')"
+									@click.stop
+								/>
+							</div>
+						</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.provider') }}</span>
+								<input
+									v-model="filters.provider"
+									class="col-filter"
+									:class="{ active: filters.provider }"
+									:placeholder="$t('common.filter')"
+									@click.stop
+								/>
+							</div>
+						</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.duration') }}</span>
+							</div>
+						</th>
+						<th>
+							<div class="th-col">
+								<span>{{ $t('logs.status') }}</span>
+								<input
+									v-model="filters.status"
+									class="col-filter"
+									:class="{ active: filters.status }"
+									:placeholder="$t('common.filter')"
+									@click.stop
+								/>
+							</div>
+						</th>
 					</tr>
 				</thead>
 				<tbody>
-					<template v-for="chain in chainedLogs" :key="chain.id">
+					<template v-for="chain in filteredChains" :key="chain.id">
 						<!-- single request: flat row -->
 						<tr
-							v-if="chain.logs.length === 1"
-							:class="{ 'row-error': chain.logs[0].error, 'row-clickable': true }"
-							@click="showDetail(chain.logs[0])"
+							v-if="chain.displayLogs.length === 1"
+							:class="{ 'row-error': chain.displayLogs[0].error, 'row-clickable': true }"
+							@click="showDetail(chain.displayLogs[0])"
 						>
 							<td></td>
-							<td>{{ formatTime(chain.logs[0].timestamp) }}</td>
-							<td class="cell-prompt">{{ lastUserPreview(chain.logs[0]) }}</td>
-							<td>{{ chain.logs[0].endpoint }}</td>
-							<td>{{ chain.logs[0].model }}</td>
-							<td>{{ chain.logs[0].provider }}</td>
-							<td>{{ chain.logs[0].duration_ms }}ms</td>
-							<td>{{ chain.logs[0].steps?.length || "-" }}</td>
-							<td>{{ chain.logs[0].error || "OK" }}</td>
+							<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
+							<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
+							<td>{{ chain.displayLogs[0].model }}</td>
+							<td>{{ chain.displayLogs[0].provider }}</td>
+							<td>{{ chain.displayLogs[0].duration_ms }}ms</td>
+							<td>{{ statusText(chain.displayLogs[0]) }}</td>
 						</tr>
 						<!-- multi-request chain -->
 						<template v-else>
 							<tr
 								class="row-chain-head row-clickable"
-								:class="{ 'row-error': chain.logs.some((l) => l.error) }"
+								:class="{ 'row-error': chain.displayLogs.some((l) => l.error) }"
 								@click="toggleChain(chain.id)"
 							>
 								<td class="cell-toggle">
@@ -68,22 +138,21 @@
 										expandedChains.has(chain.id) ? "▼" : "▶"
 									}}</span>
 								</td>
-								<td>{{ formatTime(chain.logs[0].timestamp) }}</td>
-								<td class="cell-prompt">{{ lastUserPreview(chain.logs[0]) }}</td>
-								<td>{{ chain.logs[0].endpoint }}</td>
-								<td>{{ chain.logs[0].model }}</td>
+								<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
+								<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
+								<td>{{ chain.displayLogs[0].model }}</td>
 								<td>-</td>
 								<td>{{ chainTotalDuration(chain) }}ms</td>
 								<td>
 									<span class="badge badge-chain"
-										>{{ chain.logs.length }} reqs</span
+										>{{ chain.displayLogs.length }} {{ $t('logs.reqs') }}</span
 									>
+									{{ chainStatus(chain) !== "OK" ? " · " + chainStatus(chain) : "" }}
 								</td>
-								<td>{{ chainStatus(chain) }}</td>
 							</tr>
 							<template v-if="expandedChains.has(chain.id)">
 								<tr
-									v-for="(log, idx) in chain.logs"
+									v-for="(log, idx) in chain.displayLogs"
 									:key="log.request_id"
 									class="row-chain-child row-clickable"
 									:class="{ 'row-error': log.error }"
@@ -93,201 +162,145 @@
 										<span
 											class="chain-line"
 											:class="{
-												'chain-line-last': idx === chain.logs.length - 1,
+												'chain-line-last': idx === chain.displayLogs.length - 1,
 											}"
 										></span>
 									</td>
 									<td>{{ formatTime(log.timestamp) }}</td>
 									<td class="cell-prompt">{{ lastUserPreview(log) }}</td>
-									<td>{{ log.endpoint }}</td>
 									<td>{{ log.model }}</td>
 									<td>{{ log.provider }}</td>
 									<td>{{ log.duration_ms }}ms</td>
-									<td>{{ log.steps?.length || "-" }}</td>
-									<td>{{ log.error || "OK" }}</td>
+									<td>{{ statusText(log) }}</td>
 								</tr>
 							</template>
 						</template>
 					</template>
-				</tbody>
+				<tr v-if="!filteredChains.length">
+					<td colspan="7" class="empty-hint">{{ hasFilters ? $t('logs.noMatchingLogs') : $t('logs.noLogsYet') }}</td>
+				</tr>
+			</tbody>
 			</table>
-			<div v-else class="empty-hint">No logs yet.</div>
 		</div>
 
 		<!-- Detail Modal -->
 		<div v-if="selected" class="modal-overlay" @click.self="selected = null">
 			<div class="modal">
 				<div class="modal-header">
-					<h3>Request Detail</h3>
-					<button class="btn btn-secondary btn-sm" @click="selected = null">Close</button>
+					<h3>{{ $t('logs.requestDetail') }}</h3>
+					<div class="modal-header-actions">
+						<div class="view-toggle">
+							<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
+							<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
+						</div>
+						<button class="btn btn-secondary btn-sm" @click="selected = null">{{ $t('common.close') }}</button>
+					</div>
 				</div>
 
 				<div class="modal-body">
-					<table class="meta-table">
-						<tr>
-							<td>Request ID</td>
-							<td>
-								<code>{{ selected.request_id }}</code>
-							</td>
-						</tr>
-						<tr>
-							<td>Route</td>
-							<td>
-								<code>{{ selected.route }}</code>
-							</td>
-						</tr>
-						<tr>
-							<td>Model</td>
-							<td>{{ selected.model }}</td>
-						</tr>
-						<tr>
-							<td>Provider</td>
-							<td>{{ selected.provider }}</td>
-						</tr>
-						<tr>
-							<td>Duration</td>
-							<td>{{ selected.duration_ms }}ms</td>
-						</tr>
-					</table>
+					<!-- === JSON View === -->
+					<div v-if="detailView === 'json'">
+						<pre class="code-block code-block-json">{{ formatJSON(selected) }}</pre>
+					</div>
 
-					<!-- Message Chain -->
-					<div class="chain" v-if="messageChain.length">
-						<div
-							v-for="(msg, i) in messageChain"
-							:key="i"
-							class="chain-node"
-							:class="{
-								'chain-node-last':
-									i === messageChain.length - 1 && !selected.steps?.length,
-							}"
-						>
-							<div class="chain-dot" :class="'dot-' + msg.role"></div>
-							<div class="chain-content">
-								<div class="chain-label">{{ msg.role }}</div>
-								<!-- text content preview -->
-								<div v-if="msg.preview" class="chain-preview">
-									{{ msg.preview }}
-								</div>
-								<!-- tool_calls from assistant -->
-								<div v-if="msg.toolCalls?.length" class="chain-tools">
-									<div
-										v-for="(tc, j) in msg.toolCalls"
-										:key="j"
-										class="tool-chip"
-									>
-										<span class="tool-arrow">call</span>
-										<code>{{ tc.function?.name || tc.name }}</code>
-										<details>
-											<summary>args</summary>
-											<pre class="code-block">{{
-												formatJSON(tc.function?.arguments || tc.arguments)
-											}}</pre>
-										</details>
-									</div>
-								</div>
-								<!-- tool result name -->
-								<div v-if="msg.role === 'tool'" class="chain-meta">
-									tool_call_id: {{ msg.toolCallId }}
-								</div>
-								<!-- full content expandable -->
-								<details v-if="msg.raw">
-									<summary>raw</summary>
-									<pre class="code-block">{{ formatJSON(msg.raw) }}</pre>
-								</details>
-							</div>
-						</div>
+					<!-- === Timeline View === -->
+					<div v-else>
+						<table class="meta-table">
+							<tr><td>{{ $t('logs.requestId') }}</td><td><code>{{ selected.request_id }}</code></td></tr>
+							<tr><td>{{ $t('logs.route') }}</td><td><code>{{ selected.route }}</code></td></tr>
+							<tr><td>{{ $t('logs.model') }}</td><td>{{ selected.model }}</td></tr>
+							<tr><td>{{ $t('logs.provider') }}</td><td>{{ selected.provider }}</td></tr>
+							<tr><td>{{ $t('logs.duration') }}</td><td>{{ selected.duration_ms }}ms</td></tr>
+							<tr v-if="selected.fingerprint"><td>{{ $t('logs.session') }}</td><td><code class="fp-str">{{ selected.fingerprint }}</code></td></tr>
+						</table>
 
-						<!-- Gateway Steps -->
-						<div
-							v-for="(step, i) in selected.steps || []"
-							:key="'s' + i"
-							class="chain-node"
-							:class="{ 'chain-node-last': i === selected.steps.length - 1 }"
-						>
-							<div class="chain-dot dot-step"></div>
-							<div class="chain-content">
-								<div class="chain-label">gateway step {{ step.iteration }}</div>
-								<div v-if="step.tool_calls?.length" class="chain-tools">
-									<div
-										v-for="(tc, j) in step.tool_calls"
-										:key="'c' + j"
-										class="tool-chip"
-									>
-										<span class="tool-arrow">call</span>
-										<code>{{ tc.name }}</code>
-										<details>
-											<summary>args</summary>
-											<pre class="code-block">{{
-												formatJSON(tc.arguments)
-											}}</pre>
+						<!-- Timeline nodes -->
+						<div class="chain" v-if="timelineNodes.length">
+							<div
+								v-for="(node, i) in timelineNodes"
+								:key="i"
+								class="chain-node"
+								:class="{ 'chain-node-last': i === timelineNodes.length - 1 }"
+							>
+								<div class="chain-dot" :class="'dot-' + node.dotType"></div>
+								<div class="chain-content">
+									<div class="chain-label">{{ node.label }}</div>
+
+									<!-- text preview -->
+									<div v-if="node.preview" class="chain-preview">{{ node.preview }}</div>
+
+									<!-- tool call + result pair -->
+									<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
+										<div class="tool-chip">
+											<span class="tool-arrow">call</span>
+											<code>{{ node.toolName }}</code>
+										</div>
+										<details class="tool-pair-details">
+											<summary>arguments</summary>
+											<pre class="code-block">{{ formatJSON(node.toolArgs) }}</pre>
 										</details>
-									</div>
-								</div>
-								<div v-if="step.tool_results?.length" class="chain-tools">
-									<div
-										v-for="(tr, j) in step.tool_results"
-										:key="'r' + j"
-										class="tool-chip"
-									>
-										<span
-											class="tool-arrow"
-											:class="{ 'text-error': tr.is_error }"
-											>{{ tr.is_error ? "fail" : "result" }}</span
-										>
-										<details>
+										<div class="tool-chip" v-if="node.toolResult !== undefined">
+											<span class="tool-arrow" :class="{ 'text-error': node.toolError }">{{ node.toolError ? 'fail' : 'result' }}</span>
+										</div>
+										<details v-if="node.toolResult !== undefined" class="tool-pair-details">
 											<summary>output</summary>
-											<pre class="code-block">{{ tr.output }}</pre>
+											<pre class="code-block code-block-raw">{{ renderEscapes(node.toolResult) }}</pre>
 										</details>
 									</div>
+
+									<!-- tool_calls from assistant (unpaired) -->
+									<div v-if="node.toolCalls?.length" class="chain-tools">
+										<div v-for="(tc, j) in node.toolCalls" :key="j" class="tool-chip">
+											<span class="tool-arrow">call</span>
+											<code>{{ tc.function?.name || tc.name }}</code>
+											<details>
+												<summary>args</summary>
+												<pre class="code-block">{{ formatJSON(tc.function?.arguments || tc.arguments) }}</pre>
+											</details>
+										</div>
+									</div>
+
+									<!-- expandable raw content -->
+									<details v-if="node.raw" :open="node.defaultOpen || undefined">
+										<summary>raw</summary>
+										<pre class="code-block code-block-raw">{{ renderEscapes(typeof node.raw === 'string' ? node.raw : formatJSON(node.raw)) }}</pre>
+									</details>
 								</div>
 							</div>
 						</div>
-					</div>
 
-					<!-- Fallback: no messages parsed -->
-					<div v-else class="chain">
-						<div class="chain-node">
-							<div class="chain-dot dot-user"></div>
-							<div class="chain-content">
-								<div class="chain-label">request</div>
-								<details>
-									<summary>body</summary>
-									<pre class="code-block">{{ formatJSON(selected.request) }}</pre>
-								</details>
-							</div>
-						</div>
-					</div>
-
-					<!-- Response -->
-					<div
-						class="response-block"
-						:class="selected.error ? 'response-error' : 'response-ok'"
-					>
-						<span class="response-status">{{ selected.error || "OK" }}</span>
-
-						<!-- streaming request: assembled text on the left, raw response on the right -->
-						<div v-if="selected.stream && selected.response" class="response-dual">
-							<div class="response-pane">
-								<div class="pane-label">Assembled Content</div>
-								<pre class="code-block code-block-assembled">{{
-									assembledText
-								}}</pre>
-							</div>
-							<div class="response-pane">
-								<details>
-									<summary>response body</summary>
-									<pre class="code-block code-block-sse">{{
-										formatResponseBody(selected)
-									}}</pre>
-								</details>
+						<!-- Fallback: no messages parsed -->
+						<div v-else class="chain">
+							<div class="chain-node">
+								<div class="chain-dot dot-user"></div>
+								<div class="chain-content">
+									<div class="chain-label">{{ $t('logs.request') }}</div>
+									<details open>
+										<summary>body</summary>
+										<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.request)) }}</pre>
+									</details>
+								</div>
 							</div>
 						</div>
 
-						<!-- non-streaming: single view -->
-						<details v-else-if="selected.response">
-							<summary>response body</summary>
-							<pre class="code-block">{{ formatJSON(selected.response) }}</pre>
-						</details>
+						<!-- Response -->
+						<div class="response-block" :class="selected.error ? 'response-error' : 'response-ok'">
+							<span class="response-status">{{ selected.error || "OK" }}</span>
+							<div v-if="selected.stream && selected.response" class="response-pane">
+								<div class="pane-label">{{ $t('logs.response') }}</div>
+								<details :open="true">
+									<summary>{{ $t('logs.content') }}</summary>
+									<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
+								</details>
+							</div>
+							<div v-else-if="selected.response">
+								<div class="pane-label">{{ $t('logs.response') }}</div>
+								<details :open="true">
+									<summary>{{ $t('logs.content') }}</summary>
+									<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.response)) }}</pre>
+								</details>
+							</div>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -296,7 +309,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { createLogStream } from "../api.js";
 
 const logs = ref([]);
@@ -304,10 +317,13 @@ const paused = ref(false);
 const error = ref("");
 const tableWrap = ref(null);
 const selected = ref(null);
+const detailView = ref("timeline"); // "timeline" | "json"
+const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 let stopStream = null;
 const MAX_LOGS = 500;
 
 const activeTab = ref("");
+const activeSession = ref(null);
 
 const groupedLogs = computed(() => {
 	const map = {};
@@ -321,12 +337,6 @@ const groupedLogs = computed(() => {
 
 const routeKeys = computed(() => Object.keys(groupedLogs.value));
 
-const activeLogs = computed(() => {
-	if (activeTab.value && groupedLogs.value[activeTab.value]) {
-		return groupedLogs.value[activeTab.value];
-	}
-	return logs.value;
-});
 
 function formatTime(t) {
 	if (!t) return "";
@@ -424,23 +434,6 @@ function extractTextFromSSE(text) {
 	return parts.join("");
 }
 
-// format the raw response body for display (prefer raw_response if available)
-function formatResponseBody(log) {
-	const raw = log.raw_response || log.response;
-	if (!raw) return "";
-	// try to unwrap JSON-encoded string (ensureJSON wraps non-JSON as string)
-	if (typeof raw === "string") {
-		try {
-			const parsed = JSON.parse(raw);
-			if (typeof parsed === "string") return parsed;
-			return JSON.stringify(parsed, null, 2);
-		} catch {
-			return raw;
-		}
-	}
-	return JSON.stringify(raw, null, 2);
-}
-
 function togglePause() {
 	paused.value = !paused.value;
 }
@@ -504,17 +497,143 @@ function truncate(s, n) {
 	return s.length > n ? s.slice(0, n) + "..." : s;
 }
 
+// render escaped characters (\n, \t, etc.) in strings
+function renderEscapes(s) {
+	if (typeof s !== "string") return String(s);
+	return s.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r");
+}
+
+// build timeline nodes: pair tool calls with tool results, mark last request/response as defaultOpen
+const timelineNodes = computed(() => {
+	if (!selected.value) return [];
+	const chain = messageChain.value;
+	if (!chain.length) return [];
+
+	// build a map of tool_call_id -> tool message for pairing
+	const toolResultMap = new Map();
+	for (const msg of chain) {
+		if (msg.role === "tool" && msg.toolCallId) {
+			toolResultMap.set(msg.toolCallId, msg);
+		}
+	}
+
+	const nodes = [];
+	const pairedToolIds = new Set();
+
+	// find the index of the last user message for defaultOpen
+	let lastUserIdx = -1;
+	for (let i = chain.length - 1; i >= 0; i--) {
+		if (chain[i].role === "user") { lastUserIdx = i; break; }
+	}
+
+	for (let i = 0; i < chain.length; i++) {
+		const msg = chain[i];
+
+		// skip tool messages that are already paired
+		if (msg.role === "tool" && pairedToolIds.has(msg.toolCallId)) continue;
+
+		const isLastSection = i >= lastUserIdx && lastUserIdx >= 0;
+
+		if (msg.role === "assistant" && msg.toolCalls?.length) {
+			// assistant with tool_calls: emit text node if has preview, then emit paired tool nodes
+			if (msg.preview) {
+				nodes.push({
+					type: "message", dotType: "assistant", label: "assistant",
+					preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
+				});
+			}
+			for (const tc of msg.toolCalls) {
+				const callId = tc.id || tc.tool_call_id;
+				const result = callId ? toolResultMap.get(callId) : null;
+				if (result) pairedToolIds.add(callId);
+				nodes.push({
+					type: "tool-pair", dotType: "tool", label: (tc.function?.name || tc.name || "tool"),
+					toolName: tc.function?.name || tc.name,
+					toolArgs: tc.function?.arguments || tc.arguments,
+					toolResult: result ? (result.raw?.content ?? result.preview ?? "") : undefined,
+					toolError: result?.raw?.is_error || false,
+					defaultOpen: isLastSection,
+				});
+			}
+			// if assistant also has unpaired tool_calls info in raw, skip re-rendering
+			continue;
+		}
+
+		// regular message node
+		nodes.push({
+			type: "message", dotType: msg.role, label: msg.role,
+			preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
+		});
+	}
+
+	// append gateway steps
+	for (const step of selected.value.steps || []) {
+		const stepNode = {
+			type: "step", dotType: "step", label: "gateway step " + step.iteration,
+		};
+		nodes.push(stepNode);
+		if (step.tool_calls?.length) {
+			for (const tc of step.tool_calls) {
+				const tr = step.tool_results?.find((r) => r.tool_call_id === tc.id);
+				nodes.push({
+					type: "tool-pair", dotType: "tool", label: tc.name || "tool",
+					toolName: tc.name, toolArgs: tc.arguments,
+					toolResult: tr ? tr.output : undefined,
+					toolError: tr?.is_error || false,
+				});
+			}
+		}
+	}
+
+	return nodes;
+});
+
 // --- conversation chain grouping ---
 
-const CHAIN_TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes
+const CHAIN_TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes fallback for logs without fingerprint
 
-// djb2 string hash
+// djb2 string hash (kept for fallback path)
 function hashStr(s) {
 	let h = 5381;
 	for (let i = 0; i < s.length; i++) {
 		h = ((h << 5) + h + s.charCodeAt(i)) | 0;
 	}
 	return h.toString(36);
+}
+
+// parse fingerprint string "{sys_hash}{fsm}" into { sysHash, fsm }
+// sysHash = 6-hex-char hash of system prompt
+// fsm = variable-length hashes: first 6, then 5, 4, 3, minimum 2 chars each
+// Returns array of hash strings for FSM prefix matching
+function parseFingerprint(fp) {
+	if (!fp || typeof fp !== "string" || fp.length < 6) return null;
+	const sysHash = fp.slice(0, 6);
+	const fsmStr = fp.slice(6);
+	if (!fsmStr) return { sysHash, fsm: [] };
+
+	// Parse fsm with decreasing lengths: 6, 5, 4, 3, 2, 2, 2...
+	const fsm = [];
+	let pos = 0;
+	let width = 6;
+	while (pos < fsmStr.length) {
+		if (fsm.length > 0) {
+			width = Math.max(2, 6 - fsm.length);
+		}
+		const end = pos + width;
+		if (end > fsmStr.length) break;
+		fsm.push(fsmStr.slice(pos, end));
+		pos = end;
+	}
+	return { sysHash, fsm };
+}
+
+// check whether fsm_a is a strict prefix of fsm_b (fsm_b extends fsm_a by ≥1 turn)
+function isFSMPrefix(fsm_a, fsm_b) {
+	if (fsm_a.length === 0 || fsm_b.length <= fsm_a.length) return false;
+	for (let i = 0; i < fsm_a.length; i++) {
+		if (fsm_a[i] !== fsm_b[i]) return false;
+	}
+	return true;
 }
 
 function parseRequest(log) {
@@ -593,49 +712,72 @@ function toggleChain(chainId) {
 	expandedChains.value = new Set(expandedChains.value);
 }
 
-// group activeLogs into conversation chains
-// two requests belong to the same chain if:
-//   1. time gap < threshold
-//   2. the later request's user messages contain the earlier request's last user message
+// group all logs into conversation chains.
+// If fingerprint is present, use FSM prefix matching for session continuity.
+// Falls back to legacy user-message hash + time-gap heuristic for logs without fingerprint.
 const chainedLogs = computed(() => {
-	const items = activeLogs.value;
+	const items = logs.value;
 	if (!items.length) return [];
 
 	const sorted = [...items].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-	// pre-compute user message hashes for each log
+	// pre-compute legacy user message hashes for fallback path
 	const hashesMap = new Map();
 	for (const log of sorted) {
 		hashesMap.set(log, extractUserHashes(log));
 	}
 
-	const chains = []; // [{ id, logs, lastUserHash }]
+	// chains: [{ id, logs, lastFP, lastUserHash }]
+	// lastFP: fingerprint of the last log in the chain (for FSM prefix matching)
+	// lastUserHash: last user message hash (legacy fallback)
+	const chains = [];
 
 	for (const log of sorted) {
+		const parsed = parseFingerprint(log.fingerprint);
 		const ts = new Date(log.timestamp).getTime();
-		const hashes = hashesMap.get(log);
-
-		// try to find an existing chain whose last user message appears in this request
 		let matched = false;
-		for (let i = chains.length - 1; i >= 0; i--) {
-			const chain = chains[i];
-			const lastTs = new Date(chain.logs[chain.logs.length - 1].timestamp).getTime();
-			if (ts - lastTs >= CHAIN_TIME_GAP_MS) continue;
-			if (chain.lastUserHash && hashes.includes(chain.lastUserHash)) {
-				chain.logs.push(log);
-				// update chain's last user hash to this request's last user message
-				if (hashes.length > 0) {
-					chain.lastUserHash = hashes[hashes.length - 1];
+
+		if (parsed && parsed.fsm.length > 0) {
+			// fingerprint path: match by (model + sys_hash, FSM prefix)
+			for (let i = chains.length - 1; i >= 0; i--) {
+				const chain = chains[i];
+				const lastParsed = chain.lastParsed;
+				if (!lastParsed) continue;
+				if (chain.lastModel !== log.model) continue;
+				if (lastParsed.sysHash !== parsed.sysHash) continue;
+				if (isFSMPrefix(lastParsed.fsm, parsed.fsm)) {
+					chain.logs.push(log);
+					chain.lastParsed = parsed;
+					matched = true;
+					break;
 				}
-				matched = true;
-				break;
 			}
 		}
 
 		if (!matched) {
+			// fallback: legacy hash + time-gap heuristic
+			const hashes = hashesMap.get(log);
+			for (let i = chains.length - 1; i >= 0; i--) {
+				const chain = chains[i];
+				if (chain.lastParsed) continue; // skip fingerprint chains
+				const lastTs = new Date(chain.logs[chain.logs.length - 1].timestamp).getTime();
+				if (ts - lastTs >= CHAIN_TIME_GAP_MS) continue;
+				if (chain.lastUserHash && hashes.includes(chain.lastUserHash)) {
+					chain.logs.push(log);
+					if (hashes.length > 0) chain.lastUserHash = hashes[hashes.length - 1];
+					matched = true;
+					break;
+				}
+			}
+		}
+
+		if (!matched) {
+			const hashes = hashesMap.get(log);
 			chains.push({
 				id: (log.request_id || "") + "_" + chains.length,
 				logs: [log],
+				lastModel: log.model,
+				lastParsed: parsed && parsed.fsm.length > 0 ? parsed : null,
 				lastUserHash: hashes.length > 0 ? hashes[hashes.length - 1] : null,
 			});
 		}
@@ -655,6 +797,108 @@ function chainStatus(chain) {
 	return errors.length + "/" + chain.logs.length + " failed";
 }
 
+// single-log status text: includes step count if any
+function statusText(log) {
+	if (log.error) return log.error;
+	const steps = log.steps?.length;
+	return steps ? "OK · " + steps + " steps" : "OK";
+}
+
+// substring match (case-insensitive)
+function colMatch(query, ...fields) {
+	if (!query) return true;
+	const q = query.toLowerCase();
+	return fields.some((f) => (f || "").toLowerCase().includes(q));
+}
+
+const hasFilters = computed(() =>
+	Object.values(filters.value).some((v) => v.trim()),
+);
+
+// count chains per route tab
+const chainsByRoute = computed(() => {
+	const map = {};
+	for (const chain of chainedLogs.value) {
+		const key = chain.logs[0]?.route || "(unknown)";
+		map[key] = (map[key] || 0) + 1;
+	}
+	return map;
+});
+
+// session chips: multi-log chains, filtered by active route tab
+const sessionChips = computed(() => {
+	const tab = activeTab.value;
+	return chainedLogs.value.filter((chain) => {
+		if (chain.logs.length < 2) return false;
+		if (tab && (chain.logs[0]?.route || "(unknown)") !== tab) return false;
+		return true;
+	});
+});
+
+function sessionName(chain) {
+	const preview = lastUserPreview(chain.logs[0]);
+	return preview || formatTime(chain.logs[0].timestamp);
+}
+
+// clear session when route tab changes
+watch(activeTab, () => { activeSession.value = null; });
+
+// auto-expand selected session
+watch(activeSession, (id) => {
+	if (id) expandedChains.value = new Set([...expandedChains.value, id]);
+});
+
+// filter chainedLogs by active tab + session + per-column filters; each chain gets a displayLogs subset
+const filteredChains = computed(() => {
+	const f = filters.value;
+	const tab = activeTab.value;
+
+	// session selected: show only that session's logs
+	if (activeSession.value) {
+		const chain = chainedLogs.value.find((c) => c.id === activeSession.value);
+		if (!chain) return [];
+		if (!hasFilters.value) return [{ ...chain, displayLogs: chain.logs }];
+		const matchingLogs = chain.logs.filter((log) => {
+			const prompt = lastUserPreview(log);
+			const status = log.error || "OK";
+			return (
+				colMatch(f.prompt, prompt) &&
+				colMatch(f.model, log.model) &&
+				colMatch(f.provider, log.provider) &&
+				colMatch(f.status, status)
+			);
+		});
+		return matchingLogs.length ? [{ ...chain, displayLogs: matchingLogs }] : [];
+	}
+
+	// tab filter first
+	const tabChains = chainedLogs.value.filter((chain) => {
+		if (tab && (chain.logs[0]?.route || "(unknown)") !== tab) return false;
+		return true;
+	});
+
+	if (!hasFilters.value) {
+		return tabChains.map((chain) => ({ ...chain, displayLogs: chain.logs }));
+	}
+	const result = [];
+	for (const chain of tabChains) {
+		const matchingLogs = chain.logs.filter((log) => {
+			const prompt = lastUserPreview(log);
+			const status = log.error || "OK";
+			return (
+				colMatch(f.prompt, prompt) &&
+				colMatch(f.model, log.model) &&
+				colMatch(f.provider, log.provider) &&
+				colMatch(f.status, status)
+			);
+		});
+		if (matchingLogs.length > 0) {
+			result.push({ ...chain, displayLogs: matchingLogs });
+		}
+	}
+	return result;
+});
+
 function scrollToBottom() {
 	nextTick(() => {
 		if (tableWrap.value) {
@@ -671,9 +915,6 @@ onMounted(() => {
 			logs.value.push(data);
 			if (logs.value.length > MAX_LOGS) {
 				logs.value = logs.value.slice(-MAX_LOGS);
-			}
-			if (!activeTab.value) {
-				activeTab.value = data.route || "(unknown)";
 			}
 			scrollToBottom();
 		},
@@ -708,6 +949,66 @@ onUnmounted(() => {
 	position: sticky;
 	top: 0;
 	z-index: 1;
+	vertical-align: top;
+}
+
+/* Column header layout: label on top, filter input below */
+.th-col {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.th-col > span {
+	white-space: nowrap;
+}
+.col-filter {
+	width: 100%;
+	min-width: 60px;
+	padding: 2px 6px;
+	border: 1px solid var(--c-border-light);
+	border-radius: 3px;
+	background: var(--c-bg);
+	color: var(--c-text);
+	font-size: 11px;
+	font-weight: 400;
+	outline: none;
+	box-sizing: border-box;
+	transition: border-color 0.15s;
+}
+.col-filter:focus {
+	border-color: var(--c-primary);
+}
+.col-filter.active {
+	border-color: var(--c-primary);
+	background: var(--c-primary-bg);
+}
+
+/* Session chips */
+.sessions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 12px;
+	flex-wrap: wrap;
+	padding: 8px 12px;
+	background: var(--c-border-light);
+	border-radius: var(--radius);
+	border-left: 3px solid var(--c-primary);
+}
+.sessions-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--c-text-3);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+	margin-right: 2px;
+}
+.session-chip {
+	max-width: 260px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* Route tabs */
@@ -802,6 +1103,26 @@ onUnmounted(() => {
 }
 .modal-header h3 {
 	margin: 0;
+}
+.modal-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.view-toggle {
+	display: flex;
+	gap: 2px;
+	border: 1px solid var(--c-border-light);
+	border-radius: var(--radius);
+	overflow: hidden;
+}
+.view-toggle .btn {
+	border-radius: 0;
+	border: none;
+}
+.btn-primary {
+	background: var(--c-primary);
+	color: #fff;
 }
 .modal-body {
 	padding: 20px;
@@ -948,6 +1269,18 @@ summary:hover {
 	max-height: 500px;
 	overflow-y: auto;
 }
+.code-block-json {
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: calc(85vh - 120px);
+	overflow-y: auto;
+}
+.code-block-raw {
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 500px;
+	overflow-y: auto;
+}
 .code-block-sse {
 	white-space: pre-wrap;
 	word-break: break-all;
@@ -980,6 +1313,25 @@ summary:hover {
 	color: var(--c-text-3);
 	font-family: monospace;
 	flex-shrink: 0;
+}
+.tool-pair-block {
+	margin: 4px 0 8px 0;
+	padding: 8px 10px;
+	background: var(--c-bg);
+	border: 1px solid var(--c-border-light);
+	border-radius: var(--radius);
+}
+.tool-pair-block .tool-chip {
+	margin-bottom: 2px;
+}
+.tool-pair-details {
+	margin: 2px 0 6px 0;
+}
+.tool-pair-details summary {
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--c-text-3);
+	padding: 2px 0;
 }
 
 /* Chain grouping */
@@ -1055,6 +1407,11 @@ summary:hover {
 	white-space: nowrap;
 	font-size: 12px;
 	color: var(--c-text-2);
+}
+
+.fp-str {
+	font-size: 11px;
+	color: var(--c-text-3);
 }
 
 @media (max-width: 768px) {

@@ -1,20 +1,29 @@
 <template>
   <div>
-    <h2>Configuration</h2>
+    <h2>{{ $t('config.title') }}</h2>
+
+    <div v-if="configSource && !configSource.source_type?.file" class="msg warning">
+      {{ $t('config.nonFileWarning', { path: configSource.config_path || 'remote' }) }}
+    </div>
+
+    <div v-if="configFileChanged" class="msg warning">
+      {{ $t('config.externalChange') }}
+      <button @click="load" class="btn btn-sm">{{ $t('common.reload') }}</button>
+    </div>
 
     <div v-if="message" :class="['msg', messageType]">{{ message }}</div>
     <div v-if="error" class="msg error">{{ error }}</div>
 
     <div class="actions">
-      <button @click="apply" class="btn btn-primary" :disabled="applying">
-        {{ applying ? 'Applying...' : 'Apply' }}
+      <button @click="apply" class="btn btn-primary" :disabled="applying || (configSource && !configSource.source_type?.file)">
+        {{ applying ? (waitingAlive ? $t('config.waitingService', { n: waitingElapsed }) : $t('config.applying')) : $t('config.apply') }}
       </button>
-      <button v-if="dirty" @click="discard" class="btn btn-secondary">Discard Changes</button>
+      <button v-if="dirty && !applying" @click="discard" class="btn btn-secondary">{{ $t('config.discardChanges') }}</button>
     </div>
 
     <!-- General -->
     <section class="config-section">
-      <h3>General</h3>
+      <h3>{{ $t('config.general') }}</h3>
       <div class="form-grid">
         <label>addr</label>
         <input v-model="config.addr" class="form-input" placeholder=":8080" />
@@ -35,20 +44,114 @@
             {{ adminPwConfigured ? 'Configured' : 'Not set' }}
           </span>
         </div>
+      </div>
 
-        <label>log.file_dir</label>
-        <input :value="logFileDir" @input="setLogFileDir($event.target.value)" class="form-input" placeholder="/var/log/warden" />
+      <!-- log targets -->
+      <div class="subsection-header">
+        <span>log.targets</span>
+        <button class="btn btn-sm" @click="addLogTarget">{{ $t('config.addTarget') }}</button>
+      </div>
+      <div v-for="(t, i) in (config.log?.targets || [])" :key="i" class="card">
+        <div class="card-header" @click="toggleCard('log-target', i)">
+          <strong>{{ t.type || 'file' }}</strong>
+          <span v-if="t.type === 'file'" class="tag-proto">{{ t.dir || '(no dir)' }}</span>
+          <span v-else class="tag-proto">{{ t.webhook || '(no webhook)' }}</span>
+          <span class="chevron">{{ isCardOpen('log-target', i) ? '▼' : '▶' }}</span>
+        </div>
+        <div v-show="isCardOpen('log-target', i)" class="card-body">
+          <div class="form-grid">
+            <label>type <span class="req">*</span></label>
+            <select v-model="t.type" class="form-input">
+              <option value="file">file</option>
+              <option value="http">http</option>
+            </select>
+
+            <template v-if="t.type === 'file'">
+              <label>dir <span class="req">*</span></label>
+              <input v-model="t.dir" class="form-input" placeholder="./logs" />
+            </template>
+
+            <template v-else>
+              <label>webhook <span class="req">*</span></label>
+              <select v-model="t.webhook" class="form-input">
+                <option value="">(none)</option>
+                <option v-for="w in webhookNames" :key="w" :value="w">{{ w }}</option>
+              </select>
+            </template>
+          </div>
+          <button class="btn btn-danger btn-sm" @click="removeLogTarget(i)">Delete</button>
+        </div>
       </div>
     </section>
 
-    <!-- SSH -->
+    <!-- Webhook -->
+    <section class="config-section">
+      <div class="section-header" @click="webhookOpen = !webhookOpen">
+        <h3>{{ $t('config.webhook') }} <span class="count">({{ webhookCount }})</span></h3>
+        <span class="chevron">{{ webhookOpen ? '▼' : '▶' }}</span>
+      </div>
+      <div v-show="webhookOpen">
+        <div class="add-row">
+          <template v-if="addingSection === 'webhook'">
+            <input ref="addInputRef" v-model="addingKey" class="form-input add-input"
+              placeholder="Webhook name" @keyup.enter="confirmAdd" @keyup.esc="cancelAdd" />
+            <button class="btn btn-sm" @click="confirmAdd">Confirm</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
+          </template>
+          <button v-else class="btn btn-sm" @click="startAdd('webhook')">+ Add</button>
+        </div>
+        <div v-for="(cfg, name) in config.webhook" :key="'webhook-'+name" class="card">
+          <div class="card-header" @click="toggleCard('webhook', name)">
+            <strong>{{ name }}</strong>
+            <span class="tag-proto">{{ cfg.url || '(no url)' }}</span>
+            <span class="chevron">{{ isCardOpen('webhook', name) ? '▼' : '▶' }}</span>
+          </div>
+          <div v-show="isCardOpen('webhook', name)" class="card-body">
+            <div class="form-grid">
+              <label>url <span class="req">*</span></label>
+              <input v-model="cfg.url" class="form-input" placeholder="https://your-log-sink/api/ingest" />
+
+              <label>method</label>
+              <select v-model="cfg.method" class="form-input">
+                <option value="">POST (default)</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="PATCH">PATCH</option>
+              </select>
+
+              <label>headers</label>
+              <KeyValueEditor v-model="cfg.headers" keyPlaceholder="Header name" valuePlaceholder="Value" />
+
+              <label>body_template</label>
+              <textarea v-model="cfg.body_template" class="form-input form-textarea"
+                placeholder="Go template; omit to send record as plain JSON&#10;Example: {&quot;id&quot;: &quot;{{ .Record.RequestID }}&quot;}" />
+
+              <label>timeout</label>
+              <input v-model="cfg.timeout" class="form-input" placeholder="5s" />
+
+              <label>retry</label>
+              <input v-model.number="cfg.retry" class="form-input" type="number" placeholder="2" />
+            </div>
+            <button class="btn btn-danger btn-sm" @click="deleteMapEntry('webhook', name)">Delete</button>
+          </div>
+        </div>
+      </div>
+    </section>
     <section class="config-section">
       <div class="section-header" @click="sshOpen = !sshOpen">
-        <h3>SSH <span class="count">({{ sshCount }})</span></h3>
+        <h3>{{ $t('config.ssh') }} <span class="count">({{ sshCount }})</span></h3>
         <span class="chevron">{{ sshOpen ? '▼' : '▶' }}</span>
       </div>
       <div v-show="sshOpen">
-        <button class="btn btn-small" @click="addMapEntry('ssh')">+ Add</button>
+        <div class="add-row">
+          <template v-if="addingSection === 'ssh'">
+            <input ref="addInputRef" v-model="addingKey" class="form-input add-input"
+              placeholder="Entry name" @keyup.enter="confirmAdd" @keyup.esc="cancelAdd" />
+            <button class="btn btn-sm" @click="confirmAdd">Confirm</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
+          </template>
+          <button v-else class="btn btn-sm" @click="startAdd('ssh')">+ Add</button>
+        </div>
         <div v-for="(cfg, name) in config.ssh" :key="'ssh-'+name" class="card">
           <div class="card-header" @click="toggleCard('ssh', name)">
             <strong>{{ name }}</strong>
@@ -65,7 +168,7 @@
               <label>identity_file</label>
               <input v-model="cfg.identity_file" class="form-input" />
             </div>
-            <button class="btn btn-danger btn-small" @click="deleteMapEntry('ssh', name)">Delete</button>
+            <button class="btn btn-danger btn-sm" @click="deleteMapEntry('ssh', name)">Delete</button>
           </div>
         </div>
       </div>
@@ -74,11 +177,19 @@
     <!-- Providers -->
     <section class="config-section">
       <div class="section-header" @click="providersOpen = !providersOpen">
-        <h3>Providers <span class="count">({{ providerCount }})</span></h3>
+        <h3>{{ $t('config.providersSection') }} <span class="count">({{ providerCount }})</span></h3>
         <span class="chevron">{{ providersOpen ? '▼' : '▶' }}</span>
       </div>
       <div v-show="providersOpen">
-        <button class="btn btn-small" @click="addMapEntry('provider')">+ Add</button>
+        <div class="add-row">
+          <template v-if="addingSection === 'provider'">
+            <input ref="addInputRef" v-model="addingKey" class="form-input add-input"
+              placeholder="Provider name" @keyup.enter="confirmAdd" @keyup.esc="cancelAdd" />
+            <button class="btn btn-sm" @click="confirmAdd">Confirm</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
+          </template>
+          <button v-else class="btn btn-sm" @click="startAdd('provider')">+ Add</button>
+        </div>
         <div v-for="(cfg, name) in config.provider" :key="'prov-'+name" class="card">
           <div class="card-header" @click="toggleCard('provider', name)">
             <strong>{{ name }}</strong>
@@ -87,10 +198,8 @@
           </div>
           <div v-show="isCardOpen('provider', name)" class="card-body">
             <div class="form-grid">
-              <label>url <span class="req">*</span></label>
-              <input v-model="cfg.url" class="form-input" />
-
-              <label>protocol</label>
+              <!-- protocol always first -->
+              <label>protocol <span class="req">*</span></label>
               <select v-model="cfg.protocol" class="form-input">
                 <option value="openai">openai</option>
                 <option value="anthropic">anthropic</option>
@@ -99,48 +208,90 @@
                 <option value="copilot">copilot</option>
               </select>
 
-              <label>api_key</label>
-              <div class="secret-field">
-                <input
-                  :type="isSecretVisible('prov-apikey-'+name) ? 'text' : 'password'"
-                  :value="secretDisplay(cfg.api_key)"
-                  @input="cfg.api_key = $event.target.value"
-                  class="form-input"
-                  placeholder="(not set)"
-                />
-                <button class="btn-icon" @click="toggleSecret('prov-apikey-'+name)" type="button">
-                  {{ isSecretVisible('prov-apikey-'+name) ? '🙈' : '👁' }}
-                </button>
-                <span :class="['badge', isSecretConfigured(cfg.api_key) ? 'badge-ok' : 'badge-none']">
-                  {{ isSecretConfigured(cfg.api_key) ? 'Configured' : 'Not set' }}
-                </span>
-              </div>
+              <!-- url + proxy: only for openai/anthropic/ollama -->
+              <template v-if="!['qwen','copilot'].includes(cfg.protocol || 'openai')">
+                <label>url <span class="req">*</span></label>
+                <div class="url-field">
+                  <input v-model="cfg.url" class="form-input"
+                    :placeholder="providerUrlPlaceholder(cfg.protocol)" />
+                  <input v-model="cfg.proxy" class="form-input url-proxy"
+                    placeholder="proxy (socks5://...)" />
+                </div>
+
+                <label>api_key</label>
+                <div class="secret-field">
+                  <input
+                    :type="isSecretVisible('prov-apikey-'+name) ? 'text' : 'password'"
+                    :value="secretDisplay(cfg.api_key)"
+                    @input="cfg.api_key = $event.target.value"
+                    class="form-input"
+                    placeholder="(not set)"
+                  />
+                  <button class="btn-icon" @click="toggleSecret('prov-apikey-'+name)" type="button">
+                    {{ isSecretVisible('prov-apikey-'+name) ? '🙈' : '👁' }}
+                  </button>
+                  <span :class="['badge', isSecretConfigured(cfg.api_key) ? 'badge-ok' : 'badge-none']">
+                    {{ isSecretConfigured(cfg.api_key) ? 'Configured' : 'Not set' }}
+                  </span>
+                </div>
+              </template>
+
+              <!-- config_dir + ssh: for qwen/copilot OAuth credentials -->
+              <template v-if="['qwen','copilot'].includes(cfg.protocol)">
+                <label>config_dir</label>
+                <input v-model="cfg.config_dir" class="form-input"
+                  :placeholder="cfg.protocol === 'qwen' ? '~/.qwen' : '~/.config/github-copilot'" />
+
+                <label>ssh</label>
+                <select v-model="cfg.ssh" class="form-input">
+                  <option value="">(none)</option>
+                  <option v-for="s in sshNames" :key="s" :value="s">{{ s }}</option>
+                </select>
+
+                <label>proxy</label>
+                <input v-model="cfg.proxy" class="form-input" placeholder="socks5://127.0.0.1:1080" />
+              </template>
 
               <label>timeout</label>
               <input v-model="cfg.timeout" class="form-input" placeholder="60s" />
 
-              <label>proxy</label>
-              <input v-model="cfg.proxy" class="form-input" placeholder="socks5://127.0.0.1:1080" />
-
-              <label>config_dir</label>
-              <input v-model="cfg.config_dir" class="form-input" />
-
-              <label>ssh</label>
-              <select v-model="cfg.ssh" class="form-input">
-                <option value="">(none)</option>
-                <option v-for="s in sshNames" :key="s" :value="s">{{ s }}</option>
-              </select>
+              <!-- headers: for openai/anthropic/ollama only -->
+              <template v-if="!['qwen','copilot'].includes(cfg.protocol || 'openai')">
+                <label>headers</label>
+                <KeyValueEditor v-model="cfg.headers" keyPlaceholder="Header name" valuePlaceholder="Value" />
+              </template>
 
               <label>models</label>
               <TagListEditor v-model="cfg.models" placeholder="Model ID" />
 
-              <label>model_aliases</label>
-              <KeyValueEditor v-model="cfg.model_aliases" keyPlaceholder="Alias" valuePlaceholder="Real model" />
+              <template v-if="cfg.protocol !== 'copilot'">
+                <label>model_aliases</label>
+                <KeyValueEditor v-model="cfg.model_aliases" keyPlaceholder="Alias" valuePlaceholder="Real model" />
+              </template>
 
-              <label>headers</label>
-              <KeyValueEditor v-model="cfg.headers" keyPlaceholder="Header name" valuePlaceholder="Value" />
+              <!-- request_patch: advanced, for openai/anthropic/ollama -->
+              <template v-if="!['qwen','copilot'].includes(cfg.protocol || 'openai')">
+                <label>request_patch</label>
+                <div>
+                  <div v-for="(op, i) in (cfg.request_patch || [])" :key="i" class="patch-row">
+                    <select v-model="op.op" class="form-input form-input-sm">
+                      <option>add</option>
+                      <option>remove</option>
+                      <option>replace</option>
+                      <option>move</option>
+                      <option>copy</option>
+                      <option>test</option>
+                    </select>
+                    <input v-model="op.path" class="form-input" placeholder="/path" />
+                    <input v-if="op.op === 'move' || op.op === 'copy'" v-model="op.from" class="form-input" placeholder="/from" />
+                    <input v-if="['add','replace','test'].includes(op.op)" v-model="op.value" class="form-input" placeholder="value" />
+                    <button class="btn-icon btn-danger-icon" @click="removePatchOp(cfg, i)" type="button">✕</button>
+                  </div>
+                  <button class="btn btn-sm" @click="addPatchOp(cfg)" type="button">+ Add op</button>
+                </div>
+              </template>
             </div>
-            <button class="btn btn-danger btn-small" @click="deleteMapEntry('provider', name)">Delete</button>
+            <button class="btn btn-danger btn-sm" @click="deleteMapEntry('provider', name)">Delete</button>
           </div>
         </div>
       </div>
@@ -149,11 +300,19 @@
     <!-- Routes -->
     <section class="config-section">
       <div class="section-header" @click="routesOpen = !routesOpen">
-        <h3>Routes <span class="count">({{ routeCount }})</span></h3>
+        <h3>{{ $t('config.routesSection') }} <span class="count">({{ routeCount }})</span></h3>
         <span class="chevron">{{ routesOpen ? '▼' : '▶' }}</span>
       </div>
       <div v-show="routesOpen">
-        <button class="btn btn-small" @click="addMapEntry('route')">+ Add</button>
+        <div class="add-row">
+          <template v-if="addingSection === 'route'">
+            <input ref="addInputRef" v-model="addingKey" class="form-input add-input"
+              placeholder="Route prefix" @keyup.enter="confirmAdd" @keyup.esc="cancelAdd" />
+            <button class="btn btn-sm" @click="confirmAdd">Confirm</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
+          </template>
+          <button v-else class="btn btn-sm" @click="startAdd('route')">+ Add</button>
+        </div>
         <div v-for="(cfg, prefix) in config.route" :key="'route-'+prefix" class="card">
           <div class="card-header" @click="toggleCard('route', prefix)">
             <strong>{{ prefix }}</strong>
@@ -173,7 +332,7 @@
               <label>system_prompts</label>
               <KeyValueEditor v-model="cfg.system_prompts" keyPlaceholder="Model name" valuePlaceholder="System prompt" />
             </div>
-            <button class="btn btn-danger btn-small" @click="deleteMapEntry('route', prefix)">Delete</button>
+            <button class="btn btn-danger btn-sm" @click="deleteMapEntry('route', prefix)">Delete</button>
           </div>
         </div>
       </div>
@@ -182,11 +341,19 @@
     <!-- MCP -->
     <section class="config-section">
       <div class="section-header" @click="mcpOpen = !mcpOpen">
-        <h3>MCP <span class="count">({{ mcpCount }})</span></h3>
+        <h3>{{ $t('config.mcp') }} <span class="count">({{ mcpCount }})</span></h3>
         <span class="chevron">{{ mcpOpen ? '▼' : '▶' }}</span>
       </div>
       <div v-show="mcpOpen">
-        <button class="btn btn-small" @click="addMapEntry('mcp')">+ Add</button>
+        <div class="add-row">
+          <template v-if="addingSection === 'mcp'">
+            <input ref="addInputRef" v-model="addingKey" class="form-input add-input"
+              placeholder="MCP name" @keyup.enter="confirmAdd" @keyup.esc="cancelAdd" />
+            <button class="btn btn-sm" @click="confirmAdd">Confirm</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
+          </template>
+          <button v-else class="btn btn-sm" @click="startAdd('mcp')">+ Add</button>
+        </div>
         <div v-for="(cfg, name) in config.mcp" :key="'mcp-'+name" class="card">
           <div class="card-header" @click="toggleCard('mcp', name)">
             <strong>{{ name }}</strong>
@@ -209,7 +376,7 @@
               <label>env</label>
               <KeyValueEditor v-model="cfg.env" keyPlaceholder="Variable" valuePlaceholder="Value" />
             </div>
-            <button class="btn btn-danger btn-small" @click="deleteMapEntry('mcp', name)">Delete</button>
+            <button class="btn btn-danger btn-sm" @click="deleteMapEntry('mcp', name)">Delete</button>
           </div>
         </div>
       </div>
@@ -219,19 +386,24 @@
 
 <script setup>
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
-import { fetchConfig, saveConfig, validateConfig, restartGateway } from '../api.js'
+import { useI18n } from 'vue-i18n'
+import { fetchConfig, fetchConfigSource, saveConfig, validateConfig, restartGateway, fetchStatus } from '../api.js'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import TagListEditor from '../components/TagListEditor.vue'
+
+const { t } = useI18n()
 
 const REDACTED = '__REDACTED__'
 
 const config = ref({})
+const configSource = ref(null) // { source_type: { file: bool }, config_path: string, config_hash: string }
 const message = ref('')
 const messageType = ref('success')
 const error = ref('')
 const applying = ref(false)
 const dirty = ref(false)
 const loading = ref(false)
+const configFileChanged = ref(false) // true if config file changed externally
 
 // track config modifications via deep watch
 watch(config, () => {
@@ -240,6 +412,7 @@ watch(config, () => {
 
 // section collapse state
 const sshOpen = ref(false)
+const webhookOpen = ref(false)
 const providersOpen = ref(true)
 const routesOpen = ref(true)
 const mcpOpen = ref(false)
@@ -253,12 +426,14 @@ const visibleSecrets = reactive({})
 
 // counts
 const sshCount = computed(() => Object.keys(config.value.ssh || {}).length)
+const webhookCount = computed(() => Object.keys(config.value.webhook || {}).length)
 const providerCount = computed(() => Object.keys(config.value.provider || {}).length)
 const routeCount = computed(() => Object.keys(config.value.route || {}).length)
 const mcpCount = computed(() => Object.keys(config.value.mcp || {}).length)
 
 // names for cross-references
 const sshNames = computed(() => Object.keys(config.value.ssh || {}))
+const webhookNames = computed(() => Object.keys(config.value.webhook || {}))
 const providerNames = computed(() => Object.keys(config.value.provider || {}))
 const mcpNames = computed(() => Object.keys(config.value.mcp || {}))
 
@@ -283,11 +458,16 @@ function onAdminPwInput(val) {
   config.value.admin_password = val
 }
 
-// log config helper
-const logFileDir = computed(() => config.value.log?.file_dir || '')
-function setLogFileDir(val) {
-  if (!config.value.log) config.value.log = {}
-  config.value.log.file_dir = val
+// log targets helpers
+function addLogTarget() {
+  if (!config.value.log) config.value.log = { targets: [] }
+  if (!config.value.log.targets) config.value.log.targets = []
+  const i = config.value.log.targets.length
+  config.value.log.targets.push({ type: 'file', dir: '' })
+  nextTick(() => { openCards['log-target/' + i] = true })
+}
+function removeLogTarget(i) {
+  config.value.log.targets.splice(i, 1)
 }
 
 // card toggle
@@ -305,28 +485,73 @@ function toggleSecret(id) { visibleSecrets[id] = !visibleSecrets[id] }
 function secretDisplay(val) { return val === REDACTED ? REDACTED : (val || '') }
 function isSecretConfigured(val) { return val && val !== '' }
 
+// provider url placeholder by protocol
+function providerUrlPlaceholder(protocol) {
+  switch (protocol) {
+    case 'anthropic': return 'https://api.anthropic.com'
+    case 'ollama': return 'http://localhost:11434'
+    case 'qwen': return '(defaults to dashscope or portal.qwen.ai)'
+    case 'copilot': return '(defaults to api.githubcopilot.com)'
+    default: return 'https://api.openai.com/v1'
+  }
+}
+
+// request_patch helpers
+function addPatchOp(cfg) {
+  if (!cfg.request_patch) cfg.request_patch = []
+  cfg.request_patch.push({ op: 'add', path: '', value: '' })
+}
+function removePatchOp(cfg, i) {
+  cfg.request_patch.splice(i, 1)
+}
+
 // add/delete map entries
-function addMapEntry(section) {
-  const key = prompt(`Enter name for new ${section} entry:`)
+const addingSection = ref('')
+const addingKey = ref('')
+const addInputRef = ref(null)
+
+function startAdd(section) {
+  addingSection.value = section
+  addingKey.value = ''
+  // open the section and focus input after render
+  if (section === 'ssh') sshOpen.value = true
+  else if (section === 'webhook') webhookOpen.value = true
+  else if (section === 'provider') providersOpen.value = true
+  else if (section === 'route') routesOpen.value = true
+  else if (section === 'mcp') mcpOpen.value = true
+  nextTick(() => addInputRef.value?.focus())
+}
+
+function confirmAdd() {
+  const section = addingSection.value
+  const key = addingKey.value.trim()
   if (!key) return
   const map = config.value[section]
   if (map && key in map) {
-    error.value = `${section} "${key}" already exists`
+    error.value = t('config.alreadyExists', { section, key })
     return
   }
   if (!config.value[section]) config.value[section] = {}
   const defaults = {
     ssh: { host: '' },
+    webhook: { url: '', method: 'POST' },
     provider: { url: '', protocol: 'openai' },
     route: { providers: [], tools: [] },
     mcp: { command: '' },
   }
   config.value[section][key] = defaults[section] || {}
   openCards[section + '/' + key] = true
+  addingSection.value = ''
+  addingKey.value = ''
+}
+
+function cancelAdd() {
+  addingSection.value = ''
+  addingKey.value = ''
 }
 
 function deleteMapEntry(section, key) {
-  if (!confirm(`Delete ${section} "${key}"?`)) return
+  if (!confirm(t('config.confirmDelete', { section, key }))) return
   delete config.value[section][key]
   // force reactivity
   config.value[section] = { ...config.value[section] }
@@ -359,12 +584,14 @@ function cleanConfig(obj) {
 async function load() {
   loading.value = true
   try {
-    const cfg = await fetchConfig()
+    const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()])
     config.value = cfg
+    configSource.value = source
     adminPwEdited.value = false
     adminPwValue.value = ''
     error.value = ''
     message.value = ''
+    configFileChanged.value = false
     await nextTick() // let deep watcher run while loading=true
     dirty.value = false
   } catch (e) {
@@ -376,20 +603,56 @@ async function load() {
 
 // discard local edits, reload running config
 function discard() {
-  if (!confirm('Discard all unsaved changes?')) return
+  if (!confirm(t('config.confirmDiscard'))) return
   load()
 }
 
-// validate → save → restart → reload
+// validate → save → restart → poll until alive → reload
+const waitingAlive = ref(false)
+const waitingElapsed = ref(0)
+
+async function pollUntilAlive(timeoutMs = 60000, intervalMs = 1500) {
+  const deadline = Date.now() + timeoutMs
+  waitingAlive.value = true
+  waitingElapsed.value = 0
+  const startMs = Date.now()
+  const ticker = setInterval(() => {
+    waitingElapsed.value = Math.floor((Date.now() - startMs) / 1000)
+  }, 500)
+  try {
+    // first wait a short period so the old process has time to shut down
+    await new Promise(r => setTimeout(r, 800))
+    while (Date.now() < deadline) {
+      try {
+        await fetchStatus()
+        return true
+      } catch {
+        await new Promise(r => setTimeout(r, intervalMs))
+      }
+    }
+    return false
+  } finally {
+    clearInterval(ticker)
+    waitingAlive.value = false
+    waitingElapsed.value = 0
+  }
+}
+
 async function apply() {
   applying.value = true
   message.value = ''
   error.value = ''
   try {
+    // check if config source is file-based
+    if (!configSource.value?.source_type?.file) {
+      error.value = t('config.savingDisabled')
+      return
+    }
+
     // step 1: validate
     const result = await validateConfig(cleanConfig(config.value))
     if (!result.valid) {
-      error.value = 'Validation failed: ' + result.error
+      error.value = t('config.validationFailed', { error: result.error })
       return
     }
     // step 2: save to file
@@ -397,15 +660,26 @@ async function apply() {
     // step 3: restart gateway to apply
     const restart = await restartGateway()
     if (restart.status !== 'ok') {
-      error.value = 'Saved but restart failed: ' + (restart.error || 'unknown error')
+      error.value = t('config.savedButRestartFailed', { error: restart.error || 'unknown error' })
       return
     }
-    // step 4: reload fresh state
+    // step 4: poll until service is back up (max 60s)
+    const alive = await pollUntilAlive()
+    if (!alive) {
+      error.value = t('config.serviceTimeout')
+      return
+    }
+    // step 5: reload fresh state
     await load()
-    message.value = 'Configuration applied'
+    message.value = t('config.applied')
     messageType.value = 'success'
   } catch (e) {
-    error.value = e.message
+    if (e.message?.includes('config file changed externally')) {
+      configFileChanged.value = true
+      error.value = t('config.externalChangeError')
+    } else {
+      error.value = e.message
+    }
   } finally {
     applying.value = false
   }
@@ -461,6 +735,24 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
 }
 
 .req { color: var(--c-danger); }
+.hint { color: var(--c-text-3); font-size: 11px; font-weight: normal; }
+
+.patch-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.patch-row .form-input { flex: 1; }
+.form-input-sm { flex: 0 0 90px !important; }
+.btn-danger-icon { color: var(--c-danger); }
+
+.url-field {
+  display: flex;
+  gap: 6px;
+}
+.url-field .form-input { flex: 1; }
+.url-proxy { flex: 0 0 210px !important; color: var(--c-text-3); }
 
 .secret-field {
   display: flex;
@@ -495,6 +787,14 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   border-top: 1px solid var(--c-border);
 }
 
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.add-input { width: 220px; flex: 0 0 220px; }
+
 .tag-proto {
   font-size: 11px;
   background: var(--c-primary-bg);
@@ -502,6 +802,25 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 500;
+}
+
+.subsection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 14px 0 4px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  font-family: var(--font-mono);
+}
+
+.form-textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  box-sizing: border-box;
 }
 
 @media (max-width: 768px) {

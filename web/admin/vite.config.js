@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import compression from 'vite-plugin-compression'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), compression({ algorithm: 'brotliCompress', ext: '.br', threshold: 0 })],
   base: '/_admin/',
   build: {
     outDir: 'dist',

@@ -11,10 +11,16 @@
         <span class="menu-bar"></span>
       </button>
       <div :class="['nav-links', { open: menuOpen }]">
-        <router-link to="/" exact @click="menuOpen = false">Dashboard</router-link>
-        <router-link to="/chat" @click="menuOpen = false">Chat</router-link>
-        <router-link to="/config" @click="menuOpen = false">Config</router-link>
-        <router-link to="/logs" @click="menuOpen = false">Logs</router-link>
+        <router-link to="/" exact @click="menuOpen = false">{{ $t('nav.dashboard') }}</router-link>
+        <router-link to="/chat" @click="menuOpen = false">{{ $t('nav.chat') }}</router-link>
+        <router-link to="/routes" @click="menuOpen = false">{{ $t('nav.routes') }}</router-link>
+        <router-link to="/providers" @click="menuOpen = false">{{ $t('nav.providers') }}</router-link>
+        <router-link to="/tool-hooks" @click="menuOpen = false">{{ $t('nav.hooks') }}</router-link>
+        <router-link to="/logs" @click="menuOpen = false">{{ $t('nav.logs') }}</router-link>
+      </div>
+      <div class="nav-right">
+        <button class="lang-switch" @click="toggleLocale">{{ locale === 'en' ? '中' : 'EN' }}</button>
+        <router-link to="/config" @click="menuOpen = false">{{ $t('nav.config') }}</router-link>
       </div>
     </div>
   </nav>
@@ -22,8 +28,16 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { locale } = useI18n()
 const menuOpen = ref(false)
+
+function toggleLocale() {
+  const next = locale.value === 'en' ? 'zh' : 'en'
+  locale.value = next
+  localStorage.setItem('locale', next)
+}
 </script>
 
 <style scoped>
@@ -42,6 +56,30 @@ const menuOpen = ref(false)
   align-items: center;
   height: 52px;
   gap: 32px;
+}
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.nav-right a {
+  color: #94a3b8;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+.nav-right a:hover {
+  color: #e2e8f0;
+  background: rgba(255,255,255,0.08);
+}
+.nav-right a.router-link-active,
+.nav-right a.router-link-exact-active {
+  color: #fff;
+  background: rgba(255,255,255,0.12);
 }
 .brand {
   display: flex;
@@ -90,6 +128,24 @@ const menuOpen = ref(false)
   background: rgba(255,255,255,0.12);
 }
 
+/* Language switch button */
+.lang-switch {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius-sm);
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.lang-switch:hover {
+  color: #fff;
+  border-color: rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.08);
+}
+
 /* Hamburger button - hidden on desktop */
 .menu-toggle {
   display: none;
@@ -128,14 +184,33 @@ const menuOpen = ref(false)
   .menu-toggle {
     display: flex;
   }
-  .nav-links {
+  .nav-right {
     display: none;
     width: 100%;
+    margin-left: 0;
     flex-direction: column;
     padding-bottom: 8px;
     gap: 2px;
   }
+  .nav-right a {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .lang-switch {
+    width: fit-content;
+    margin: 4px 12px;
+  }
+  .nav-links {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    padding-bottom: 4px;
+    gap: 2px;
+  }
   .nav-links.open {
+    display: flex;
+  }
+  .nav-links.open ~ .nav-right {
     display: flex;
   }
   .nav-links a {

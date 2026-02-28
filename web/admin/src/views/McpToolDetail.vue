@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="breadcrumb">
-      <router-link to="/">Dashboard</router-link>
+      <router-link to="/">{{ $t('dashboard.title') }}</router-link>
       <span class="sep">/</span>
       <router-link :to="'/mcp/'+encodeURIComponent(mcp)">MCP: {{ mcp }}</router-link>
       <span class="sep">/</span>
@@ -9,25 +9,46 @@
     </div>
 
     <div v-if="error" class="msg msg-error">{{ error }}</div>
+    <div v-if="toggleMsg" :class="['msg', toggleMsg.type]">{{ toggleMsg.text }}</div>
 
     <div v-if="toolInfo" class="detail-layout">
       <section class="info-section">
-        <h3>Basic Info</h3>
+        <h3>{{ $t('mcpToolDetail.basicInfo') }}</h3>
         <table class="info-table">
-          <tr><td>Name</td><td><strong>{{ toolInfo.name }}</strong></td></tr>
-          <tr><td>Description</td><td>{{ toolInfo.description }}</td></tr>
+          <tr><td>{{ $t('mcpToolDetail.name') }}</td><td><strong>{{ toolInfo.name }}</strong></td></tr>
+          <tr><td>{{ $t('mcpToolDetail.description') }}</td><td>{{ toolInfo.description }}</td></tr>
+          <tr>
+            <td>{{ $t('mcpToolDetail.status') }}</td>
+            <td>
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  :checked="!toolInfo.disabled"
+                  @change="onToggle"
+                  :disabled="toggling"
+                  class="toggle-input"
+                />
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+                <span :class="toolInfo.disabled ? 'text-error' : 'text-success'">
+                  {{ toolInfo.disabled ? $t('common.disabled') : $t('common.enabled') }}
+                </span>
+              </label>
+            </td>
+          </tr>
         </table>
       </section>
 
       <section v-if="toolInfo.input_schema" class="info-section">
-        <h3>Input Schema</h3>
+        <h3>{{ $t('mcpToolDetail.inputSchema') }}</h3>
         <pre class="code-block">{{ JSON.stringify(toolInfo.input_schema, null, 2) }}</pre>
       </section>
 
       <section class="info-section">
-        <h3>Call Tool</h3>
+        <h3>{{ $t('mcpToolDetail.callTool') }}</h3>
         <div class="call-area">
-          <label class="input-label">Arguments (JSON)</label>
+          <label class="input-label">{{ $t('mcpToolDetail.argsLabel') }}</label>
           <textarea
             v-model="argsText"
             class="form-input args-input"
@@ -36,15 +57,15 @@
             spellcheck="false"
           ></textarea>
           <div class="call-actions">
-            <button @click="callTool" class="btn btn-primary" :disabled="calling">
-              {{ calling ? 'Calling...' : 'Call Tool' }}
+            <button @click="callTool" class="btn btn-primary" :disabled="calling || toolInfo.disabled">
+              {{ calling ? $t('mcpToolDetail.calling') : $t('mcpToolDetail.callTool') }}
             </button>
           </div>
         </div>
       </section>
 
       <section v-if="result" class="info-section">
-        <h3>Result</h3>
+        <h3>{{ $t('mcpToolDetail.result') }}</h3>
         <div class="result-meta">
           <span :class="['result-status', result.status]">{{ result.status }}</span>
           <span class="result-duration">{{ result.duration_ms }}ms</span>
@@ -53,13 +74,16 @@
       </section>
     </div>
 
-    <div v-if="!toolInfo && !error" class="loading">Loading...</div>
+    <div v-if="!toolInfo && !error" class="loading">{{ $t('common.loading') }}</div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { fetchMcpDetail, invokeMcpTool } from '../api.js'
+import { useI18n } from 'vue-i18n'
+import { fetchMcpDetail, invokeMcpTool, toggleMcpTool } from '../api.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   mcp: String,
@@ -71,6 +95,8 @@ const error = ref('')
 const argsText = ref('{}')
 const calling = ref(false)
 const result = ref(null)
+const toggling = ref(false)
+const toggleMsg = ref(null)
 
 function generateTemplate(schema) {
   if (!schema || !schema.properties) return '{}'
@@ -91,7 +117,7 @@ async function load() {
     const detail = await fetchMcpDetail(props.mcp)
     const found = detail.tools.find(t => t.name === props.tool)
     if (!found) {
-      error.value = `Tool "${props.tool}" not found in MCP "${props.mcp}"`
+      error.value = t('mcpToolDetail.toolNotFound', { tool: props.tool, mcp: props.mcp })
       return
     }
     toolInfo.value = found
@@ -102,12 +128,32 @@ async function load() {
   }
 }
 
+async function onToggle(e) {
+  const newDisabled = !e.target.checked
+  toggling.value = true
+  toggleMsg.value = null
+  try {
+    await toggleMcpTool(props.mcp, props.tool, newDisabled)
+    toolInfo.value = { ...toolInfo.value, disabled: newDisabled }
+    toggleMsg.value = {
+      type: 'msg-success',
+      text: newDisabled ? t('mcpToolDetail.toolDisabledMsg') : t('mcpToolDetail.toolEnabledMsg'),
+    }
+  } catch (e) {
+    toggleMsg.value = { type: 'msg-error', text: t('mcpToolDetail.toggleFailed', { error: e.message }) }
+    // revert checkbox
+    e.target.checked = !newDisabled
+  } finally {
+    toggling.value = false
+  }
+}
+
 async function callTool() {
   let args
   try {
     args = JSON.parse(argsText.value)
   } catch (e) {
-    result.value = { status: 'error', error: 'Invalid JSON: ' + e.message, duration_ms: 0 }
+    result.value = { status: 'error', error: t('mcpToolDetail.invalidJson', { error: e.message }), duration_ms: 0 }
     return
   }
 
@@ -156,4 +202,36 @@ onMounted(load)
 .result-status.error { color: var(--c-danger); background: var(--c-danger-bg); }
 .result-duration { font-size: 13px; color: var(--c-text-3); }
 .loading { color: var(--c-text-3); font-size: 14px; }
+
+/* toggle switch */
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-input { display: none; }
+.toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--c-border);
+  border-radius: 10px;
+  transition: background var(--transition);
+  flex-shrink: 0;
+}
+.toggle-input:checked + .toggle-track { background: var(--c-success); }
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform var(--transition);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-input:checked + .toggle-track .toggle-thumb { transform: translateX(16px); }
 </style>
