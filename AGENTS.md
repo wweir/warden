@@ -5,9 +5,9 @@ Use Simplified Chinese to answer my questions.
 
 ## Documentation Rules
 
-1. 根目录维护 `ARCHITECTURE.md`，描述代码架构和设计决策
+1. 根目录维护 `ARCHITECTURE.md`，描述代码架构和设计决策，config 的定义复用 config 目录下的 example 文件
 2. 复杂包在目录下维护 `README.md`，说明职责和接口
-3. 代码变更须同步更新相关文档
+3. 代码变更须同步更新 `ARCHITECTURE.md` 和相关包的 `README.md` 等文档。
 
 ## Coding Agent Rules
 

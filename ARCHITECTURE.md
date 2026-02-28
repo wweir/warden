@@ -16,130 +16,63 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   ├── embed.go                 # embed.FS 暴露前端静态文件
 │   └── admin/                   # Vue 3 + Vite 前端项目
 │       ├── dist/                # 构建产物（提交到 git）
-│       └── src/                 # 源码：Dashboard / Config / Logs / ProviderDetail / McpDetail 页面
+│       └── src/                 # 源码：Dashboard / Config / Logs / ProviderDetail / McpDetail / McpToolDetail / ToolHooks 页面
 ├── internal/
 │   ├── app/
-│   │   └── app.go               # App 结构体、HTTP 网关服务启动、热重载、优雅关闭
+│   │   └── app.go               # App 结构体、HTTP 服务启动、graceful shutdown（SIGTERM 触发进程退出）
 │   ├── install/
 │   │   └── service.go           # systemd 服务安装/更新
 │   ├── gateway/
 │   │   ├── gateway.go           # Gateway 核心：路由注册、MCP 管理、provider 选择、代理
-│   │   ├── admin.go             # Admin API：REST + SSE 日志流 + Basic Auth + 配置管理 + 热重载 + Provider 探活/详情
+│   │   ├── api_admin.go         # Admin API：REST + SSE 日志流 + Basic Auth + 配置管理 + 热重载 + Provider 探活/详情
+│   │   ├── api_chat.go          # Chat Completions 请求处理（透传优化 + 工具拦截）
+│   │   ├── api_responses.go     # Responses API 请求处理（透传优化 + 工具拦截）
 │   │   ├── adapter.go           # 协议适配：endpoint 路由、请求/响应序列化、流式 parser 工厂
 │   │   ├── http.go              # upstream HTTP 通信：sendRequest、pipeRawStream、认证注入、模型拉取
-│   │   ├── chat.go              # Chat Completions 请求处理（透传优化 + 工具拦截）
-│   │   ├── responses.go         # Responses API 请求处理（透传优化 + 工具拦截）
-│   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离、过滤
-│   │   ├── tool_inject.go       # 工具注入（同时支持 Chat Completions 和 Responses API）
-│   │   ├── tool_exec.go         # 工具执行（使用 sse.ToolCallInfo 统一类型）
-│   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 请求统计 + 状态暴露
-│   │   ├── prompt.go            # 系统提示词注入
+│   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离（泛型实现）、过滤
+│   │   ├── tool_exec.go         # 工具执行：matchHooks 按全局规则匹配、pre/post hook 运行、MCP 调用
+│   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 滑动窗口统计 + 状态暴露
 │   │   ├── middleware.go        # HTTP 中间件：日志、panic 恢复、CORS
+│   │   ├── metrics.go           # Prometheus 指标：requests_total、request_duration_ms、provider_health、provider_suppressed、tokens_total、token_rate（按 provider/model 统计 token/s）
 │   │   └── errors.go            # 错误类型：UpstreamError、ErrProviderNotFound
 │   ├── reqlog/
-│   │   ├── reqlog.go            # 请求/响应日志接口 (Logger) 和 Record 定义
-│   │   ├── file.go              # FileLogger：将日志写入 JSON 文件
-│   │   └── broadcast.go         # Broadcaster：内存广播器，SSE 订阅者推送 + 最近 200 条环形缓冲
+│   │   ├── reqlog.go            # Logger 接口、Record/Step 类型定义、BuildFingerprint、内部 JSON 提取函数（gjson）
+│   │   ├── file.go              # FileLogger：将日志写入 JSON 文件（按路由+时间戳命名）
+│   │   ├── http.go              # HTTPLogger：异步推送日志到 HTTP 端点，支持模板渲染（sprig）
+│   │   ├── broadcast.go         # Broadcaster：内存广播器，SSE 订阅者推送 + 最近 50 条环形缓冲
+│   │   └── logger.go            # newLogger/multiLogger：按配置构建多后端 Logger
 │   └── mcp/
 │       └── client.go            # MCP client 实现（JSON-RPC stdio、工具发现、调用）
 ├── pkg/
-│   ├── openai/
-│   │   ├── types.go             # OpenAI Chat Completions API 请求/响应类型定义
-│   │   ├── responses.go         # OpenAI Responses API 请求/响应类型定义
-│   │   └── stream.go            # OpenAI SSE 流式解析器（Chat + Responses）
-│   ├── anthropic/
-│   │   ├── anthropic.go         # Anthropic 协议适配：OpenAI ↔ Anthropic 格式转换
-│   │   └── stream.go            # Anthropic SSE 流式解析器
-│   ├── qwen/
-│   │   └── oauth.go             # Qwen OAuth token 管理（自动刷新，支持 SSH 远程读取）
-│   ├── copilot/
-│   │   └── oauth.go             # GitHub Copilot token 管理（自动刷新，支持 SSH 远程读取）
+│   ├── protocol/
+│   │   ├── sse.go               # LLM 协议公共类型：Event、ToolCallInfo、StreamParser 接口、SSE 解析/重放
+│   │   ├── openai/
+│   │   │   ├── types.go         # OpenAI Chat Completions API 请求/响应类型定义
+│   │   │   ├── responses.go     # OpenAI Responses API 请求/响应类型定义
+│   │   │   ├── stream.go        # OpenAI SSE 流式解析器（Chat + Responses）
+│   │   │   ├── inject.go        # 工具注入（Chat Completions + Responses API）
+│   │   │   └── prompt.go        # 系统提示词注入（Chat Completions + Responses API）
+│   │   └── anthropic/
+│   │       ├── anthropic.go     # Anthropic 协议适配：OpenAI ↔ Anthropic 格式转换
+│   │       ├── stream.go        # Anthropic SSE 流式解析器
+│   │       └── auth.go          # Anthropic 认证头设置
+│   ├── provider/
+│   │   ├── provider.go          # TokenProvider 接口定义、Get() 工厂函数
+│   │   ├── qwen.go              # Qwen OAuth token 管理（自动刷新，支持 SSH 远程读取）
+│   │   └── copilot.go           # GitHub Copilot token 管理（自动刷新，支持 SSH 远程读取）
 │   ├── ssh/
 │   │   └── ssh.go               # SSH 工具包：远程命令执行、文件读取（shell out to system ssh）
-│   └── sse/
-│       └── sse.go               # SSE 协议解析、ToolCallInfo 统一类型、StreamParser 接口
+│   └── protocol/
+│       └── protocol.go          # LLM 协议公共类型：Event、ToolCallInfo、StreamParser 接口、SSE 解析/重放
 ├── Makefile
 └── go.mod
 ```
 
 ## 配置设计
 
-配置使用 YAML 格式（唯一支持格式）。
+配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-```yaml
-addr: ":8080"
-
-# Admin panel password (empty to disable)
-# admin_password: "your-secret-password"
-
-# SSH 连接配置，用于远程凭证读取和 MCP 执行
-ssh:
-  dev-server:
-    host: "dev-server"              # ~/.ssh/config Host 条目或 user@hostname
-
-# Provider 统一配置，每个 provider 独立定义认证、超时、协议等
-provider:
-  anthropic:
-    url: "https://api.anthropic.com"
-    protocol: "anthropic"           # 协议类型: openai, anthropic, ollama, qwen, copilot
-    api_key: "${ANTHROPIC_API_KEY}" # 认证密钥（支持环境变量展开）
-    timeout: "120s"                 # 请求超时
-
-  openai:
-    url: "https://api.openai.com"
-    protocol: "openai"
-    api_key: "${OPENAI_API_KEY}"
-    timeout: "60s"
-
-  openai-fast:
-    url: "https://api.openai.com"
-    protocol: "openai"
-    api_key: "${OPENAI_API_KEY}"
-    timeout: "30s"
-    # proxy: "socks5://127.0.0.1:1080"  # 可选：HTTP/SOCKS 代理
-
-  local-ollama:
-    url: "http://localhost:11434"
-    protocol: "ollama"
-    timeout: "300s"
-
-  qwen:
-    protocol: "qwen"                # OAuth: portal.qwen.ai; API key: dashscope
-    config_dir: "~/.qwen"           # Qwen Coder 配置目录
-    timeout: "120s"
-
-  qwen-remote:
-    protocol: "qwen"
-    ssh: "dev-server"               # 引用 SSH 配置，从远程主机读取凭证
-    config_dir: "~/.qwen"           # 远程主机路径
-    timeout: "120s"
-
-# 路由配置，每个路由前缀引用一个或多个 provider，并配置工具
-route:
-  /anthropic:
-    providers: ["anthropic"]         # 引用上面定义的 provider 名称
-    tools: ["filesystem", "web-search"]
-
-  /openai:
-    providers: ["openai", "openai-fast"]  # 多个 provider，按顺序 fallback 或由 model 路由
-    tools: ["filesystem"]
-
-  /local:
-    providers: ["local-ollama"]
-    tools: []
-
-# MCP 工具配置
-mcp:
-  filesystem:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-
-  web-search:
-    command: "npx"
-    args: ["-y", "@anthropic/mcp-server-web-search"]
-    env:
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-```
+主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。MCP 工具可通过 `tools.<name>.disabled` 禁用，也可通过 `tools.<name>.hooks` 配置 exec/ai 类型的 pre/post hook。
 
 ### provider 多选策略 (internal/gateway/selector.go)
 
@@ -190,91 +123,21 @@ mcp:
 
 #### 模型别名 (Model Aliases)
 
-provider 可配置 `model_aliases` 映射，允许一个模型以别名暴露给客户端：
-
-```yaml
-provider:
-  nvidia:
-    url: "https://integrate.api.nvidia.com/v1"
-    protocol: "openai"
-    model_aliases:
-      kimi-k2: "moonshotai/kimi-k2"  # 客户端请求 "kimi-k2"，实际转发为 "moonshotai/kimi-k2"
-```
+provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.yaml` 中的 `model_aliases` 字段），允许一个模型以别名暴露给客户端：
 
 - 别名出现在 `GET /models` 响应中，客户端可直接使用别名作为 model 名称
 - `Select` 时，别名也参与候选匹配——请求 alias model 会选中定义了该别名的 provider
 - `ResolveModel()` 将别名解析为真实模型名，在发送到上游前调用
 
-**使用示例**（来自 config/warden.example.yaml）：
-
-```yaml
-# route 中 providers 的顺序决定优先级（第一个最优先）
-route:
-  /openai:
-    providers: ["openai-fast", "openai"]  # openai-fast 优先被选中
-
-provider:
-  openai-fast:
-    url: "https://api.openai.com"
-    timeout: "30s"
-
-  anthropic-fallback:
-    url: "https://api.anthropic.com"
-    timeout: "300s"
-```
-
 ## 核心模块实现
 
 ### 1. 配置模块 (`config/`)
 
-**config.go**:
-
-```go
-type ConfigStruct struct {
-    Addr          string                      `json:"addr" usage:"Gateway listening address"`
-    AdminPassword string                      `json:"admin_password" usage:"Admin panel password (empty to disable)"`
-    Log           *LogConfig                  `json:"log" usage:"Request/response logging configuration"`
-    Provider      map[string]*ProviderConfig  `json:"provider" usage:"Upstream LLM provider configurations"`
-    Route         map[string]*RouteConfig     `json:"route" usage:"Route prefix configurations"`
-    MCP           map[string]*MCPConfig       `json:"mcp" usage:"MCP server configurations"`
-}
-
-type LogConfig struct {
-    FileDir string `json:"file_dir" usage:"Directory for request/response JSON log files"`
-}
-
-type ProviderConfig struct {
-    Name         string          `json:"-"`             // populated from map key
-    URL          string          `json:"url" usage:"Upstream LLM base URL"`
-    Protocol     string          `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen"`
-    APIKey       deferlog.Secret `json:"api_key" usage:"API key for authentication"`
-    ConfigDir    string          `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen)"`
-    Timeout      string            `json:"timeout" usage:"Request timeout (e.g. 60s, 2m)"`
-    Proxy        string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-    ModelAliases map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name)"`
-
-    TimeoutDuration time.Duration // parsed from Timeout
-    ProxyURL        *url.URL      // parsed from Proxy
-}
-
-type RouteConfig struct {
-    Prefix   string   `json:"-"`          // populated from map key
-    Providers []string `json:"providers" usage:"Provider names to use (order matters for fallback)"`
-    Tools    []string `json:"tools" usage:"MCP tool names to inject"`
-
-    enabledTools map[string]bool         // runtime state, 允许动态开关
-}
-
-type MCPConfig struct {
-    Name    string            `json:"-"`       // populated from map key
-    Command string            `json:"command" usage:"MCP server command"`
-    Args    []string          `json:"args" usage:"MCP server arguments"`
-    Env     map[string]string `json:"env" usage:"Environment variables"`
-}
-```
+配置结构定义在 `config/config.go`，YAML 字段与 [`config/warden.example.yaml`](config/warden.example.yaml) 一一对应。
 
 - `Validate()` 方法：
     - 校验每个 provider 的 URL 合法性、protocol 为已知值、timeout 可解析
+    - 校验全局 `tool_hooks` 每条规则的 `match` 非空、hook 的 type/when/command（exec）或 route+model+prompt（ai）字段完整、timeout 可解析
     - 校验 route 中引用的 providers 名称在 `provider` 配置中存在
     - 校验 route 中引用的 tools 名称在 `mcp` 配置中存在
     - 校验路由前缀格式正确（以 `/` 开头）
@@ -430,7 +293,7 @@ Responses API 字段众多且持续扩展，网关必须严格遵守透传原则
 - 工具调用结果的回传格式（Message vs Item）
 - 流式事件解析格式
 
-### 5. SSE 流式响应处理 (`pkg/sse/sse.go`, `pkg/openai/stream.go`, `pkg/anthropic/stream.go`)
+### 5. SSE 流式响应处理 (`pkg/protocol/sse.go`, `pkg/protocol/openai/stream.go`, `pkg/protocol/anthropic/stream.go`)
 
 当客户端请求 `stream: true` 时，流式处理比非流式复杂得多，因为：
 
@@ -539,10 +402,10 @@ data: {"type":"response.completed","response":{...完整 response 对象...}}
 
 ### 5.5. 协议适配 (`internal/gateway/adapter.go`)
 
-职责：为三种流式格式（OpenAI Chat Completions、OpenAI Responses API、Anthropic）提供统一的解析接口。流式解析器的具体实现分别位于 `pkg/openai/stream.go` 和 `pkg/anthropic/stream.go`。
+职责：为三种流式格式（OpenAI Chat Completions、OpenAI Responses API、Anthropic）提供统一的解析接口。流式解析器的具体实现分别位于 `pkg/protocol/openai/stream.go` 和 `pkg/protocol/anthropic/stream.go`。
 
 ```go
-// StreamParser 接口定义在 pkg/sse/sse.go 中
+// StreamParser 接口定义在 pkg/protocol/sse.go 中
 type StreamParser interface {
     Parse(events []Event, injectedTools []string) (toolCalls []ToolCallInfo, hasInjectedToolCall bool, err error)
     Filter(events []Event, injectedTools []string) []Event
@@ -555,7 +418,7 @@ type StreamParser interface {
 - `openai.ResponsesStreamParser`：从 `response.completed` 事件中直接提取完整 `function_call` items
 - `anthropic.StreamParser`：从 `content_block_start` + `input_json_delta` 拼接，以 `stop_reason: "tool_use"` 判断结束
 
-SSE 事件解析和 `ToolCallInfo` 统一类型定义在 `pkg/sse/sse.go` 中，所有协议的解析器共享同一类型。
+SSE 事件解析和 `ToolCallInfo` 统一类型定义在 `pkg/protocol/sse.go` 中，所有协议的解析器共享同一类型。
 
 ### 6. MCP Client (`internal/mcp/client.go`)
 
@@ -626,7 +489,7 @@ MCP Tool.inputSchema → tools[].parameters
 职责：检测响应中的注入工具调用，执行并返回结果。工具执行逻辑本身与 API 格式无关，上层（chat.go / responses.go）负责将各自格式的 tool call 提取为统一的 `sse.ToolCallInfo` 传入。
 
 ```go
-// ToolCallInfo 定义在 pkg/sse/sse.go 中，是所有协议共享的统一类型
+// ToolCallInfo 定义在 pkg/protocol/sse.go 中，是所有协议共享的统一类型
 type ToolCallInfo struct {
     ID        string // tool_call.id (Chat Completions) or call_id (Responses API)
     Name      string // function name
@@ -634,7 +497,9 @@ type ToolCallInfo struct {
 }
 
 // Execute 执行注入的 tool_calls，返回每个调用的结果
-func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []string, mcpClients map[string]*mcp.Client) ([]ToolResult, error)
+func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []string,
+    mcpClients map[string]*mcp.Client, mcpCfgs map[string]*config.MCPConfig,
+    toolHooks []*config.HookRuleConfig, gatewayAddr string) ([]ToolResult, error)
 
 // ToolResult contains the call ID and execution output
 type ToolResult struct {
@@ -649,7 +514,7 @@ type ToolResult struct {
 - `chat.go`：转换为 `role:"tool"` 的 Message
 - `responses.go`：转换为 `type:"function_call_output"` 的 Item
 
-### 9. OpenAI 类型定义 (`pkg/openai/types.go`)
+### 9. OpenAI 类型定义 (`pkg/protocol/openai/types.go`)
 
 定义 OpenAI Chat Completion API 的请求/响应结构体，仅包含网关需要操作的字段，其余用 `json.RawMessage` 保持透传：
 
@@ -691,7 +556,7 @@ type Choice struct {
 
 注意：为了最大兼容性，对请求/响应 JSON 的未知字段应透传而非丢弃。使用自定义 `MarshalJSON`/`UnmarshalJSON` 实现。
 
-### 9.1. OpenAI SSE 流式解析 (`pkg/openai/stream.go`)
+### 9.1. OpenAI SSE 流式解析 (`pkg/protocol/openai/stream.go`)
 
 实现 `sse.StreamParser` 接口的两个解析器：
 
@@ -700,7 +565,7 @@ type Choice struct {
 - `FilterResponsesOutput()` — 从 output 数组中移除注入工具的 function_call items
 - `ExtractCompletedResponse()` — 从 SSE 事件中找到 response.completed 并提取完整 response
 
-### 9.2. Anthropic 协议适配 (`pkg/anthropic/`)
+### 9.2. Anthropic 协议适配 (`pkg/protocol/anthropic/`)
 
 **anthropic.go** — OpenAI ↔ Anthropic Messages API 双向格式转换：
 
@@ -713,7 +578,7 @@ type Choice struct {
 - `StreamParser.Parse()` — 从 content_block_start/delta 事件按 index 拼接 tool_use arguments
 - `StreamParser.Filter()` — 按 index 过滤注入工具相关的 content_block 事件
 
-### 9.3. SSE 协议基础 (`pkg/sse/sse.go`)
+### 9.3. SSE 协议基础 (`pkg/protocol/sse.go`)
 
 定义协议无关的 SSE 解析和统一类型：
 
@@ -723,7 +588,7 @@ type Choice struct {
 - `ToolCallInfo` — 统一的工具调用信息类型（ID, Name, Arguments string），被 `tool/executor.go` 和所有流式解析器共享
 - `StreamParser` — 流式解析器接口（Parse + Filter）
 
-### 9.5. OpenAI Responses API 类型定义 (`pkg/openai/responses.go`)
+### 9.5. OpenAI Responses API 类型定义 (`pkg/protocol/openai/responses.go`)
 
 定义 OpenAI Responses API 的请求/响应结构体。同样遵循最小解析+最大透传原则。
 
@@ -798,6 +663,78 @@ type ResponsesFunctionTool struct {
 - 使用 `config.ExampleConfig` 写入默认配置到 `/etc/warden.yaml`
 - 支持首次安装和更新两种流程
 
+### 10.2. 请求日志 (`internal/reqlog/`)
+
+职责：记录每次请求/响应往返的结构化数据，支持多后端输出，并向 SSE 订阅者广播。
+
+**核心类型**（`reqlog.go`）：
+
+```go
+// Logger is the logging backend interface.
+type Logger interface {
+    Log(Record)
+    Close() error
+}
+
+// Record holds structured data for one request/response round-trip.
+type Record struct {
+    Timestamp   time.Time
+    RequestID   string
+    Route       string
+    Endpoint    string
+    Model       string
+    Stream      bool
+    Provider    string
+    UserAgent   string
+    DurationMs  int64
+    Error       string
+    Fingerprint string          // session grouping key, see BuildFingerprint
+    Request     json.RawMessage
+    Response    json.RawMessage
+    Steps       []Step          // intermediate tool call iterations
+}
+
+// Step records one intermediate round-trip during tool call execution.
+type Step struct {
+    Iteration   int
+    ToolCalls   []ToolCallEntry
+    ToolResults []ToolResultEntry
+    LLMRequest  json.RawMessage
+    LLMResponse json.RawMessage
+}
+```
+
+**导出函数**：
+- `GenerateID() string` — 生成 8 字符十六进制请求 ID
+- `BuildFingerprint(rawBody json.RawMessage) string` — 从请求体构建会话指纹（见下）
+- `(r *Record) Sanitize()` — 确保所有 `json.RawMessage` 字段包含有效 JSON
+
+**日志后端**：
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `file.go` | `FileLogger` | 每条记录写入独立 JSON 文件，文件名格式：`{route}_{时间戳}_{id}.json` |
+| `http.go` | `HTTPLogger` | 异步推送到 HTTP 端点，缓冲队列 256 条，支持 Go 模板渲染请求体（sprig 函数可用），内置重试 |
+| `logger.go` | `multiLogger` | 扇出到多个后端；`newLogger(cfg)` 工厂函数按配置构建，返回 nil（无目标）/ 单后端 / multiLogger |
+
+**会话指纹（Fingerprint）**：
+
+`BuildFingerprint` 用 gjson 轻量解析请求体，从消息内容构建紧凑的会话标识字符串，用于在日志中识别连续对话。
+
+- 格式：`{sys_hash}{fsm}`
+  - `sys_hash`：所有 system prompt 文本的 FNV-32a hash，6 位十六进制
+  - `fsm`：各轮用户/助手输入的 hash 链，宽度递减（6→5→4→3→2→2→…）
+- 两条记录属于同一会话：model 相同、sys_hash 相同、且较早记录的 fsm 是较新记录 fsm 的严格前缀
+- 跳过 `x-anthropic-billing-header` 行（billing 内容变化不影响指纹）
+- 跳过 `thinking` 块（推理内容动态变化不影响指纹）
+- 同时支持 Chat Completions（`messages[]`）和 Responses API（`input[]`）
+
+**广播器**（`broadcast.go`）：
+
+- `Broadcaster.Publish(r Record)` — 写入环形缓冲（50 条）并 non-blocking fan-out 给所有订阅者
+- `Subscribe() / Unsubscribe(ch)` — SSE handler 用于实时日志推送
+- `Recent() []Record` — 按时间顺序返回最近 50 条记录（新连接时回放历史）
+
 ### 11. Web 管理面板 (`internal/gateway/admin.go`, `web/admin/`)
 
 当 `admin_password` 配置不为空时，Gateway 在 `/_admin/` 路径下注册 Web 管理面板。
@@ -811,13 +748,14 @@ type ResponsesFunctionTool struct {
 | GET | `/_admin/api/status` | provider 状态（含请求统计）+ route + MCP 信息 |
 | GET | `/_admin/api/config` | 当前配置（api_key 脱敏为 `"***"`） |
 | PUT | `/_admin/api/config` | 更新配置（validate + 写入文件 + 还原 `***` 值） |
-| POST | `/_admin/api/restart` | 热重载网关（新配置失败不影响旧服务） |
+| POST | `/_admin/api/restart` | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启） |
 | POST | `/_admin/api/providers/health` | Provider 探活（调用 fetchModels 测试连通性） |
 | GET | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表） |
 | POST | `/_admin/api/config/validate` | 配置验证（不保存） |
 | GET | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
-| GET | `/_admin/api/mcp/detail?name=xxx` | MCP 详情（命令、工具列表、路由引用、连接状态） |
+| GET | `/_admin/api/mcp/detail?name=xxx` | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态） |
 | POST | `/_admin/api/mcp/tool-call` | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时） |
+| POST | `/_admin/api/mcp/tool-toggle` | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置） |
 | GET | `/_admin/api/logs/stream` | SSE 实时日志推送 |
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
@@ -825,7 +763,7 @@ type ResponsesFunctionTool struct {
 
 **实时日志广播器**（`internal/reqlog/broadcast.go`）：
 
-- `Broadcaster` — 内存广播器，环形缓冲最近 200 条完整 `Record`，SSE 推送完整记录，non-blocking fan-out 到所有订阅者
+- `Broadcaster` — 内存广播器，环形缓冲最近 **50** 条完整 `Record`，SSE 推送完整记录，non-blocking fan-out 到所有订阅者
 - 所有请求处理通过 `Gateway.recordAndBroadcast()` 统一发布到文件日志和广播器
 
 **Selector 监控**（`internal/gateway/selector.go`）：
@@ -842,21 +780,22 @@ type ResponsesFunctionTool struct {
 - ProviderDetail：Provider 基本信息、运行时状态、模型别名、可用模型列表、Health Check 按钮
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
-- McpToolDetail：工具详情（名称、描述、input schema）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
-- Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway 热重载
+- McpToolDetail：工具详情（名称、描述、input schema）、enabled/disabled toggle 开关（运行时生效）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
+- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai hook 完整字段配置、Save & Apply）
+- Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
 - Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停
 
 ## 实现顺序
 
 | 阶段     | 内容                                                                                                                                                  | 依赖      |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| **P1**   | `config/`、`pkg/openai/types.go`、`pkg/openai/responses.go`、`pkg/sse/sse.go`、`cmd/warden/main.go`、`Makefile`                                       | 无        |
+| **P1**   | `config/`、`pkg/protocol/openai/types.go`、`pkg/protocol/openai/responses.go`、`pkg/protocol/sse.go`、`cmd/warden/main.go`、`Makefile`                                       | 无        |
 | **P2**   | `internal/gateway/gateway.go`、`internal/gateway/http.go`、`internal/gateway/adapter.go`、`internal/gateway/middleware.go`、`internal/app/app.go` | P1        |
 | **P3**   | `internal/mcp/client.go` — MCP client，工具发现和调用                                                                                                 | P1        |
 | **P4**   | `internal/gateway/tool_inject.go`、`internal/gateway/tool_exec.go` — 注入和执行                                                                   | P3        |
 | **P5**   | `internal/gateway/chat.go` — Chat Completions 处理（非流式 + 流式）                                                                                   | P2 + P4   |
 | **P5.5** | `internal/gateway/responses.go` — Responses API 处理（非流式 + 流式）                                                                                 | P2 + P4   |
-| **P6**   | `pkg/openai/stream.go`、`pkg/anthropic/` — 协议适配和流式解析器                                                                                       | P5 + P5.5 |
+| **P6**   | `pkg/protocol/openai/stream.go`、`pkg/protocol/anthropic/` — 协议适配和流式解析器                                                                                       | P5 + P5.5 |
 
 ## 第三方依赖说明
 
@@ -867,6 +806,9 @@ type ResponsesFunctionTool struct {
 | `github.com/sower-proxy/feconf`       | 配置解析管理，项目规范要求                          |
 | `github.com/lmittmann/tint`           | slog 彩色输出                                       |
 | `github.com/mark3labs/mcp-go`         | MCP 协议 Go SDK（避免重新实现 JSON-RPC + MCP 握手） |
+| `github.com/tidwall/gjson`            | 轻量级只读 JSON 解析，用于路由层字段提取和指纹构建，避免完整结构体反序列化 |
+| `github.com/go-resty/resty/v2`        | HTTP 客户端，用于 HTTPLogger 推送日志，内置重试支持 |
+| `github.com/Masterminds/sprig/v3`     | HTTPLogger 模板函数库，支持自定义日志体渲染         |
 
 ## 关键设计决策
 
@@ -902,15 +844,16 @@ type ResponsesFunctionTool struct {
 
 11. **Responses API 流式优化**：Responses API 的 `response.completed` 事件包含完整的 response 对象（包括所有 output items），因此流式场景下无需像 Chat Completions 那样手动从 delta chunks 中拼接 tool_call arguments。网关可以直接从 `response.completed` 事件中提取完整的 function_call items，简化流式处理逻辑。但缓冲策略仍然必要——需要等到流结束才能判断是否包含注入工具的调用。
 
-12. **统一 ToolCallInfo 类型**：`sse.ToolCallInfo`（定义在 `pkg/sse/sse.go`）是所有协议共享的工具调用信息类型，`Arguments` 字段为 `string` 类型。`tool/executor.go` 直接使用 `[]sse.ToolCallInfo` 作为参数，消除了 `tool.ToolCallInfo` 与 `sse.ToolCallInfo` 之间的冗余转换。`chat.go` 和 `responses.go` 各自负责从自有格式中提取 `sse.ToolCallInfo`、将 `tool.ToolResult` 转换回自有格式。MCP 工具执行逻辑完全复用，不因 API 格式差异而重复实现。
+12. **统一 ToolCallInfo 类型**：`protocol.ToolCallInfo`（定义在 `pkg/protocol/sse.go`）是所有协议共享的工具调用信息类型，`Arguments` 字段为 `string` 类型。`tool_exec.go` 直接使用 `[]protocol.ToolCallInfo` 作为参数，消除冗余转换。`chat.go` 和 `responses.go` 各自负责从自有格式中提取 `protocol.ToolCallInfo`、将 `ToolResult` 转换回自有格式。MCP 工具执行逻辑完全复用，不因 API 格式差异而重复实现。
 
 13. **混合工具调用中断策略**：当 LLM 在同一轮同时调用了客户端工具和网关注入工具时，网关无法为客户端工具提供 tool result（只有客户端知道如何执行自己的工具）。继续循环会导致 LLM 因缺少 tool result 而报错。解决方案：网关执行完注入工具后**中断循环**，将注入工具的执行结果通过追加到上下文中继续请求 LLM，但在最终返回的响应中只保留客户端工具的 tool_calls。此策略同时适用于 Chat Completions 和 Responses API。
 
 14. **按需解析，最大透传**：网关在请求/响应路径上尽量避免不必要的 JSON 序列化/反序列化。具体策略：
-    - **请求侧**：先 `ReadAll` 原始 body bytes，轻量解析仅提取路由所需字段（`model`、`stream`）。无工具注入时，raw bytes 直接透传到上游（OpenAI/Ollama 零拷贝，Anthropic 需 `marshalProtocolRaw` 协议转换）。仅在有工具注入时才完整 Decode 为 struct。
-    - **响应侧**：`forwardNonStreamRequest` / `forwardResponsesRequest` 同时返回 parsed struct 和 raw bytes。无注入工具调用时直接透传 raw response bytes 给客户端，避免 struct → JSON 的再序列化。
+    - **请求侧**：先 `ReadAll` 原始 body bytes，使用 `gjson.GetBytes()` 轻量提取路由所需字段（`model`、`stream`），用 `gjson.ValidBytes()` 做 JSON 有效性校验。无工具注入时，raw bytes 直接透传到上游（OpenAI/Ollama 零拷贝，Anthropic 需 `marshalProtocolRaw` 协议转换）。仅在有工具注入时才完整 Decode 为 struct。
+    - **响应侧**：`forwardNonStreamRequest` / `forwardResponsesRequest` 同时返回 parsed struct 和 raw bytes。无注入工具调用时直接透传 raw response bytes 给客户端，避免 struct → JSON 的再序列化。`hasInjectedFunctionCalls` 使用 `gjson.GetBytes()` 仅提取 `type`/`name` 两个字段做判断；`extractFunctionCalls` 仅在确认类型匹配后才完整 Unmarshal。
     - **流式侧**：无工具注入时直接 `pipeRawStream`，完全跳过 SSE 缓冲和解析。
+    - **指纹构建**：`BuildFingerprint` 使用 gjson 按需提取 `messages`/`input`/`system` 等字段，支持 Chat Completions 和 Responses API 两种协议格式，跳过 `x-anthropic-billing-header` 和 `thinking` 块以保证指纹稳定性。
 
-15. **SSH 远程支持（Shell out to system ssh）**：Provider 的 OAuth 凭证读取和 MCP server 启动支持通过 SSH 在远程主机执行。方案选择 shell out 到系统 `ssh` 命令（而非引入 Go SSH 库），原因：自动继承 `~/.ssh/config`、SSH agent、ProxyJump、证书等用户配置；`exec.Command("ssh", host, command...)` 提供与本地 exec 完全一致的 stdin/stdout pipe 接口，MCP JSON-RPC 协议无需任何修改；不引入新依赖。SSH 配置通过 `[ssh.<name>]` 配置块集中管理，provider 和 MCP 通过 `ssh = "<name>"` 引用。SSH 模式下凭证刷新后不写回远程文件（仅日志警告）。
+15. **SSH 远程支持（Shell out to system ssh）**：MCP server 启动支持通过 SSH 在远程主机执行。方案选择 shell out 到系统 `ssh` 命令（而非引入 Go SSH 库），原因：自动继承 `~/.ssh/config`、SSH agent、ProxyJump、证书等用户配置；`exec.Command("ssh", host, command...)` 提供与本地 exec 完全一致的 stdin/stdout pipe 接口，MCP JSON-RPC 协议无需任何修改；不引入新依赖。SSH 配置通过 `[ssh.<name>]` 配置块集中管理，MCP 通过 `ssh = "<name>"` 引用。
 
-16. **热重载架构**：App 实现 `http.Handler`，通过 `sync.RWMutex` 持有当前 Gateway 指针。`Reload()` 方法重新读取配置文件、创建新 Gateway、原子替换指针，旧 Gateway 异步关闭。`addr` 变更需要重启进程（返回错误）。热重载通过 Admin API `POST /_admin/api/restart` 触发，失败不影响旧服务。
+16. **重启而非热重载**：配置保存后通过 `POST /_admin/api/restart` 发送 SIGTERM 触发进程优雅退出，由外部进程管理器（systemd 等）负责重启。避免了热重载方案中 feconf 重复注册 flag 的问题，同时简化了 App 结构（移除 `sync.RWMutex` 和 gateway 原子替换逻辑）。
