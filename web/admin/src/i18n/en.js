@@ -10,6 +10,7 @@ export default {
   },
   common: {
     close: 'Close',
+    copy: 'Copy',
     delete: 'Delete',
     save: 'Save',
     confirm: 'Confirm',

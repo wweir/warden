@@ -193,6 +193,7 @@
 							<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
 							<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
 						</div>
+						<button class="btn btn-secondary btn-sm" @click="copyJSON">{{ copied ? '✓' : $t('common.copy') }}</button>
 						<button class="btn btn-secondary btn-sm" @click="selected = null">{{ $t('common.close') }}</button>
 					</div>
 				</div>
@@ -332,6 +333,8 @@ const error = ref("");
 const tableWrap = ref(null);
 const selected = ref(null);
 const detailView = ref("timeline"); // "timeline" | "json"
+const copied = ref(false);
+let copyTimer = null;
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 let stopStream = null;
 const MAX_LOGS = 500;
@@ -470,6 +473,15 @@ function showDetail(log) {
 	detailView.value = log.error ? "json" : "timeline";
 }
 
+function copyJSON() {
+	if (!selected.value) return;
+	navigator.clipboard.writeText(formatJSON(selected.value)).then(() => {
+		copied.value = true;
+		clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => { copied.value = false; }, 2000);
+	});
+}
+
 const assembledText = computed(() => {
 	if (!selected.value) return "";
 	return extractAssembledText(selected.value);
@@ -514,12 +526,15 @@ function parseAnthropicMessages(req) {
 	const nodes = [];
 	// system field → synthetic system node (short preview, content in raw details)
 	if (req.system) {
+		const sysText = Array.isArray(req.system)
+			? req.system.filter((b) => b.type === "text").map((b) => b.text).join(" ")
+			: req.system;
 		nodes.push({
 			role: "system",
 			raw: { role: "system", content: req.system },
 			toolCalls: null,
 			toolCallId: "",
-			preview: truncate(req.system.replace(/\s+/g, " "), 60),
+			preview: truncate(sysText.replace(/\s+/g, " "), 60),
 		});
 	}
 	if (!Array.isArray(req.messages)) return nodes;
@@ -653,8 +668,8 @@ function parseResponsesMessages(req) {
 // detect request protocol format
 function detectRequestFormat(req) {
 	if (!req) return "unknown";
-	// Anthropic: has "system" string field OR messages with content blocks containing tool_use/tool_result
-	if (typeof req.system === "string") return "anthropic";
+	// Anthropic: has "system" field (string or array) OR messages with content blocks containing tool_use/tool_result
+	if (typeof req.system === "string" || Array.isArray(req.system)) return "anthropic";
 	if (Array.isArray(req.messages)) {
 		for (const m of req.messages) {
 			if (Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" || b.type === "tool_result")) {
@@ -749,13 +764,11 @@ const timelineNodes = computed(() => {
 		const isLastSection = i === lastUserIdx;
 
 		if (msg.role === "assistant" && msg.toolCalls?.length) {
-			// assistant with tool_calls: emit text node if has preview, then emit paired tool nodes
-			if (msg.preview) {
-				nodes.push({
-					type: "message", dotType: "assistant", label: "assistant",
-					preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
-				});
-			}
+			// assistant with tool_calls: always emit assistant node, then emit paired tool nodes
+			nodes.push({
+				type: "message", dotType: "assistant", label: "assistant",
+				preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
+			});
 			for (const tc of msg.toolCalls) {
 				const callId = tc.id || tc.tool_call_id;
 				const result = callId ? toolResultMap.get(callId) : null;

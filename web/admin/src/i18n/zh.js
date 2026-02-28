@@ -10,6 +10,7 @@ export default {
   },
   common: {
     close: '关闭',
+    copy: '复制',
     delete: '删除',
     save: '保存',
     confirm: '确认',
