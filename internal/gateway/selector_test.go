@@ -666,3 +666,125 @@ func TestSelector_SuppressReasons_MaxLimit(t *testing.T) {
 		t.Errorf("SuppressReasons: want 20 (max), got %d", len(reasons))
 	}
 }
+
+func TestSelector_RecordOutcomeWithSource_ErrorCounters(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {
+				Name:     "test",
+				URL:      "http://test.example.com",
+				Protocol: "openai",
+			},
+		},
+	}
+
+	s := NewSelector(cfg)
+
+	s.RecordOutcomeWithSource("test", &UpstreamError{Code: 500}, 100*time.Millisecond, "pre_stream")
+	s.RecordOutcomeWithSource("test", &UpstreamError{Code: 500}, 100*time.Millisecond, "pre_stream")
+	s.RecordOutcomeWithSource("test", &UpstreamError{Code: 500}, 100*time.Millisecond, "in_stream")
+
+	statuses := s.ProviderStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("ProviderStatuses: want 1, got %d", len(statuses))
+	}
+	st := statuses[0]
+	if st.PreStreamErrors != 2 {
+		t.Errorf("PreStreamErrors: want 2, got %d", st.PreStreamErrors)
+	}
+	if st.InStreamErrors != 1 {
+		t.Errorf("InStreamErrors: want 1, got %d", st.InStreamErrors)
+	}
+}
+
+func TestSelector_RecordFailover(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {
+				Name:     "test",
+				URL:      "http://test.example.com",
+				Protocol: "openai",
+			},
+		},
+	}
+
+	s := NewSelector(cfg)
+
+	s.RecordFailover("test")
+	s.RecordFailover("test")
+	s.RecordFailover("test")
+
+	statuses := s.ProviderStatuses()
+	if statuses[0].FailoverCount != 3 {
+		t.Errorf("FailoverCount: want 3, got %d", statuses[0].FailoverCount)
+	}
+}
+
+func TestProviderState_SlidingWindow_RingBufferOverwrite(t *testing.T) {
+	st := &providerState{}
+
+	// fill window with successes
+	for i := 0; i < outcomeWindowSize; i++ {
+		st.recordOutcome(true, 10, "")
+	}
+
+	// overwrite first half with failures
+	for i := 0; i < outcomeWindowSize/2; i++ {
+		st.recordOutcome(false, 20, "")
+	}
+
+	total, success, failure, _ := st.windowStats()
+	if total != outcomeWindowSize {
+		t.Errorf("total = %d, want %d", total, outcomeWindowSize)
+	}
+	if success != outcomeWindowSize/2 {
+		t.Errorf("success = %d, want %d", success, outcomeWindowSize/2)
+	}
+	if failure != outcomeWindowSize/2 {
+		t.Errorf("failure = %d, want %d", failure, outcomeWindowSize/2)
+	}
+}
+
+func TestSelector_ProviderDetail(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {Name: "test", URL: "http://test.example.com", Protocol: "openai"},
+		},
+	}
+	s := NewSelector(cfg)
+
+	detail := s.ProviderDetail("test")
+	if detail == nil {
+		t.Fatal("ProviderDetail(test) = nil, want non-nil")
+	}
+	if detail.Name != "test" {
+		t.Errorf("ProviderDetail.Name = %s, want test", detail.Name)
+	}
+
+	if s.ProviderDetail("nonexistent") != nil {
+		t.Error("ProviderDetail(nonexistent) != nil, want nil")
+	}
+}
+
+func TestSelector_ProviderModels(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {Name: "test", URL: "http://test.example.com", Protocol: "openai"},
+		},
+	}
+	s := NewSelector(cfg)
+
+	s.mu.Lock()
+	s.states["test"].rawModels = []json.RawMessage{
+		json.RawMessage(`{"id":"gpt-4o"}`),
+	}
+	s.mu.Unlock()
+
+	models := s.ProviderModels("test")
+	if len(models) != 1 {
+		t.Errorf("ProviderModels: want 1, got %d", len(models))
+	}
+	if s.ProviderModels("nonexistent") != nil {
+		t.Error("ProviderModels(nonexistent) != nil, want nil")
+	}
+}

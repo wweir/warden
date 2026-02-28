@@ -49,7 +49,6 @@ type providerState struct {
 	// sliding window outcomes (ring buffer)
 	outcomes     []outcome
 	outcomeStart int // index of oldest entry
-	outcomeCount int // total count (for ring buffer positioning)
 
 	// recent suppress reasons (bounded, TTL-evicted)
 	suppressReasons []SuppressReason
@@ -78,7 +77,6 @@ func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource
 		}
 		s.outcomeStart = (s.outcomeStart + 1) % outcomeWindowSize
 	}
-	s.outcomeCount++
 }
 
 // windowStats returns statistics for the sliding window.
