@@ -9,18 +9,21 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sower-proxy/deferlog/v2"
+	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/reqlog"
-	"github.com/wweir/warden/pkg/openai"
-	"github.com/wweir/warden/pkg/sse"
-
-	"github.com/sower-proxy/deferlog/v2"
+	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // handleChatCompletion handles Chat Completion requests.
 func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle chat completion", "route", route.Prefix) }()
+
+	// Set route header for metrics middleware
+	w.Header().Set("X-Route", route.Prefix)
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
@@ -34,12 +37,10 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	r.Body.Close()
 
 	// lightweight parse: only extract fields needed for routing
-	var peek struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if err = json.Unmarshal(rawReqBody, &peek); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	model := gjson.GetBytes(rawReqBody, "model").String()
+	stream := gjson.GetBytes(rawReqBody, "stream").Bool()
+	if !gjson.ValidBytes(rawReqBody) {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -47,39 +48,53 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	availableTools, injectedTools := g.collectTools(r.Context(), route)
 
 	// inject system prompt if configured for this model (protocol-independent)
-	rawReqBody = injectSystemPromptRaw(rawReqBody, route, peek.Model)
+	if prompt := route.SystemPrompts[model]; prompt != "" {
+		rawReqBody = openai.InjectSystemPromptRaw(rawReqBody, prompt)
+	}
 
 	// select provider with failover on retryable errors
 	var excluded []string
-	selectedProvider, err := g.selector.Select(g.cfg, route, peek.Model)
+	authRetried := map[string]bool{}
+	selectedProvider, err := g.selector.Select(g.cfg, route, model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Set provider header for metrics middleware
+	w.Header().Set("X-Provider", selectedProvider.Name)
+
 	// helper to record a log entry
 	var steps []reqlog.Step
 	logRecord := func(respBody []byte, errMsg string) {
 		rec := reqlog.Record{
-			Timestamp:  startTime,
-			RequestID:  reqID,
-			Route:      route.Prefix,
-			Endpoint:   "chat/completions",
-			Model:      peek.Model,
-			Stream:     peek.Stream,
-			Provider:   selectedProvider.Name,
-			UserAgent:  r.UserAgent(),
-			DurationMs: time.Since(startTime).Milliseconds(),
-			Error:      errMsg,
-			Request:    rawReqBody,
-			Response:   respBody,
-			Steps:      steps,
+			Timestamp:   startTime,
+			RequestID:   reqID,
+			Route:       route.Prefix,
+			Endpoint:    "chat/completions",
+			Model:       model,
+			Stream:      stream,
+			Provider:    selectedProvider.Name,
+			UserAgent:   r.UserAgent(),
+			DurationMs:  time.Since(startTime).Milliseconds(),
+			Error:       errMsg,
+			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
+			Request:     rawReqBody,
+			Response:    respBody,
+			Steps:       steps,
 		}
 		// assemble streaming chunks into a single response object for logging
-		if peek.Stream && len(respBody) > 0 && errMsg == "" {
+		if stream && len(respBody) > 0 && errMsg == "" {
 			if assembled, err := openai.AssembleChatStream(respBody); err == nil {
 				rec.Response = assembled
+				// Extract token usage from assembled response for metrics
+				usage := ExtractTokenUsage(assembled)
+				g.RecordTokenMetrics(selectedProvider.Name, model, usage, rec.DurationMs)
 			}
+		} else if len(respBody) > 0 && errMsg == "" {
+			// Extract token usage from non-stream response
+			usage := ExtractTokenUsage(respBody)
+			g.RecordTokenMetrics(selectedProvider.Name, model, usage, rec.DurationMs)
 		}
 		g.recordAndBroadcast(rec)
 	}
@@ -87,10 +102,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	// no tools to inject: passthrough raw bytes with failover
 	if len(availableTools) == 0 {
 		for {
-			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-				"provider", selectedProvider.Name, "model", peek.Model)
+			logRequest(r, selectedProvider.Name, model)
 
-			provReqBody := prepareRawBody(rawReqBody, selectedProvider, peek.Model)
+			provReqBody := prepareRawBody(rawReqBody, selectedProvider, model)
 			reqBody, err := marshalProtocolRaw(selectedProvider.Protocol, provReqBody)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -98,19 +112,25 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			}
 			endpoint := protocolEndpoint(selectedProvider.Protocol, false)
 
-			if peek.Stream {
-				respBody, streamErr := sendRequest(selectedProvider, endpoint, reqBody)
-				if streamErr != nil {
-					g.selector.RecordOutcome(selectedProvider.Name, streamErr, time.Since(startTime))
-					if next := g.tryFailover(streamErr, selectedProvider.Name, &excluded, route, peek.Model); next != nil {
-						selectedProvider = next
-						continue
-					}
-					logRecord(respBody, streamErr.Error())
-					http.Error(w, streamErr.Error(), http.StatusBadGateway)
-					return
+			upstreamStart := time.Now()
+			respBody, err := sendRequest(selectedProvider, endpoint, reqBody)
+			latency := time.Since(upstreamStart)
+			if err != nil {
+				g.selector.RecordOutcome(selectedProvider.Name, err, latency)
+				if tryAuthRetry(err, selectedProvider, authRetried) {
+					continue
 				}
-				g.selector.RecordOutcome(selectedProvider.Name, nil, time.Since(startTime))
+				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, model); next != nil {
+					selectedProvider = next
+					continue
+				}
+				logRecord(nil, err.Error())
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
+
+			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
@@ -121,18 +141,6 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				return
 			}
 
-			respBody, err := sendRequest(selectedProvider, endpoint, reqBody)
-			if err != nil {
-				g.selector.RecordOutcome(selectedProvider.Name, err, time.Since(startTime))
-				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, peek.Model); next != nil {
-					selectedProvider = next
-					continue
-				}
-				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
-			}
-			g.selector.RecordOutcome(selectedProvider.Name, nil, time.Since(startTime))
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
 			logRecord(respBody, "")
@@ -147,7 +155,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	injectedTools = Inject(&req, availableTools)
+	injectedTools = openai.Inject(&req, mcpToolsToToolDefs(availableTools))
 
 	// resolve model alias for the selected provider
 	origModel := req.Model
@@ -155,10 +163,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 	if req.Stream {
 		for {
-			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-				"provider", selectedProvider.Name, "model", origModel)
-
-			// try first upstream request to detect retryable errors before writing to client
+			logRequest(r, selectedProvider.Name, origModel)
 			firstReqBody, err := marshalProtocolRequest(selectedProvider.Protocol, req)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -166,7 +171,11 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			}
 			firstResp, err := sendRequest(selectedProvider, protocolEndpoint(selectedProvider.Protocol, false), firstReqBody)
 			if err != nil {
-				g.selector.RecordOutcome(selectedProvider.Name, err, time.Since(startTime))
+				g.selector.RecordOutcomeWithSource(selectedProvider.Name, err, time.Since(startTime), "pre_stream")
+				g.RecordStreamErrorMetric(selectedProvider.Name, "pre_stream")
+				if tryAuthRetry(err, selectedProvider, authRetried) {
+					continue
+				}
 				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
 					selectedProvider = next
 					req.Model = selectedProvider.ResolveModel(origModel)
@@ -194,8 +203,11 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			// parse SSE for tool call interception
 			var respBody []byte
 			var streamErr error
-			respBody, steps, streamErr = g.handleStreamWithFirstResponse(w, r, selectedProvider, req, injectedTools, firstResp)
+			respBody, steps, streamErr = g.processStreamToolCalls(w, r, selectedProvider, req, injectedTools, firstResp)
+			// Record stream outcome for provider health (no failover after first packet)
 			if streamErr != nil {
+				g.selector.RecordOutcomeWithSource(selectedProvider.Name, streamErr, time.Since(startTime), "in_stream")
+				g.RecordStreamErrorMetric(selectedProvider.Name, "in_stream")
 				logRecord(respBody, streamErr.Error())
 			} else {
 				logRecord(respBody, "")
@@ -206,12 +218,14 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 	// non-stream path with tools and failover
 	for {
-		slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-			"provider", selectedProvider.Name, "model", origModel)
+		logRequest(r, selectedProvider.Name, origModel)
 
 		resp, respBody, err := g.forwardNonStreamRequest(r.Context(), selectedProvider, req)
 		if err != nil {
 			g.selector.RecordOutcome(selectedProvider.Name, err, time.Since(startTime))
+			if tryAuthRetry(err, selectedProvider, authRetried) {
+				continue
+			}
 			if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
 				selectedProvider = next
 				req.Model = selectedProvider.ResolveModel(origModel)
@@ -244,17 +258,35 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 // tryFailover checks if an error is retryable and selects the next provider.
 // Returns nil if no failover is possible.
 func (g *Gateway) tryFailover(err error, failedName string, excluded *[]string, route *config.RouteConfig, model string) *config.ProviderConfig {
-	ue, ok := err.(*UpstreamError)
-	if !ok || !ue.IsRetryable() {
+	if !IsRetryableError(err) {
 		return nil
 	}
 	*excluded = append(*excluded, failedName)
+	g.selector.RecordFailover(failedName)
+	g.RecordFailoverMetric(failedName)
 	next, selErr := g.selector.Select(g.cfg, route, model, *excluded...)
 	if selErr != nil {
 		return nil
 	}
 	slog.Warn("Provider failover", "failed", failedName, "next", next.Name, "error", err)
 	return next
+}
+
+// tryAuthRetry checks if the error is 401 and retries the same provider after
+// invalidating cached credentials. Returns true if the caller should continue the loop.
+// retried tracks which providers have already been auth-retried to prevent infinite loops.
+func tryAuthRetry(err error, provCfg *config.ProviderConfig, retried map[string]bool) bool {
+	ue, ok := err.(*UpstreamError)
+	if !ok || !ue.IsAuthError() {
+		return false
+	}
+	if retried[provCfg.Name] {
+		return false
+	}
+	provCfg.InvalidateAuth()
+	retried[provCfg.Name] = true
+	slog.Info("Auth error, reloading credentials", "provider", provCfg.Name)
+	return true
 }
 
 const maxToolCallIterations = 10
@@ -279,7 +311,7 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 			"injected", len(injectedCalls), "client", len(clientCalls))
 
 		callInfos := toolCallsToInfos(injectedCalls)
-		results, err := Execute(ctx, callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.Addr)
+		results, err := Execute(ctx, callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Failed to execute tools", "error", err)
 			break
@@ -328,41 +360,13 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 
 	// filter out injected tool_calls from final response
 	if len(resp.Choices) > 0 {
-		resp.Choices[0].Message.ToolCalls = filterToolCalls(resp.Choices[0].Message.ToolCalls, injectedTools)
+		_, resp.Choices[0].Message.ToolCalls = splitCalls(resp.Choices[0].Message.ToolCalls, injectedTools)
 		if len(resp.Choices[0].Message.ToolCalls) == 0 && resp.Choices[0].FinishReason == "tool_calls" {
 			resp.Choices[0].FinishReason = "stop"
 		}
 	}
 
 	return resp
-}
-
-// handleStream handles streaming responses with tool call interception.
-func (g *Gateway) handleStream(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest, injectedTools []string) ([]byte, []reqlog.Step, error) {
-	defer func() { deferlog.DebugError(nil, "handle chat stream") }()
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	if len(injectedTools) == 0 {
-		respBody, err := g.pipeChatStream(w, provCfg, req)
-		return respBody, nil, err
-	}
-
-	rawBody, err := sendUpstreamChatRaw(provCfg, req)
-	if err != nil {
-		return nil, nil, err
-	}
-	return g.processStreamToolCalls(w, r, provCfg, req, injectedTools, rawBody)
-}
-
-// handleStreamWithFirstResponse processes a streaming response with tool interception,
-// using a pre-fetched first response (for failover support).
-func (g *Gateway) handleStreamWithFirstResponse(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest, injectedTools []string, firstResp []byte) ([]byte, []reqlog.Step, error) {
-	defer func() { deferlog.DebugError(nil, "handle chat stream with first response") }()
-
-	return g.processStreamToolCalls(w, r, provCfg, req, injectedTools, firstResp)
 }
 
 // processStreamToolCalls handles the tool call interception loop for streaming,
@@ -382,7 +386,7 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 			}
 		}
 
-		events := sse.ParseEvents(rawBody)
+		events := protocol.ParseEvents(rawBody)
 		sseInfos, hasInjected, err := parser.Parse(events, injectedTools)
 		if err != nil {
 			return nil, steps, err
@@ -398,7 +402,7 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Stream: executing injected tool calls", "iteration", i+1, "tool_calls", len(injectedInfos))
 
-		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.Addr)
+		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Stream: failed to execute tools", "error", err)
 			w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody))

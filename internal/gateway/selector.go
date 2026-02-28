@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -16,7 +17,27 @@ const (
 	baseSuppressDuration = 30 * time.Second
 	// maxConsecutiveFailures caps the exponential backoff at 2^4 * 30s = 480s.
 	maxConsecutiveFailures = 5
+	// outcomeWindowSize is the number of recent outcomes to keep for sliding window stats.
+	outcomeWindowSize = 1000
+	// maxSuppressReasons is the max number of recent suppress reasons to keep.
+	maxSuppressReasons = 20
+	// suppressReasonTTL is the duration to keep suppress reasons.
+	suppressReasonTTL = time.Hour
 )
+
+// outcome represents a single request outcome for sliding window statistics.
+type outcome struct {
+	timestamp   time.Time
+	success     bool
+	latencyMs   int64
+	errorSource string // "pre_stream", "in_stream", or "" for non-stream
+}
+
+// SuppressReason records the cause and time of a provider suppression event.
+type SuppressReason struct {
+	Time   time.Time `json:"time"`
+	Reason string    `json:"reason"`
+}
 
 // providerState tracks runtime health state for a single provider.
 type providerState struct {
@@ -25,10 +46,58 @@ type providerState struct {
 	availableModels     map[string]bool   // nil = unknown (fetch failed), don't filter
 	rawModels           []json.RawMessage // raw model objects from GET /models
 
-	totalRequests  int64
-	successCount   int64
-	failureCount   int64
-	totalLatencyMs int64
+	// sliding window outcomes (ring buffer)
+	outcomes     []outcome
+	outcomeStart int // index of oldest entry
+	outcomeCount int // total count (for ring buffer positioning)
+
+	// recent suppress reasons (bounded, TTL-evicted)
+	suppressReasons []SuppressReason
+
+	// error source counters
+	preStreamErrors  int64 // errors before first stream packet
+	inStreamErrors   int64 // errors after first stream packet
+	failoverCount    int64 // number of times this provider triggered a failover
+}
+
+// recordOutcome records an outcome in the sliding window.
+func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource string) {
+	if len(s.outcomes) < outcomeWindowSize {
+		s.outcomes = append(s.outcomes, outcome{
+			timestamp:   time.Now(),
+			success:     success,
+			latencyMs:   latencyMs,
+			errorSource: errorSource,
+		})
+	} else {
+		s.outcomes[s.outcomeStart] = outcome{
+			timestamp:   time.Now(),
+			success:     success,
+			latencyMs:   latencyMs,
+			errorSource: errorSource,
+		}
+		s.outcomeStart = (s.outcomeStart + 1) % outcomeWindowSize
+	}
+	s.outcomeCount++
+}
+
+// windowStats returns statistics for the sliding window.
+func (s *providerState) windowStats() (total, success, failure int, avgLatencyMs float64) {
+	total = len(s.outcomes)
+	if total == 0 {
+		return 0, 0, 0, 0
+	}
+	var totalLatency int64
+	for _, o := range s.outcomes {
+		if o.success {
+			success++
+		} else {
+			failure++
+		}
+		totalLatency += o.latencyMs
+	}
+	avgLatencyMs = float64(totalLatency) / float64(total)
+	return total, success, failure, avgLatencyMs
 }
 
 // Selector selects the best provider for a request based on config order,
@@ -103,8 +172,13 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 				earliest = c
 			}
 		}
-		slog.Warn("All providers suppressed, selecting earliest expiring",
-			"name", earliest.name, "suppress_until", earliest.state.suppressUntil)
+		suppressedInfo := make([]any, 0, len(candidates)*4+2)
+		suppressedInfo = append(suppressedInfo, "selected", earliest.name, "suppress_until", earliest.state.suppressUntil)
+		for _, c := range candidates {
+			suppressedInfo = append(suppressedInfo, c.name+"_failures", c.state.consecutiveFailures,
+				c.name+"_suppress_until", c.state.suppressUntil)
+		}
+		slog.Warn("All providers suppressed, selecting earliest expiring", suppressedInfo...)
 		return earliest.provCfg, nil
 	}
 
@@ -115,6 +189,12 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 // Only retryable errors (5xx, 429, connection failures) trigger suppression.
 // Client errors (4xx except 429) and successes reset the failure counter.
 func (s *Selector) RecordOutcome(name string, err error, latency time.Duration) {
+	s.RecordOutcomeWithSource(name, err, latency, "")
+}
+
+// RecordOutcomeWithSource records the result of an upstream request with error source tracking.
+// errorSource can be "pre_stream", "in_stream", or "" for non-stream requests.
+func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.Duration, errorSource string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -123,11 +203,10 @@ func (s *Selector) RecordOutcome(name string, err error, latency time.Duration) 
 		return
 	}
 
-	st.totalRequests++
-	st.totalLatencyMs += latency.Milliseconds()
+	latencyMs := latency.Milliseconds()
 
 	if err == nil {
-		st.successCount++
+		st.recordOutcome(true, latencyMs, errorSource)
 		st.consecutiveFailures = 0
 		st.suppressUntil = time.Time{}
 		return
@@ -135,25 +214,70 @@ func (s *Selector) RecordOutcome(name string, err error, latency time.Duration) 
 
 	// only suppress on retryable errors
 	if ue, ok := err.(*UpstreamError); ok && !ue.IsRetryable() {
-		st.successCount++ // 4xx (except 429) counts as success
+		// 4xx client errors don't count as success or failure - just don't suppress the provider
 		return
 	}
 
-	st.failureCount++
+	st.recordOutcome(false, latencyMs, errorSource)
 	st.consecutiveFailures++
 	if st.consecutiveFailures > maxConsecutiveFailures {
 		st.consecutiveFailures = maxConsecutiveFailures
+	}
+
+	// track error source
+	switch errorSource {
+	case "pre_stream":
+		st.preStreamErrors++
+	case "in_stream":
+		st.inStreamErrors++
 	}
 
 	// exponential backoff: 30s, 60s, 120s, 240s, 480s
 	duration := baseSuppressDuration << (st.consecutiveFailures - 1)
 	st.suppressUntil = time.Now().Add(duration)
 
-	slog.Warn("Provider suppressed",
+	// record suppress reason
+	reason := err.Error()
+	if ue, ok := err.(*UpstreamError); ok {
+		body := ue.Body
+		if len(body) > 200 {
+			body = body[:200]
+		}
+		reason = fmt.Sprintf("HTTP %d: %s", ue.Code, body)
+	}
+	now := time.Now()
+	cutoff := now.Add(-suppressReasonTTL)
+	// evict expired entries
+	n := 0
+	for _, r := range st.suppressReasons {
+		if r.Time.After(cutoff) {
+			st.suppressReasons[n] = r
+			n++
+		}
+	}
+	st.suppressReasons = st.suppressReasons[:n]
+	// append and trim to max
+	st.suppressReasons = append(st.suppressReasons, SuppressReason{Time: now, Reason: reason})
+	if len(st.suppressReasons) > maxSuppressReasons {
+		st.suppressReasons = st.suppressReasons[len(st.suppressReasons)-maxSuppressReasons:]
+	}
+
+	attrs := []any{
 		"name", name,
 		"consecutive_failures", st.consecutiveFailures,
 		"suppress_duration", duration,
-	)
+		"error_source", errorSource,
+	}
+	if ue, ok := err.(*UpstreamError); ok {
+		body := ue.Body
+		if len(body) > 200 {
+			body = body[:200] + "..."
+		}
+		attrs = append(attrs, "status", ue.Code, "body", body)
+	} else {
+		attrs = append(attrs, "error", err)
+	}
+	slog.Warn("Provider suppressed", attrs...)
 }
 
 // RefreshModels queries GET /models for all providers in parallel
@@ -272,15 +396,59 @@ func mustMarshal(v any) json.RawMessage {
 
 // ProviderStatus exposes runtime health state for monitoring.
 type ProviderStatus struct {
-	Name                string    `json:"name"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-	SuppressUntil       time.Time `json:"suppress_until,omitzero"`
-	Suppressed          bool      `json:"suppressed"`
-	ModelCount          int       `json:"model_count"`
-	TotalRequests       int64     `json:"total_requests"`
-	SuccessCount        int64     `json:"success_count"`
-	FailureCount        int64     `json:"failure_count"`
-	AvgLatencyMs        float64   `json:"avg_latency_ms"`
+	Name                string           `json:"name"`
+	ConsecutiveFailures int              `json:"consecutive_failures"`
+	SuppressUntil       time.Time        `json:"suppress_until,omitzero"`
+	Suppressed          bool             `json:"suppressed"`
+	SuppressReasons     []SuppressReason `json:"suppress_reasons,omitempty"`
+	ModelCount          int              `json:"model_count"`
+	TotalRequests       int64            `json:"total_requests"`
+	SuccessCount        int64            `json:"success_count"`
+	FailureCount        int64            `json:"failure_count"`
+	AvgLatencyMs        float64          `json:"avg_latency_ms"`
+	// New metrics for stream error tracking
+	PreStreamErrors int64 `json:"pre_stream_errors"` // errors before first stream packet
+	InStreamErrors  int64 `json:"in_stream_errors"`  // errors after first stream packet
+	FailoverCount   int64 `json:"failover_count"`    // times this provider triggered a failover
+}
+
+// recentSuppressReasons returns suppress reasons within TTL, caller must hold lock.
+func (s *providerState) recentSuppressReasons() []SuppressReason {
+	if len(s.suppressReasons) == 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-suppressReasonTTL)
+	var result []SuppressReason
+	for _, r := range s.suppressReasons {
+		if r.Time.After(cutoff) {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+// buildStatus constructs a ProviderStatus snapshot. Caller must hold at least a read lock.
+func (s *providerState) buildStatus(name string) ProviderStatus {
+	now := time.Now()
+	total, success, failure, avgLatency := s.windowStats()
+	ps := ProviderStatus{
+		Name:                name,
+		ConsecutiveFailures: s.consecutiveFailures,
+		SuppressUntil:       s.suppressUntil,
+		Suppressed:          now.Before(s.suppressUntil),
+		SuppressReasons:     s.recentSuppressReasons(),
+		TotalRequests:       int64(total),
+		SuccessCount:        int64(success),
+		FailureCount:        int64(failure),
+		AvgLatencyMs:        avgLatency,
+		PreStreamErrors:     s.preStreamErrors,
+		InStreamErrors:      s.inStreamErrors,
+		FailoverCount:       s.failoverCount,
+	}
+	if s.availableModels != nil {
+		ps.ModelCount = len(s.availableModels)
+	}
+	return ps
 }
 
 // ProviderStatuses returns a snapshot of all provider health states.
@@ -288,25 +456,9 @@ func (s *Selector) ProviderStatuses() []ProviderStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	now := time.Now()
 	result := make([]ProviderStatus, 0, len(s.states))
 	for name, st := range s.states {
-		ps := ProviderStatus{
-			Name:                name,
-			ConsecutiveFailures: st.consecutiveFailures,
-			SuppressUntil:       st.suppressUntil,
-			Suppressed:          now.Before(st.suppressUntil),
-			TotalRequests:       st.totalRequests,
-			SuccessCount:        st.successCount,
-			FailureCount:        st.failureCount,
-		}
-		if st.availableModels != nil {
-			ps.ModelCount = len(st.availableModels)
-		}
-		if st.totalRequests > 0 {
-			ps.AvgLatencyMs = float64(st.totalLatencyMs) / float64(st.totalRequests)
-		}
-		result = append(result, ps)
+		result = append(result, st.buildStatus(name))
 	}
 	slices.SortFunc(result, func(a, b ProviderStatus) int {
 		return strings.Compare(a.Name, b.Name)
@@ -323,23 +475,18 @@ func (s *Selector) ProviderDetail(name string) *ProviderStatus {
 	if !exists {
 		return nil
 	}
-	now := time.Now()
-	ps := &ProviderStatus{
-		Name:                name,
-		ConsecutiveFailures: st.consecutiveFailures,
-		SuppressUntil:       st.suppressUntil,
-		Suppressed:          now.Before(st.suppressUntil),
-		TotalRequests:       st.totalRequests,
-		SuccessCount:        st.successCount,
-		FailureCount:        st.failureCount,
+	ps := st.buildStatus(name)
+	return &ps
+}
+
+// RecordFailover increments the failover counter for a provider.
+func (s *Selector) RecordFailover(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if st, exists := s.states[name]; exists {
+		st.failoverCount++
 	}
-	if st.availableModels != nil {
-		ps.ModelCount = len(st.availableModels)
-	}
-	if st.totalRequests > 0 {
-		ps.AvgLatencyMs = float64(st.totalLatencyMs) / float64(st.totalRequests)
-	}
-	return ps
 }
 
 // ProviderModels returns raw model objects for a single provider.

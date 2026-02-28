@@ -13,11 +13,12 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
+	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
-	"github.com/wweir/warden/pkg/anthropic"
-	"github.com/wweir/warden/pkg/openai"
+	"github.com/wweir/warden/pkg/protocol/anthropic"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // Gateway is the core AI Gateway component.
@@ -31,6 +32,8 @@ type Gateway struct {
 	broadcaster *reqlog.Broadcaster
 	handler     http.Handler
 	reloadFn    func() error
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // SetReloadFn sets the function called to hot-reload the gateway.
@@ -68,14 +71,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	g.selector.RefreshModels(cfg)
 
-	if cfg.Log != nil && cfg.Log.FileDir != "" {
-		fl, ferr := reqlog.NewFileLogger(cfg.Log.FileDir)
-		if ferr != nil {
-			slog.Warn("Failed to create file logger", "error", ferr)
-		} else {
-			g.logger = fl
-		}
-	}
+	g.logger = newLogger(cfg.Log)
 
 	router := httprouter.New()
 	router.RedirectTrailingSlash = false
@@ -87,6 +83,9 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	if cfg.AdminPassword != "" {
 		g.registerAdminRoutes(router)
 	}
+
+	// register metrics endpoint
+	g.RegisterMetricsRoutes(router)
 
 	for prefix, route := range cfg.Route {
 		router.Handle(http.MethodGet, prefix+"/models",
@@ -105,6 +104,11 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	// fallback: match route prefix and proxy unhandled requests
 	router.NotFound = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// redirect root to admin panel for browser access
+		if r.URL.Path == "/" && cfg.AdminPassword != "" {
+			http.Redirect(w, r, "/_admin/", http.StatusFound)
+			return
+		}
 		for prefix, route := range cfg.Route {
 			if strings.HasPrefix(r.URL.Path, prefix+"/") {
 				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
@@ -118,6 +122,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	g.handler = Chain(
 		&RecoveryMiddleware{},
 		&CORS{},
+		&PromMiddleware{gateway: g},
 	).Process(router)
 
 	return g
@@ -159,6 +164,9 @@ func (g *Gateway) recordAndBroadcast(r reqlog.Record) {
 
 // handleProxy transparently forwards non-chat/responses requests.
 func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
+	// Set route header for metrics middleware
+	w.Header().Set("X-Route", route.Prefix)
+
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
 
@@ -170,25 +178,25 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 	}
 	r.Body.Close()
 
-	// extract model from request body for provider selection
-	var peek struct {
-		Model string `json:"model"`
-	}
-	json.Unmarshal(reqBody, &peek) // best-effort; non-JSON bodies are fine
+	// extract model from request body for provider selection (best-effort; non-JSON bodies are fine)
+	model := gjson.GetBytes(reqBody, "model").String()
 
 	var excluded []string
-	provCfg, err := g.selector.Select(g.cfg, route, peek.Model)
+	authRetried := map[string]bool{}
+	provCfg, err := g.selector.Select(g.cfg, route, model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Set provider header for metrics middleware
+	w.Header().Set("X-Provider", provCfg.Name)
+
 	for {
-		slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-			"provider", provCfg.Name, "model", peek.Model)
+		logRequest(r, provCfg.Name, model)
 
 		// resolve model alias to real model name for upstream request
-		provReqBody := prepareRawBody(reqBody, provCfg, peek.Model)
+		provReqBody := prepareRawBody(reqBody, provCfg, model)
 
 		targetURL := provCfg.URL + r.URL.Path
 		if r.URL.RawQuery != "" {
@@ -204,9 +212,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		proxyReq.Header.Del("Accept-Encoding")
 		setAuthHeaders(proxyReq.Header, provCfg)
 
-		resp, err := provCfg.HTTPClient(provCfg.TimeoutDuration).Do(proxyReq)
+		upstreamStart := time.Now()
+		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
 		if err != nil {
-			g.selector.RecordOutcome(provCfg.Name, err, time.Since(startTime))
+			g.selector.RecordOutcome(provCfg.Name, err, time.Since(upstreamStart))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -217,41 +226,49 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 		if resp.StatusCode != http.StatusOK {
 			upErr := &UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
-			g.selector.RecordOutcome(provCfg.Name, upErr, time.Since(startTime))
+			g.selector.RecordOutcome(provCfg.Name, upErr, time.Since(upstreamStart))
+			if tryAuthRetry(upErr, provCfg, authRetried) {
+				continue
+			}
 			if upErr.IsRetryable() {
-				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, peek.Model); next != nil {
+				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, model); next != nil {
 					provCfg = next
 					continue
 				}
 			}
 		} else {
-			g.selector.RecordOutcome(provCfg.Name, nil, time.Since(startTime))
+			g.selector.RecordOutcome(provCfg.Name, nil, time.Since(upstreamStart))
 		}
 
 		maps.Copy(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		w.Write(respBody)
 
-		if g.logger != nil {
-			logResp := assembleProxyResponse(provCfg.Protocol, respBody)
-			g.recordAndBroadcast(reqlog.Record{
-				Timestamp:  startTime,
-				RequestID:  reqID,
-				Route:      route.Prefix,
-				Endpoint:   r.URL.Path,
-				Model:      peek.Model,
-				Provider:   provCfg.Name,
-				UserAgent:  r.UserAgent(),
-				DurationMs: time.Since(startTime).Milliseconds(),
-				Request:    reqBody,
-				Response:   logResp,
-			})
+		durationMs := time.Since(startTime).Milliseconds()
+		logResp := assembleProxyResponse(provCfg.Protocol, respBody)
+
+		// Extract token usage for metrics (only for LLM responses)
+		if resp.StatusCode == http.StatusOK && len(logResp) > 0 {
+			usage := ExtractTokenUsage(logResp)
+			g.RecordTokenMetrics(provCfg.Name, model, usage, durationMs)
 		}
+
+		g.recordAndBroadcast(reqlog.Record{
+			Timestamp:   startTime,
+			RequestID:   reqID,
+			Route:       route.Prefix,
+			Endpoint:    r.URL.Path,
+			Model:       model,
+			Provider:    provCfg.Name,
+			UserAgent:   r.UserAgent(),
+			DurationMs:  durationMs,
+			Fingerprint: reqlog.BuildFingerprint(reqBody),
+			Request:     reqBody,
+			Response:    logResp,
+		})
 		return
 	}
 }
-
-// --- tool collection ---
 
 // assembleProxyResponse converts a raw proxy response body for logging.
 // If the body is SSE, it assembles the stream into a single JSON object.
@@ -312,6 +329,9 @@ func (g *Gateway) collectTools(_ context.Context, route *config.RouteConfig) ([]
 
 // handleModels returns an aggregated list of models from all providers in the route.
 func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request, route *config.RouteConfig) {
+	// Set route header for metrics middleware
+	w.Header().Set("X-Route", route.Prefix)
+
 	models := g.selector.Models(g.cfg, route)
 	if models == nil {
 		models = []json.RawMessage{}

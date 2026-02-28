@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
-	"github.com/wweir/warden/pkg/openai"
-	"github.com/wweir/warden/pkg/sse"
+	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // buildStep creates a reqlog.Step from tool call infos, results, and optional LLM request/response.
-func buildStep(iteration int, calls []sse.ToolCallInfo, results []ToolResult, llmReq, llmResp json.RawMessage) reqlog.Step {
+func buildStep(iteration int, calls []protocol.ToolCallInfo, results []ToolResult, llmReq, llmResp json.RawMessage) reqlog.Step {
 	return reqlog.Step{
 		Iteration:   iteration,
 		ToolCalls:   toToolCallEntries(calls),
@@ -20,8 +21,8 @@ func buildStep(iteration int, calls []sse.ToolCallInfo, results []ToolResult, ll
 	}
 }
 
-// toToolCallEntries converts sse.ToolCallInfo slice to reqlog.ToolCallEntry slice.
-func toToolCallEntries(calls []sse.ToolCallInfo) []reqlog.ToolCallEntry {
+// toToolCallEntries converts protocol.ToolCallInfo slice to reqlog.ToolCallEntry slice.
+func toToolCallEntries(calls []protocol.ToolCallInfo) []reqlog.ToolCallEntry {
 	entries := make([]reqlog.ToolCallEntry, len(calls))
 	for i, c := range calls {
 		entries[i] = reqlog.ToolCallEntry{ID: c.ID, Name: c.Name, Arguments: c.Arguments}
@@ -38,35 +39,38 @@ func toToolResultEntries(results []ToolResult) []reqlog.ToolResultEntry {
 	return entries
 }
 
-// splitCalls separates tool calls into injected and client-originated.
-func splitCalls(calls []openai.ToolCall, injectedTools []string) (injected, client []openai.ToolCall) {
-	for _, tc := range calls {
-		if slices.Contains(injectedTools, tc.Function.Name) {
-			injected = append(injected, tc)
+// namedItem is a constraint for types that have a GetName method.
+type namedItem interface {
+	GetName() string
+}
+
+// splitByInjected separates items into injected and client-originated using a generic constraint.
+func splitByInjected[T namedItem](items []T, injectedTools []string) (injected, client []T) {
+	for _, item := range items {
+		if slices.Contains(injectedTools, item.GetName()) {
+			injected = append(injected, item)
 		} else {
-			client = append(client, tc)
+			client = append(client, item)
 		}
 	}
 	return
+}
+
+// splitCalls separates tool calls into injected and client-originated.
+func splitCalls(calls []openai.ToolCall, injectedTools []string) (injected, client []openai.ToolCall) {
+	return splitByInjected(calls, injectedTools)
 }
 
 // splitInfos separates ToolCallInfo into injected and client-originated.
-func splitInfos(infos []sse.ToolCallInfo, injectedTools []string) (injected, client []sse.ToolCallInfo) {
-	for _, info := range infos {
-		if slices.Contains(injectedTools, info.Name) {
-			injected = append(injected, info)
-		} else {
-			client = append(client, info)
-		}
-	}
-	return
+func splitInfos(infos []protocol.ToolCallInfo, injectedTools []string) (injected, client []protocol.ToolCallInfo) {
+	return splitByInjected(infos, injectedTools)
 }
 
-// toolCallsToInfos converts openai.ToolCall slice to sse.ToolCallInfo slice.
-func toolCallsToInfos(calls []openai.ToolCall) []sse.ToolCallInfo {
-	infos := make([]sse.ToolCallInfo, len(calls))
+// toolCallsToInfos converts openai.ToolCall slice to protocol.ToolCallInfo slice.
+func toolCallsToInfos(calls []openai.ToolCall) []protocol.ToolCallInfo {
+	infos := make([]protocol.ToolCallInfo, len(calls))
 	for i, tc := range calls {
-		infos[i] = sse.ToolCallInfo{
+		infos[i] = protocol.ToolCallInfo{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
 			Arguments: tc.Function.Arguments,
@@ -75,8 +79,8 @@ func toolCallsToInfos(calls []openai.ToolCall) []sse.ToolCallInfo {
 	return infos
 }
 
-// infosToToolCalls converts sse.ToolCallInfo slice back to openai.ToolCall slice.
-func infosToToolCalls(infos []sse.ToolCallInfo) []openai.ToolCall {
+// infosToToolCalls converts protocol.ToolCallInfo slice back to openai.ToolCall slice.
+func infosToToolCalls(infos []protocol.ToolCallInfo) []openai.ToolCall {
 	calls := make([]openai.ToolCall, len(infos))
 	for i, info := range infos {
 		calls[i] = openai.ToolCall{
@@ -104,13 +108,16 @@ func toolResultsToMessages(results []ToolResult) []openai.Message {
 	return msgs
 }
 
-// filterToolCalls removes injected tool calls, keeping only client-originated ones.
-func filterToolCalls(toolCalls []openai.ToolCall, injectedTools []string) []openai.ToolCall {
-	var filtered []openai.ToolCall
-	for _, tc := range toolCalls {
-		if !slices.Contains(injectedTools, tc.Function.Name) {
-			filtered = append(filtered, tc)
+// mcpToolsToToolDefs converts mcp.Tool slice to openai.ToolDef slice.
+func mcpToolsToToolDefs(tools []mcp.Tool) []openai.ToolDef {
+	defs := make([]openai.ToolDef, len(tools))
+	for i, t := range tools {
+		defs[i] = openai.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
 		}
 	}
-	return filtered
+	return defs
 }
+

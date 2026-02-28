@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path"
 	"slices"
 	"strings"
 
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/pkg/mcphook"
-	"github.com/wweir/warden/pkg/sse"
+	"github.com/wweir/warden/pkg/protocol"
 
 	"github.com/sower-proxy/deferlog/v2"
 )
@@ -24,9 +25,10 @@ type ToolResult struct {
 
 // Execute executes injected tool calls and returns results.
 // Only calls whose Name appears in injectedTools are executed.
-// mcpCfgs is used to look up per-tool disabled flags and hook configurations.
+// mcpCfgs is used to look up per-tool disabled flags.
+// toolHooks is the global hook rule list that is matched against "mcp__tool" name.
 // gatewayAddr is the gateway's own listening address, used for ai-type hooks.
-func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []string, mcpClients map[string]*mcp.Client, mcpCfgs map[string]*config.MCPConfig, gatewayAddr string) (results []ToolResult, err error) {
+func Execute(ctx context.Context, calls []protocol.ToolCallInfo, injectedTools []string, mcpClients map[string]*mcp.Client, mcpCfgs map[string]*config.MCPConfig, toolHooks []*config.HookRuleConfig, gatewayAddr string) (results []ToolResult, err error) {
 	defer func() { deferlog.DebugError(err, "execute tool calls") }()
 
 	for _, tc := range calls {
@@ -73,13 +75,8 @@ func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []stri
 			continue
 		}
 
-		// collect hooks for this tool
-		var hooks []config.HookConfig
-		if mcpCfg, ok := mcpCfgs[mcpName]; ok {
-			if toolCfg, ok := mcpCfg.Tools[originalToolName]; ok {
-				hooks = toolCfg.Hooks
-			}
-		}
+		// collect matching hooks from global tool_hooks rules
+		hooks := matchHooks(tc.Name, toolHooks)
 
 		hctx := mcphook.HookContext{
 			MCPName:   mcpName,
@@ -128,6 +125,24 @@ func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []stri
 	}
 
 	return results, nil
+}
+
+// matchHooks returns all HookConfig entries from rules whose Match pattern
+// matches the fully-qualified tool name (format: "mcp_name__tool_name").
+// Uses path.Match glob semantics: "*" matches any non-separator sequence.
+func matchHooks(toolName string, rules []*config.HookRuleConfig) []config.HookConfig {
+	var hooks []config.HookConfig
+	for _, rule := range rules {
+		matched, err := path.Match(rule.Match, toolName)
+		if err != nil {
+			slog.Warn("Invalid hook rule match pattern", "pattern", rule.Match, "error", err)
+			continue
+		}
+		if matched {
+			hooks = append(hooks, rule.Hook)
+		}
+	}
+	return hooks
 }
 
 // splitToolName splits "mcp_name__tool_name" into [mcpName, toolName]

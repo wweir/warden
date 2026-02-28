@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
-	"github.com/wweir/warden/pkg/anthropic"
+	"github.com/wweir/warden/pkg/protocol/anthropic"
 )
 
 // setAuthHeaders injects authentication headers based on protocol type.
@@ -22,11 +22,7 @@ func setAuthHeaders(h http.Header, provCfg *config.ProviderConfig) {
 	if apiKey != "" {
 		switch provCfg.Protocol {
 		case "anthropic":
-			h.Set("x-api-key", apiKey)
-			h.Set("anthropic-version", "2023-06-01")
-			// Many Anthropic proxies expose OpenAI-compatible /v1/models that
-			// requires Bearer auth, so set both headers.
-			h.Set("Authorization", "Bearer "+apiKey)
+			anthropic.SetAuthHeaders(h, apiKey)
 		default:
 			h.Set("Authorization", "Bearer "+apiKey)
 		}
@@ -45,7 +41,7 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) (
 
 	setAuthHeaders(httpReq.Header, provCfg)
 
-	client := provCfg.HTTPClient(provCfg.TimeoutDuration)
+	client := provCfg.HTTPClient(0)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

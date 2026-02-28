@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 
 	"github.com/wweir/warden/config"
-	"github.com/wweir/warden/pkg/anthropic"
-	"github.com/wweir/warden/pkg/openai"
-	"github.com/wweir/warden/pkg/sse"
+	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/protocol/anthropic"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // protocolEndpoint returns the upstream API endpoint for a given protocol and API type.
@@ -103,11 +103,11 @@ func unmarshalProtocolResponse(protocol string, body []byte) (openai.ChatComplet
 }
 
 // newStreamParser creates a StreamParser based on protocol and API type.
-func newStreamParser(protocol string, isResponses bool) sse.StreamParser {
+func newStreamParser(protocolType string, isResponses bool) protocol.StreamParser {
 	if isResponses {
 		return &openai.ResponsesStreamParser{}
 	}
-	switch protocol {
+	switch protocolType {
 	case "anthropic":
 		return &anthropic.StreamParser{}
 	default:

@@ -532,3 +532,137 @@ func TestSelector_ModelAlias_Models(t *testing.T) {
 		t.Errorf("kimi-k2 aliased: want moonshotai/kimi-k2, got %s", entries["kimi-k2"].Aliased)
 	}
 }
+
+
+func TestProviderState_SlidingWindow(t *testing.T) {
+	st := &providerState{}
+
+	// Record 5 successes
+	for i := 0; i < 5; i++ {
+		st.recordOutcome(true, 100, "")
+	}
+
+	total, success, failure, avg := st.windowStats()
+	if total != 5 {
+		t.Errorf("windowStats total = %d, want 5", total)
+	}
+	if success != 5 {
+		t.Errorf("windowStats success = %d, want 5", success)
+	}
+	if failure != 0 {
+		t.Errorf("windowStats failure = %d, want 0", failure)
+	}
+	if avg != 100.0 {
+		t.Errorf("windowStats avg = %f, want 100.0", avg)
+	}
+
+	// Record 3 failures
+	for i := 0; i < 3; i++ {
+		st.recordOutcome(false, 200, "pre_stream")
+	}
+
+	total, success, failure, avg = st.windowStats()
+	if total != 8 {
+		t.Errorf("windowStats total = %d, want 8", total)
+	}
+	if success != 5 {
+		t.Errorf("windowStats success = %d, want 5", success)
+	}
+	if failure != 3 {
+		t.Errorf("windowStats failure = %d, want 3", failure)
+	}
+	// Average: (5*100 + 3*200) / 8 = 137.5
+	if avg != 137.5 {
+		t.Errorf("windowStats avg = %f, want 137.5", avg)
+	}
+}
+
+func TestProviderState_SlidingWindow_RingBuffer(t *testing.T) {
+	st := &providerState{}
+
+	// Record more than outcomeWindowSize (1000) outcomes
+	for i := 0; i < 1005; i++ {
+		st.recordOutcome(i%2 == 0, int64(i), "") // alternating success/failure
+	}
+
+	total, success, failure, _ := st.windowStats()
+	if total != 1000 {
+		t.Errorf("windowStats total = %d, want 1000 (ring buffer limit)", total)
+	}
+	if success != 500 {
+		t.Errorf("windowStats success = %d, want 500", success)
+	}
+	if failure != 500 {
+		t.Errorf("windowStats failure = %d, want 500", failure)
+	}
+}
+
+func TestSelector_SuppressReasons(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {
+				Name:     "test",
+				URL:      "http://test.example.com",
+				Protocol: "openai",
+			},
+		},
+	}
+
+	s := NewSelector(cfg)
+
+	// record 3 failures with different errors
+	s.RecordOutcome("test", &UpstreamError{Code: 500, Body: "internal server error"}, 100*time.Millisecond)
+	s.RecordOutcome("test", &UpstreamError{Code: 429, Body: "rate limited"}, 100*time.Millisecond)
+	s.RecordOutcome("test", &UpstreamError{Code: 502, Body: "bad gateway"}, 100*time.Millisecond)
+
+	statuses := s.ProviderStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("ProviderStatuses: want 1, got %d", len(statuses))
+	}
+
+	reasons := statuses[0].SuppressReasons
+	if len(reasons) != 3 {
+		t.Fatalf("SuppressReasons: want 3, got %d", len(reasons))
+	}
+	if reasons[0].Reason != "HTTP 500: internal server error" {
+		t.Errorf("SuppressReasons[0]: want 'HTTP 500: internal server error', got %q", reasons[0].Reason)
+	}
+	if reasons[1].Reason != "HTTP 429: rate limited" {
+		t.Errorf("SuppressReasons[1]: want 'HTTP 429: rate limited', got %q", reasons[1].Reason)
+	}
+
+	// success clears consecutive failures but reasons persist
+	s.RecordOutcome("test", nil, 50*time.Millisecond)
+	statuses = s.ProviderStatuses()
+	if statuses[0].ConsecutiveFailures != 0 {
+		t.Errorf("After success: want 0 failures, got %d", statuses[0].ConsecutiveFailures)
+	}
+	if len(statuses[0].SuppressReasons) != 3 {
+		t.Errorf("After success: reasons should persist, want 3, got %d", len(statuses[0].SuppressReasons))
+	}
+}
+
+func TestSelector_SuppressReasons_MaxLimit(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"test": {
+				Name:     "test",
+				URL:      "http://test.example.com",
+				Protocol: "openai",
+			},
+		},
+	}
+
+	s := NewSelector(cfg)
+
+	// record 25 failures (exceeds maxSuppressReasons=20)
+	for i := 0; i < 25; i++ {
+		s.RecordOutcome("test", &UpstreamError{Code: 500, Body: "error"}, 100*time.Millisecond)
+	}
+
+	statuses := s.ProviderStatuses()
+	reasons := statuses[0].SuppressReasons
+	if len(reasons) != 20 {
+		t.Errorf("SuppressReasons: want 20 (max), got %d", len(reasons))
+	}
+}

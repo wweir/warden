@@ -9,18 +9,21 @@ import (
 	"slices"
 	"time"
 
+	"github.com/sower-proxy/deferlog/v2"
+	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/reqlog"
-	"github.com/wweir/warden/pkg/openai"
-	"github.com/wweir/warden/pkg/sse"
-
-	"github.com/sower-proxy/deferlog/v2"
+	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // handleResponses handles Responses API requests (POST /*/responses).
 func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses", "route", route.Prefix) }()
+
+	// Set route header for metrics middleware
+	w.Header().Set("X-Route", route.Prefix)
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
@@ -34,59 +37,58 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	r.Body.Close()
 
 	// lightweight parse: only extract fields needed for routing
-	var peek struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	if err = json.Unmarshal(rawReqBody, &peek); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	model := gjson.GetBytes(rawReqBody, "model").String()
+	stream := gjson.GetBytes(rawReqBody, "stream").Bool()
+	if !gjson.ValidBytes(rawReqBody) {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	availableTools, _ := g.collectTools(r.Context(), route)
 
 	var excluded []string
-	provCfg, err := g.selector.Select(g.cfg, route, peek.Model)
+	authRetried := map[string]bool{}
+	provCfg, err := g.selector.Select(g.cfg, route, model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Set provider header for metrics middleware
+	w.Header().Set("X-Provider", provCfg.Name)
+
 	var steps []reqlog.Step
-	buildStep := func(iteration int, toolCalls []reqlog.ToolCallEntry, toolResults []reqlog.ToolResultEntry, llmReq, llmResp []byte) {
-		steps = append(steps, reqlog.Step{
-			Iteration:   iteration,
-			ToolCalls:   toolCalls,
-			ToolResults: toolResults,
-			LLMRequest:  llmReq,
-			LLMResponse: llmResp,
-		})
-	}
 
 	logRecord := func(respBody []byte, errMsg string) {
 		rec := reqlog.Record{
-			Timestamp:  startTime,
-			RequestID:  reqID,
-			Route:      route.Prefix,
-			Endpoint:   "responses",
-			Model:      peek.Model,
-			Stream:     peek.Stream,
-			Provider:   provCfg.Name,
-			UserAgent:  r.UserAgent(),
-			DurationMs: time.Since(startTime).Milliseconds(),
-			Error:      errMsg,
-			Request:    rawReqBody,
-			Response:   respBody,
-			Steps:      steps,
+			Timestamp:   startTime,
+			RequestID:   reqID,
+			Route:       route.Prefix,
+			Endpoint:    "responses",
+			Model:       model,
+			Stream:      stream,
+			Provider:    provCfg.Name,
+			UserAgent:   r.UserAgent(),
+			DurationMs:  time.Since(startTime).Milliseconds(),
+			Error:       errMsg,
+			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
+			Request:     rawReqBody,
+			Response:    respBody,
+			Steps:       steps,
 		}
 		// extract completed response object from SSE events for logging
-		if peek.Stream && len(respBody) > 0 && errMsg == "" {
-			events := sse.ParseEvents(respBody)
+		if stream && len(respBody) > 0 && errMsg == "" {
+			events := protocol.ParseEvents(respBody)
 			if cr := openai.ExtractCompletedResponse(events); cr != nil {
 				if assembled, err := json.Marshal(cr); err == nil {
 					rec.Response = assembled
+					usage := ExtractTokenUsage(assembled)
+					g.RecordTokenMetrics(provCfg.Name, model, usage, rec.DurationMs)
 				}
 			}
+		} else if len(respBody) > 0 && errMsg == "" {
+			usage := ExtractTokenUsage(respBody)
+			g.RecordTokenMetrics(provCfg.Name, model, usage, rec.DurationMs)
 		}
 		g.recordAndBroadcast(rec)
 	}
@@ -94,28 +96,35 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	// no tools to inject: passthrough raw bytes with failover
 	if len(availableTools) == 0 {
 		// inject system prompt into raw body for passthrough
-		rawReqBody = injectSystemPromptResponsesRaw(rawReqBody, route, peek.Model)
+		if prompt := route.SystemPrompts[model]; prompt != "" {
+			rawReqBody = openai.InjectSystemPromptResponsesRaw(rawReqBody, prompt)
+		}
 
 		for {
-			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-				"provider", provCfg.Name, "model", peek.Model)
+			logRequest(r, provCfg.Name, model)
 
-			provReqBody := prepareRawBody(rawReqBody, provCfg, peek.Model)
+			provReqBody := prepareRawBody(rawReqBody, provCfg, model)
 			endpoint := protocolEndpoint(provCfg.Protocol, true)
 
-			if peek.Stream {
-				respBody, streamErr := sendRequest(provCfg, endpoint, provReqBody)
-				if streamErr != nil {
-					g.selector.RecordOutcome(provCfg.Name, streamErr, time.Since(startTime))
-					if next := g.tryFailover(streamErr, provCfg.Name, &excluded, route, peek.Model); next != nil {
-						provCfg = next
-						continue
-					}
-					logRecord(respBody, streamErr.Error())
-					http.Error(w, streamErr.Error(), http.StatusBadGateway)
-					return
+			upstreamStart := time.Now()
+			respBody, err := sendRequest(provCfg, endpoint, provReqBody)
+			latency := time.Since(upstreamStart)
+			if err != nil {
+				g.selector.RecordOutcome(provCfg.Name, err, latency)
+				if tryAuthRetry(err, provCfg, authRetried) {
+					continue
 				}
-				g.selector.RecordOutcome(provCfg.Name, nil, time.Since(startTime))
+				if next := g.tryFailover(err, provCfg.Name, &excluded, route, model); next != nil {
+					provCfg = next
+					continue
+				}
+				logRecord(nil, err.Error())
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+
+			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
@@ -125,18 +134,6 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				return
 			}
 
-			respBody, err := sendRequest(provCfg, endpoint, provReqBody)
-			if err != nil {
-				g.selector.RecordOutcome(provCfg.Name, err, time.Since(startTime))
-				if next := g.tryFailover(err, provCfg.Name, &excluded, route, peek.Model); next != nil {
-					provCfg = next
-					continue
-				}
-				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
-				return
-			}
-			g.selector.RecordOutcome(provCfg.Name, nil, time.Since(startTime))
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
 			logRecord(respBody, "")
@@ -151,9 +148,9 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		return
 	}
 
-	req.Input = injectSystemPromptResponses(req.Input, route, peek.Model)
+	req.Input = openai.InjectSystemPromptResponses(req.Input, route.SystemPrompts[model])
 
-	injectedTools := InjectResponsesTools(&req, availableTools)
+	injectedTools := openai.InjectResponsesTools(&req, mcpToolsToToolDefs(availableTools))
 
 	// resolve model alias for the selected provider
 	origModel := req.Model
@@ -161,12 +158,15 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	if req.Stream {
 		for {
-			slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-				"provider", provCfg.Name, "model", origModel)
+			logRequest(r, provCfg.Name, origModel)
 
 			firstResp, firstErr := sendResponsesRawRequest(provCfg, req)
 			if firstErr != nil {
-				g.selector.RecordOutcome(provCfg.Name, firstErr, time.Since(startTime))
+				g.selector.RecordOutcomeWithSource(provCfg.Name, firstErr, time.Since(startTime), "pre_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "pre_stream")
+				if tryAuthRetry(firstErr, provCfg, authRetried) {
+					continue
+				}
 				if next := g.tryFailover(firstErr, provCfg.Name, &excluded, route, origModel); next != nil {
 					provCfg = next
 					req.Model = provCfg.ResolveModel(origModel)
@@ -182,8 +182,12 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 
-			respBody, streamErr := g.handleResponsesStreamWithFirstResponse(w, r, provCfg, req, injectedTools, buildStep, firstResp)
+			respBody, streamSteps, streamErr := g.handleResponsesStreamWithFirstResponse(w, r, provCfg, req, injectedTools, firstResp)
+			steps = append(steps, streamSteps...)
+			// Record stream outcome for provider health (no failover after first packet)
 			if streamErr != nil {
+				g.selector.RecordOutcomeWithSource(provCfg.Name, streamErr, time.Since(startTime), "in_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "in_stream")
 				logRecord(respBody, streamErr.Error())
 			} else {
 				logRecord(respBody, "")
@@ -194,12 +198,14 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	// non-stream path with tools and failover
 	for {
-		slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
-			"provider", provCfg.Name, "model", origModel)
+		logRequest(r, provCfg.Name, origModel)
 
 		resp, respBody, err := g.forwardResponsesRequest(provCfg, req)
 		if err != nil {
 			g.selector.RecordOutcome(provCfg.Name, err, time.Since(startTime))
+			if tryAuthRetry(err, provCfg, authRetried) {
+				continue
+			}
 			if next := g.tryFailover(err, provCfg.Name, &excluded, route, origModel); next != nil {
 				provCfg = next
 				req.Model = provCfg.ResolveModel(origModel)
@@ -219,7 +225,8 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			return
 		}
 
-		resp = g.handleResponsesToolCalls(r, provCfg, req, resp, injectedTools, buildStep)
+		resp, toolSteps := g.handleResponsesToolCalls(r, provCfg, req, resp, injectedTools)
+		steps = append(steps, toolSteps...)
 
 		w.Header().Set("Content-Type", "application/json")
 		finalBody, _ := json.Marshal(resp)
@@ -230,7 +237,9 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 }
 
 // handleResponsesToolCalls processes tool calls in a Responses API response.
-func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, resp openai.ResponsesResponse, injectedTools []string, buildStep func(int, []reqlog.ToolCallEntry, []reqlog.ToolResultEntry, []byte, []byte)) openai.ResponsesResponse {
+// Returns the updated response and accumulated steps.
+func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, resp openai.ResponsesResponse, injectedTools []string) (openai.ResponsesResponse, []reqlog.Step) {
+	var steps []reqlog.Step
 	for i := range maxToolCallIterations {
 		funcCalls, _ := extractFunctionCalls(resp.Output)
 		injectedCalls, clientCalls := splitFuncCalls(funcCalls, injectedTools)
@@ -243,15 +252,11 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 			"injected", len(injectedCalls), "client", len(clientCalls))
 
 		callInfos := funcCallsToInfos(injectedCalls)
-		results, err := Execute(r.Context(), callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.Addr)
+		results, err := Execute(r.Context(), callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Responses: failed to execute tools", "error", err)
 			break
 		}
-
-		// record step
-		toolCallEntries := toToolCallEntries(callInfos)
-		toolResultEntries := toToolResultEntries(results)
 
 		newInput, err := buildResponsesInput(req.Input, resp.Output, results)
 		if err != nil {
@@ -269,10 +274,10 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 			newResp, llmRespBody, err := g.forwardResponsesRequest(provCfg, req)
 			if err != nil {
 				slog.Error("Responses: failed to forward after mixed tool execution", "error", err)
-				buildStep(i+1, toolCallEntries, toolResultEntries, llmReqBody, nil)
+				steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
 			} else {
 				resp = newResp
-				buildStep(i+1, toolCallEntries, toolResultEntries, llmReqBody, llmRespBody)
+				steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
 			}
 			break
 		}
@@ -280,116 +285,95 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 		newResp, llmRespBody, err := g.forwardResponsesRequest(provCfg, req)
 		if err != nil {
 			slog.Error("Responses: failed to forward after tool execution", "error", err, "iteration", i+1)
-			buildStep(i+1, toolCallEntries, toolResultEntries, llmReqBody, nil)
+			steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
 			break
 		}
 		resp = newResp
-		buildStep(i+1, toolCallEntries, toolResultEntries, llmReqBody, llmRespBody)
+		steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
 	}
 
 	// filter out injected function_call items from final output
 	resp.Output = openai.FilterResponsesOutput(resp.Output, injectedTools)
 
-	return resp
-}
-
-// handleResponsesStream handles streaming Responses API with tool interception.
-func (g *Gateway) handleResponsesStream(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, buildStep func(int, []reqlog.ToolCallEntry, []reqlog.ToolResultEntry, []byte, []byte)) ([]byte, error) {
-	defer func() { deferlog.DebugError(nil, "handle responses stream") }()
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	if len(injectedTools) == 0 {
-		return g.pipeResponsesStream(w, provCfg, req)
-	}
-
-	rawBody, err := sendResponsesRawRequest(provCfg, req)
-	if err != nil {
-		return nil, err
-	}
-	return g.processResponsesStreamToolCalls(w, r, provCfg, req, injectedTools, buildStep, rawBody)
+	return resp, steps
 }
 
 // handleResponsesStreamWithFirstResponse processes a streaming Responses API response
 // with tool interception, using a pre-fetched first response (for failover support).
-func (g *Gateway) handleResponsesStreamWithFirstResponse(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, buildStep func(int, []reqlog.ToolCallEntry, []reqlog.ToolResultEntry, []byte, []byte), firstResp []byte) ([]byte, error) {
+func (g *Gateway) handleResponsesStreamWithFirstResponse(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, firstResp []byte) ([]byte, []reqlog.Step, error) {
 	defer func() { deferlog.DebugError(nil, "handle responses stream with first response") }()
 
 	if len(injectedTools) == 0 {
 		w.Write(firstResp)
 		w.(http.Flusher).Flush()
-		return firstResp, nil
+		return firstResp, nil, nil
 	}
 
-	return g.processResponsesStreamToolCalls(w, r, provCfg, req, injectedTools, buildStep, firstResp)
+	return g.processResponsesStreamToolCalls(w, r, provCfg, req, injectedTools, firstResp)
 }
 
 // processResponsesStreamToolCalls handles the tool call interception loop for streaming
 // Responses API, starting from an already-fetched raw SSE response body.
-func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, buildStep func(int, []reqlog.ToolCallEntry, []reqlog.ToolResultEntry, []byte, []byte), rawBody []byte) ([]byte, error) {
+func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http.Request, provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, rawBody []byte) ([]byte, []reqlog.Step, error) {
 	parser := newStreamParser(provCfg.Protocol, true)
+	var steps []reqlog.Step
 
 	for i := range maxToolCallIterations {
-		// on subsequent iterations, fetch new response from upstream
 		if i > 0 {
 			var err error
 			rawBody, err = sendResponsesRawRequest(provCfg, req)
 			if err != nil {
-				return nil, err
+				return nil, steps, err
 			}
 		}
 
-		events := sse.ParseEvents(rawBody)
+		events := protocol.ParseEvents(rawBody)
 		sseInfos, hasInjected, err := parser.Parse(events, injectedTools)
 		if err != nil || !hasInjected {
 			filteredEvents := parser.Filter(events, injectedTools)
-			replayData := sse.ReplayEvents(filteredEvents)
+			replayData := protocol.ReplayEvents(filteredEvents)
 			w.Write(replayData)
 			w.(http.Flusher).Flush()
-			return replayData, nil
+			return replayData, steps, nil
 		}
 
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Responses stream: executing injected tool calls", "iteration", i+1)
 
-		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.Addr)
+		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Responses stream: failed to execute tools", "error", err)
 			w.Write(rawBody)
 			w.(http.Flusher).Flush()
-			return rawBody, nil
+			return rawBody, steps, nil
 		}
 
-		// record step
-		toolCallEntries := toToolCallEntries(injectedInfos)
-		toolResultEntries := toToolResultEntries(results)
-
 		llmReqBody, _ := json.Marshal(req)
-		buildStep(i+1, toolCallEntries, toolResultEntries, llmReqBody, rawBody)
+		steps = append(steps, buildStep(i+1, injectedInfos, results, llmReqBody, rawBody))
 
 		completedResp := openai.ExtractCompletedResponse(events)
 		if completedResp == nil {
 			w.Write(rawBody)
 			w.(http.Flusher).Flush()
-			return rawBody, nil
+			return rawBody, steps, nil
 		}
 
 		newInput, err := buildResponsesInput(req.Input, completedResp.Output, results)
 		if err != nil {
-			return nil, err
+			return nil, steps, err
 		}
 
 		req.Input = newInput
 		removePreviousResponseID(&req)
 
 		if len(clientInfos) > 0 {
-			return g.pipeResponsesStream(w, provCfg, req)
+			respBody, err := g.pipeResponsesStream(w, provCfg, req)
+			return respBody, steps, err
 		}
 	}
 
-	return g.pipeResponsesStream(w, provCfg, req)
+	respBody, err := g.pipeResponsesStream(w, provCfg, req)
+	return respBody, steps, err
 }
 
 // --- responses upstream communication ---
@@ -437,11 +421,8 @@ func (g *Gateway) pipeResponsesStream(w http.ResponseWriter, provCfg *config.Pro
 // hasInjectedFunctionCalls checks if output contains function_call items matching injected tools.
 func hasInjectedFunctionCalls(output []json.RawMessage, injectedTools []string) bool {
 	for _, raw := range output {
-		var peek struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(raw, &peek) == nil && peek.Type == "function_call" && slices.Contains(injectedTools, peek.Name) {
+		if gjson.GetBytes(raw, "type").String() == "function_call" &&
+			slices.Contains(injectedTools, gjson.GetBytes(raw, "name").String()) {
 			return true
 		}
 	}
@@ -451,10 +432,7 @@ func hasInjectedFunctionCalls(output []json.RawMessage, injectedTools []string) 
 // extractFunctionCalls extracts function_call items from output, separating them from other items.
 func extractFunctionCalls(output []json.RawMessage) (funcCalls []openai.FunctionCallItem, others []json.RawMessage) {
 	for _, raw := range output {
-		var peek struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(raw, &peek); err != nil || peek.Type != "function_call" {
+		if gjson.GetBytes(raw, "type").String() != "function_call" {
 			others = append(others, raw)
 			continue
 		}
@@ -481,11 +459,11 @@ func splitFuncCalls(calls []openai.FunctionCallItem, injectedTools []string) (in
 	return
 }
 
-// funcCallsToInfos converts FunctionCallItem slice to sse.ToolCallInfo slice.
-func funcCallsToInfos(calls []openai.FunctionCallItem) []sse.ToolCallInfo {
-	infos := make([]sse.ToolCallInfo, len(calls))
+// funcCallsToInfos converts FunctionCallItem slice to protocol.ToolCallInfo slice.
+func funcCallsToInfos(calls []openai.FunctionCallItem) []protocol.ToolCallInfo {
+	infos := make([]protocol.ToolCallInfo, len(calls))
 	for i, fc := range calls {
-		infos[i] = sse.ToolCallInfo{
+		infos[i] = protocol.ToolCallInfo{
 			ID:        fc.CallID,
 			Name:      fc.Name,
 			Arguments: fc.Arguments,

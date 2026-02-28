@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/wweir/warden/pkg/openai"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 func TestMarshalProtocolRequest_OpenAI(t *testing.T) {

@@ -1,18 +1,23 @@
 package gateway
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
@@ -35,11 +40,35 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 		return
 	}
 	fileServer := http.FileServer(http.FS(adminFS))
+	readFS := adminFS.(fs.ReadFileFS)
+
+	serveFSFile := func(w http.ResponseWriter, r *http.Request, name string) {
+		brData, brErr := readFS.ReadFile(name + ".br")
+		if brErr == nil {
+			w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(name)))
+			w.Header().Set("Vary", "Accept-Encoding")
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "br") {
+				w.Header().Set("Content-Encoding", "br")
+				w.Write(brData)
+				return
+			}
+			// decompress on-the-fly for clients that don't support brotli
+			if _, err := io.Copy(w, brotli.NewReader(bytes.NewReader(brData))); err != nil {
+				slog.Error("brotli decompress failed", "file", name, "error", err)
+			}
+			return
+		}
+		r.URL.Path = "/" + name
+		fileServer.ServeHTTP(w, r)
+	}
 
 	// internal mux for admin sub-routing
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		g.handleAdminStatus(w, r, nil)
+	})
+	mux.HandleFunc("GET /api/config/source", func(w http.ResponseWriter, r *http.Request) {
+		g.handleAdminConfigSource(w, r, nil)
 	})
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		g.handleAdminConfigGet(w, r, nil)
@@ -71,17 +100,26 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("POST /api/mcp/tool-call", func(w http.ResponseWriter, r *http.Request) {
 		g.handleMcpToolCall(w, r, nil)
 	})
+	mux.HandleFunc("POST /api/mcp/tool-toggle", func(w http.ResponseWriter, r *http.Request) {
+		g.handleMcpToolToggle(w, r, nil)
+	})
+	mux.HandleFunc("GET /api/metrics/stream", func(w http.ResponseWriter, r *http.Request) {
+		g.handleMetricsStream(w, r, nil)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fp := strings.TrimPrefix(r.URL.Path, "/")
 		if fp != "" {
-			if _, err := adminFS.(fs.ReadFileFS).ReadFile(fp); err == nil {
-				fileServer.ServeHTTP(w, r)
+			if _, err := readFS.ReadFile(fp + ".br"); err == nil {
+				serveFSFile(w, r, fp)
+				return
+			}
+			if _, err := readFS.ReadFile(fp); err == nil {
+				serveFSFile(w, r, fp)
 				return
 			}
 		}
 		// SPA fallback: serve index.html for non-asset paths
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		serveFSFile(w, r, "index.html")
 	})
 
 	adminHandler := auth(func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -111,14 +149,42 @@ func (g *Gateway) basicAuth(next httprouter.Handle) httprouter.Handle {
 	}
 }
 
-// handleAdminStatus returns provider statuses, routes, and MCP server info.
+// handleAdminStatus streams provider statuses, routes, and MCP server info via SSE.
 func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	// send initial data immediately
+	g.writeStatusSSE(w)
+	flusher.Flush()
+
+	for {
+		select {
+		case <-ticker.C:
+			g.writeStatusSSE(w)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 	type mcpStatus struct {
 		Name      string `json:"name"`
 		ToolCount int    `json:"tool_count"`
 		Connected bool   `json:"connected"`
 	}
-
 	type routeInfo struct {
 		Prefix    string   `json:"prefix"`
 		Providers []string `json:"providers"`
@@ -151,11 +217,24 @@ func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ ht
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	data, _ := json.Marshal(map[string]any{
 		"providers": providers,
 		"routes":    routes,
 		"mcp":       mcps,
+	})
+	fmt.Fprintf(w, "data: %s\n\n", data)
+}
+
+// handleAdminConfigSource returns information about the config source.
+// It indicates whether the config was loaded from a file and if it can be saved.
+func (g *Gateway) handleAdminConfigSource(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"source_type": map[string]any{
+			"file": g.configPath != "",
+		},
+		"config_path": g.configPath,
+		"config_hash": g.configHash,
 	})
 }
 
@@ -222,8 +301,12 @@ func (g *Gateway) handleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 		currentData, _ := json.Marshal(g.cfg)
 		var currentMap map[string]any
 		if json.Unmarshal(currentData, &currentMap) == nil {
+			// inject real secret values since json.Marshal masks them via Secret.MarshalText
+			injectSecrets(currentMap, g.cfg)
 			sanitizeConfigJSON(newMap, currentMap)
 		}
+		// drop api_key for OAuth-based providers (qwen/copilot use config_dir credentials)
+		dropOAuthProviderAPIKey(newMap)
 	}
 
 	yamlData, err := yaml.Marshal(cfgMap)
@@ -290,10 +373,27 @@ func writeSSE(w http.ResponseWriter, r reqlog.Record) {
 	fmt.Fprintf(w, "data: %s\n\n", data)
 }
 
+// injectSecrets writes real secret values from cfg into cfgMap,
+// since json.Marshal masks deferlog.Secret fields as "***".
+func injectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
+	if cfg.AdminPassword != "" {
+		cfgMap["admin_password"] = cfg.AdminPassword
+	}
+	providerMap, _ := cfgMap["provider"].(map[string]any)
+	for name, prov := range cfg.Provider {
+		if prov.APIKey.Value() == "" {
+			continue
+		}
+		if pm, ok := providerMap[name].(map[string]any); ok {
+			pm["api_key"] = prov.APIKey.Value()
+		}
+	}
+}
+
 // sanitizeConfigJSON replaces redacted placeholder values with their current values to prevent overwriting secrets.
 func sanitizeConfigJSON(newCfg map[string]any, currentCfg map[string]any) {
 	for k, v := range newCfg {
-		if s, ok := v.(string); ok && s == redactedPlaceholder {
+		if s, ok := v.(string); ok && (s == redactedPlaceholder || s == "***") {
 			if current, exists := currentCfg[k]; exists {
 				newCfg[k] = current
 			}
@@ -306,18 +406,20 @@ func sanitizeConfigJSON(newCfg map[string]any, currentCfg map[string]any) {
 	}
 }
 
-// adminFSWithFallback wraps an fs.FS to return index.html for non-existent files (SPA support).
-func hasFile(fsys fs.FS, name string) bool {
-	name = strings.TrimPrefix(name, "/")
-	if name == "" {
-		name = "."
+// dropOAuthProviderAPIKey removes api_key from providers that use OAuth credentials
+// (qwen, copilot), since they authenticate via config_dir and should not store an api_key.
+func dropOAuthProviderAPIKey(cfgMap map[string]any) {
+	providerMap, _ := cfgMap["provider"].(map[string]any)
+	for _, v := range providerMap {
+		pm, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		proto, _ := pm["protocol"].(string)
+		if proto == "qwen" || proto == "copilot" {
+			delete(pm, "api_key")
+		}
 	}
-	f, err := fsys.Open(name)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
 }
 
 // handleRestart triggers a hot-reload of the gateway via the configured reload function.
@@ -560,6 +662,7 @@ func (g *Gateway) handleMcpDetail(w http.ResponseWriter, r *http.Request, _ http
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		InputSchema any    `json:"input_schema,omitempty"`
+		Disabled    bool   `json:"disabled"`
 	}
 
 	var tools []toolInfo
@@ -567,10 +670,17 @@ func (g *Gateway) handleMcpDetail(w http.ResponseWriter, r *http.Request, _ http
 	if client != nil {
 		connected = client.IsRunning()
 		for _, t := range client.CachedTools() {
+			disabled := false
+			if mcpCfg.Tools != nil {
+				if tc, ok := mcpCfg.Tools[t.Name]; ok {
+					disabled = tc.Disabled
+				}
+			}
 			tools = append(tools, toolInfo{
 				Name:        t.Name,
 				Description: t.Description,
 				InputSchema: t.InputSchema,
+				Disabled:    disabled,
 			})
 		}
 	}
@@ -603,4 +713,180 @@ func (g *Gateway) handleMcpDetail(w http.ResponseWriter, r *http.Request, _ http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// handleMcpToolToggle enables or disables a specific tool within an MCP server.
+// The disabled state is persisted in the in-memory MCPConfig.Tools map.
+// To make it permanent, save the config via PUT /api/config.
+func (g *Gateway) handleMcpToolToggle(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	var body struct {
+		MCP      string `json:"mcp"`
+		Tool     string `json:"tool"`
+		Disabled bool   `json:"disabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.MCP == "" || body.Tool == "" {
+		http.Error(w, "mcp and tool are required", http.StatusBadRequest)
+		return
+	}
+
+	mcpCfg, exists := g.cfg.MCP[body.MCP]
+	if !exists {
+		http.Error(w, "unknown MCP server: "+body.MCP, http.StatusNotFound)
+		return
+	}
+
+	if mcpCfg.Tools == nil {
+		mcpCfg.Tools = make(map[string]*config.ToolConfig)
+	}
+	tc, ok := mcpCfg.Tools[body.Tool]
+	if !ok {
+		tc = &config.ToolConfig{}
+		mcpCfg.Tools[body.Tool] = tc
+	}
+	tc.Disabled = body.Disabled
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"mcp":      body.MCP,
+		"tool":     body.Tool,
+		"disabled": body.Disabled,
+	})
+}
+
+// handleMetricsStream serves SSE real-time metrics for dashboard charts.
+func (g *Gateway) handleMetricsStream(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			data := g.collectMetricsData()
+			jsonData, err := json.Marshal(data)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+// collectMetricsData collects all metrics needed for dashboard charts.
+func (g *Gateway) collectMetricsData() map[string]any {
+	g.updateProviderMetrics(g.cfg)
+
+	type requestStat struct {
+		Route    string `json:"route"`
+		Provider string `json:"provider"`
+		Status   string `json:"status"`
+		Value    int    `json:"value"`
+	}
+	var requests []requestStat
+	for _, met := range collectMetrics(requestCounter) {
+		req := requestStat{Value: int(met.GetCounter().GetValue())}
+		for _, l := range met.GetLabel() {
+			switch l.GetName() {
+			case "route":
+				req.Route = l.GetValue()
+			case "provider":
+				req.Provider = l.GetValue()
+			case "status":
+				req.Status = l.GetValue()
+			}
+		}
+		requests = append(requests, req)
+	}
+
+	type durationBucket struct {
+		Route    string  `json:"route"`
+		Provider string  `json:"provider"`
+		Le       float64 `json:"le"`
+		Value    int     `json:"value"`
+	}
+	var durations []durationBucket
+	for _, met := range collectMetrics(requestDuration) {
+		for _, b := range met.GetHistogram().GetBucket() {
+			if b.GetUpperBound() == float64(1<<63-1) {
+				continue // skip +Inf bucket
+			}
+			db := durationBucket{Le: b.GetUpperBound(), Value: int(b.GetCumulativeCount())}
+			for _, l := range met.GetLabel() {
+				switch l.GetName() {
+				case "route":
+					db.Route = l.GetValue()
+				case "provider":
+					db.Provider = l.GetValue()
+				}
+			}
+			durations = append(durations, db)
+		}
+	}
+
+	type tokenStat struct {
+		Provider string  `json:"provider"`
+		Model    string  `json:"model"`
+		Type     string  `json:"type"`
+		Value    float64 `json:"value"`
+	}
+	var tokens []tokenStat
+	for _, met := range collectMetrics(tokenCounter) {
+		ts := tokenStat{Value: met.GetCounter().GetValue()}
+		for _, l := range met.GetLabel() {
+			switch l.GetName() {
+			case "provider":
+				ts.Provider = l.GetValue()
+			case "model":
+				ts.Model = l.GetValue()
+			case "type":
+				ts.Type = l.GetValue()
+			}
+		}
+		tokens = append(tokens, ts)
+	}
+
+	type tokenRateStat struct {
+		Provider string  `json:"provider"`
+		Model    string  `json:"model"`
+		Type     string  `json:"type"`
+		Value    float64 `json:"value"`
+	}
+	var rates []tokenRateStat
+	for _, met := range collectMetrics(tokenRate) {
+		rs := tokenRateStat{Value: met.GetGauge().GetValue()}
+		for _, l := range met.GetLabel() {
+			switch l.GetName() {
+			case "provider":
+				rs.Provider = l.GetValue()
+			case "model":
+				rs.Model = l.GetValue()
+			case "type":
+				rs.Type = l.GetValue()
+			}
+		}
+		rates = append(rates, rs)
+	}
+
+	return map[string]any{
+		"requests_total":   requests,
+		"request_duration": durations,
+		"tokens_total":     tokens,
+		"token_rate":       rates,
+	}
 }
