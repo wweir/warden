@@ -226,8 +226,12 @@
 								<div class="chain-content">
 									<div class="chain-label">{{ node.label }}</div>
 
-									<!-- text preview -->
-									<div v-if="node.preview" class="chain-preview">{{ node.preview }}</div>
+									<!-- text preview (system gets single-line truncated style) -->
+									<div
+										v-if="node.preview"
+										class="chain-preview"
+										:class="{ 'chain-preview-oneline': node.dotType === 'system' }"
+									>{{ node.preview }}</div>
 
 									<!-- tool call + result pair -->
 									<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
@@ -235,14 +239,14 @@
 											<span class="tool-arrow">call</span>
 											<code>{{ node.toolName }}</code>
 										</div>
-										<details class="tool-pair-details">
+										<details class="tool-pair-details" :open="node.defaultOpen || undefined">
 											<summary>arguments</summary>
 											<pre class="code-block">{{ formatJSON(node.toolArgs) }}</pre>
 										</details>
 										<div class="tool-chip" v-if="node.toolResult !== undefined">
 											<span class="tool-arrow" :class="{ 'text-error': node.toolError }">{{ node.toolError ? 'fail' : 'result' }}</span>
 										</div>
-										<details v-if="node.toolResult !== undefined" class="tool-pair-details">
+										<details v-if="node.toolResult !== undefined" class="tool-pair-details" :open="node.defaultOpen || undefined">
 											<summary>output</summary>
 											<pre class="code-block code-block-raw">{{ renderEscapes(node.toolResult) }}</pre>
 										</details>
@@ -253,7 +257,7 @@
 										<div v-for="(tc, j) in node.toolCalls" :key="j" class="tool-chip">
 											<span class="tool-arrow">call</span>
 											<code>{{ tc.function?.name || tc.name }}</code>
-											<details>
+											<details :open="node.defaultOpen || undefined">
 												<summary>args</summary>
 												<pre class="code-block">{{ formatJSON(tc.function?.arguments || tc.arguments) }}</pre>
 											</details>
@@ -286,16 +290,26 @@
 						<!-- Response -->
 						<div class="response-block" :class="selected.error ? 'response-error' : 'response-ok'">
 							<span class="response-status">{{ selected.error || "OK" }}</span>
-							<div v-if="selected.stream && selected.response" class="response-pane">
+							<div v-if="selected.response" class="response-pane">
 								<div class="pane-label">{{ $t('logs.response') }}</div>
-								<details :open="true">
+								<!-- tool_use blocks from Anthropic response -->
+								<div v-if="responseToolCalls.length" class="chain-tools" style="margin-bottom:8px">
+									<div v-for="(tc, j) in responseToolCalls" :key="j" class="tool-chip">
+										<span class="tool-arrow">call</span>
+										<code>{{ tc.name }}</code>
+										<details>
+											<summary>args</summary>
+											<pre class="code-block">{{ formatJSON(tc.input) }}</pre>
+										</details>
+									</div>
+								</div>
+								<!-- assembled text content -->
+								<details v-if="responseHasText" :open="true">
 									<summary>{{ $t('logs.content') }}</summary>
 									<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
 								</details>
-							</div>
-							<div v-else-if="selected.response">
-								<div class="pane-label">{{ $t('logs.response') }}</div>
-								<details :open="true">
+								<!-- raw JSON fallback -->
+								<details v-else :open="true">
 									<summary>{{ $t('logs.content') }}</summary>
 									<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.response)) }}</pre>
 								</details>
@@ -381,6 +395,11 @@ function extractAssembledText(log) {
 			}
 		}
 	}
+	// Anthropic format: content[] with text/tool_use blocks
+	if (resp.content && Array.isArray(resp.content)) {
+		const textParts = resp.content.filter((b) => b.type === "text").map((b) => b.text);
+		if (textParts.length) return textParts.join("");
+	}
 	// Responses API format: output[].content[].text or output[].text
 	if (resp.output && Array.isArray(resp.output)) {
 		const parts = [];
@@ -427,6 +446,10 @@ function extractTextFromSSE(text) {
 					}
 				}
 			}
+			// Anthropic streaming: content_block_delta with text_delta
+			if (chunk.type === "content_block_delta" && chunk.delta?.type === "text_delta" && chunk.delta?.text) {
+				parts.push(chunk.delta.text);
+			}
 		} catch {
 			// ignore parse errors
 		}
@@ -444,12 +467,205 @@ function clear() {
 
 function showDetail(log) {
 	selected.value = log;
+	detailView.value = log.error ? "json" : "timeline";
 }
 
 const assembledText = computed(() => {
-	if (!selected.value || !selected.value.stream) return "";
+	if (!selected.value) return "";
 	return extractAssembledText(selected.value);
 });
+
+// check if response has structured content worth rendering (not just raw JSON)
+const responseHasText = computed(() => {
+	if (!selected.value?.response) return false;
+	return assembledText.value !== formatJSON(selected.value.response);
+});
+
+// extract tool_use blocks from Anthropic response for timeline display
+const responseToolCalls = computed(() => {
+	if (!selected.value?.response) return [];
+	let resp = selected.value.response;
+	if (typeof resp === "string") {
+		try { resp = JSON.parse(resp); } catch { return []; }
+	}
+	if (!resp.content || !Array.isArray(resp.content)) return [];
+	return resp.content.filter((b) => b.type === "tool_use");
+});
+
+// normalize a raw message (any protocol) into a unified node structure
+function normalizeMsg(msg) {
+	// system messages get a short single-line preview
+	const preview = msg.role === "system"
+		? truncate((typeof msg.content === "string" ? msg.content : "").replace(/\s+/g, " "), 60)
+		: extractPreview(msg);
+	return {
+		role: msg.role,
+		raw: msg,
+		toolCalls: msg.tool_calls || null,
+		toolCallId: msg.tool_call_id || "",
+		preview,
+	};
+}
+
+// extract messages from Anthropic format request into unified nodes
+// Anthropic: { system, messages: [{role, content: string|block[]}] }
+// content blocks: {type:"text"|"tool_use"|"tool_result", ...}
+function parseAnthropicMessages(req) {
+	const nodes = [];
+	// system field → synthetic system node (short preview, content in raw details)
+	if (req.system) {
+		nodes.push({
+			role: "system",
+			raw: { role: "system", content: req.system },
+			toolCalls: null,
+			toolCallId: "",
+			preview: truncate(req.system.replace(/\s+/g, " "), 60),
+		});
+	}
+	if (!Array.isArray(req.messages)) return nodes;
+
+	for (const msg of req.messages) {
+		const content = msg.content;
+		// simple string content
+		if (typeof content === "string" || !Array.isArray(content)) {
+			nodes.push(normalizeMsg(msg));
+			continue;
+		}
+		// content is an array of blocks
+		// check if it contains tool_use or tool_result blocks
+		const toolUseBlocks = content.filter((b) => b.type === "tool_use");
+		const toolResultBlocks = content.filter((b) => b.type === "tool_result");
+		const textBlocks = content.filter((b) => b.type === "text");
+
+		if (toolUseBlocks.length > 0) {
+			// assistant message with tool_use blocks → convert to tool_calls format
+			const textPreview = textBlocks.map((b) => b.text).join(" ");
+			const syntheticToolCalls = toolUseBlocks.map((b) => ({
+				id: b.id,
+				type: "function",
+				function: {
+					name: b.name,
+					arguments: typeof b.input === "string" ? b.input : JSON.stringify(b.input),
+				},
+			}));
+			nodes.push({
+				role: "assistant",
+				raw: msg,
+				toolCalls: syntheticToolCalls,
+				toolCallId: "",
+				preview: textPreview ? truncate(textPreview, 120) : "",
+			});
+		} else if (toolResultBlocks.length > 0) {
+			// user message with tool_result blocks → emit as tool messages
+			for (const b of toolResultBlocks) {
+				const resultContent = Array.isArray(b.content)
+					? b.content.filter((c) => c.type === "text").map((c) => c.text).join("")
+					: (b.content || "");
+				nodes.push({
+					role: "tool",
+					raw: { role: "tool", tool_call_id: b.tool_use_id, content: resultContent },
+					toolCalls: null,
+					toolCallId: b.tool_use_id || "",
+					preview: truncate(resultContent, 120),
+				});
+			}
+		} else {
+			nodes.push(normalizeMsg(msg));
+		}
+	}
+	return nodes;
+}
+
+// extract messages from Responses API format request into unified nodes
+// Responses API: { input: string | array }
+function parseResponsesMessages(req) {
+	const nodes = [];
+	const input = req.input;
+	if (!input) return nodes;
+	if (typeof input === "string") {
+		nodes.push({
+			role: "user",
+			raw: { role: "user", content: input },
+			toolCalls: null,
+			toolCallId: "",
+			preview: truncate(input, 120),
+		});
+		return nodes;
+	}
+	if (!Array.isArray(input)) return nodes;
+
+	for (const item of input) {
+		if (typeof item === "string") {
+			nodes.push({
+				role: "user",
+				raw: { role: "user", content: item },
+				toolCalls: null,
+				toolCallId: "",
+				preview: truncate(item, 120),
+			});
+			continue;
+		}
+		const role = item.role || item.type || "user";
+		if (item.type === "function_call") {
+			// tool call from assistant
+			nodes.push({
+				role: "assistant",
+				raw: item,
+				toolCalls: [{
+					id: item.call_id,
+					type: "function",
+					function: { name: item.name, arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments) },
+				}],
+				toolCallId: "",
+				preview: "",
+			});
+		} else if (item.type === "function_call_output") {
+			nodes.push({
+				role: "tool",
+				raw: item,
+				toolCalls: null,
+				toolCallId: item.call_id || "",
+				preview: truncate(typeof item.output === "string" ? item.output : JSON.stringify(item.output), 120),
+			});
+		} else if (item.type === "message" && Array.isArray(item.content)) {
+			// nested message object
+			const textPreview = item.content.filter((c) => c.type === "text" || c.type === "output_text").map((c) => c.text).join(" ");
+			nodes.push({
+				role: item.role || "user",
+				raw: item,
+				toolCalls: null,
+				toolCallId: "",
+				preview: truncate(textPreview, 120),
+			});
+		} else {
+			nodes.push({
+				role,
+				raw: item,
+				toolCalls: null,
+				toolCallId: "",
+				preview: extractPreview(item),
+			});
+		}
+	}
+	return nodes;
+}
+
+// detect request protocol format
+function detectRequestFormat(req) {
+	if (!req) return "unknown";
+	// Anthropic: has "system" string field OR messages with content blocks containing tool_use/tool_result
+	if (typeof req.system === "string") return "anthropic";
+	if (Array.isArray(req.messages)) {
+		for (const m of req.messages) {
+			if (Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" || b.type === "tool_result")) {
+				return "anthropic";
+			}
+		}
+		return "openai-chat";
+	}
+	if (req.input !== undefined) return "responses";
+	return "unknown";
+}
 
 const messageChain = computed(() => {
 	if (!selected.value) return [];
@@ -462,19 +678,15 @@ const messageChain = computed(() => {
 			return [];
 		}
 	}
+
+	const fmt = detectRequestFormat(req);
+	if (fmt === "anthropic") return parseAnthropicMessages(req);
+	if (fmt === "responses") return parseResponsesMessages(req);
+
+	// openai-chat: standard messages array
 	const msgs = req.messages;
 	if (!Array.isArray(msgs)) return [];
-
-	return msgs.map((msg) => {
-		const node = {
-			role: msg.role,
-			raw: msg,
-			toolCalls: msg.tool_calls || null,
-			toolCallId: msg.tool_call_id || "",
-			preview: extractPreview(msg),
-		};
-		return node;
-	});
+	return msgs.map(normalizeMsg);
 });
 
 function extractPreview(msg) {
@@ -482,6 +694,7 @@ function extractPreview(msg) {
 	if (!c) return "";
 	if (typeof c === "string") return truncate(c, 120);
 	if (Array.isArray(c)) {
+		// support both OpenAI content parts (type:"text") and Anthropic blocks (type:"text"|"tool_use"|"tool_result")
 		const text = c
 			.filter((p) => p.type === "text")
 			.map((p) => p.text)
@@ -520,7 +733,7 @@ const timelineNodes = computed(() => {
 	const nodes = [];
 	const pairedToolIds = new Set();
 
-	// find the index of the last user message for defaultOpen
+	// find the last real user message (skip tool/system roles)
 	let lastUserIdx = -1;
 	for (let i = chain.length - 1; i >= 0; i--) {
 		if (chain[i].role === "user") { lastUserIdx = i; break; }
@@ -532,7 +745,8 @@ const timelineNodes = computed(() => {
 		// skip tool messages that are already paired
 		if (msg.role === "tool" && pairedToolIds.has(msg.toolCallId)) continue;
 
-		const isLastSection = i >= lastUserIdx && lastUserIdx >= 0;
+		// only open the last user message; assistant/tool nodes stay collapsed
+		const isLastSection = i === lastUserIdx;
 
 		if (msg.role === "assistant" && msg.toolCalls?.length) {
 			// assistant with tool_calls: emit text node if has preview, then emit paired tool nodes
@@ -656,8 +870,18 @@ function lastUserPreview(log) {
 
 	let lastMsg = null;
 	if (Array.isArray(req.messages)) {
-		const users = req.messages.filter((m) => m.role === "user");
+		// OpenAI chat or Anthropic format: both use messages array
+		// For Anthropic, filter out tool_result-only user messages (they're not real user turns)
+		const users = req.messages.filter((m) => {
+			if (m.role !== "user") return false;
+			// skip pure tool_result user messages (Anthropic format)
+			if (Array.isArray(m.content) && m.content.length > 0 &&
+				m.content.every((b) => b.type === "tool_result")) return false;
+			return true;
+		});
 		if (users.length) lastMsg = users[users.length - 1];
+		// fallback: if no user messages found, use system field for Anthropic
+		if (!lastMsg && typeof req.system === "string") return truncate(req.system, 40);
 	} else if (req.input != null) {
 		if (typeof req.input === "string") return truncate(req.input, 40);
 		if (Array.isArray(req.input)) {
@@ -1227,7 +1451,11 @@ summary:hover {
 	color: var(--c-text-2);
 	margin-bottom: 4px;
 	white-space: pre-wrap;
-	word-break: break-word;
+}
+.chain-preview-oneline {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 .text-ok {
 	color: #22c55e;
