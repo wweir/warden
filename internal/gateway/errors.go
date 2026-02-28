@@ -32,6 +32,7 @@ func (e *UpstreamError) IsAuthError() bool {
 // IsRetryable determines whether this error warrants failover to another provider.
 //
 // Retryable by HTTP status code:
+//   - 400: bad request — some providers reject valid requests (e.g. unsupported params), another may accept
 //   - 403: forbidden — provider may reject specific models/keys, another provider may accept
 //   - 404: endpoint not found — provider does not support this API (e.g. /responses)
 //   - 429: rate limit / quota exhausted — different provider may have capacity
@@ -42,7 +43,7 @@ func (e *UpstreamError) IsAuthError() bool {
 //   - Anthropic: overloaded_error, api_error, rate_limit_error
 //   - OpenAI: server_error, rate_limit_error, insufficient_quota, model_not_found
 func (e *UpstreamError) IsRetryable() bool {
-	// 5xx, 429, 404 and 403 are always retryable
+	// 5xx, 429, 404, 403 and 400 are always retryable
 	if e.Code >= 500 || e.Code == 400 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
 		return true
 	}

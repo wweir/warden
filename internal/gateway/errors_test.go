@@ -91,3 +91,69 @@ func TestIsRetryableError_OpenAIRateLimit(t *testing.T) {
 		t.Error("IsRetryableError(OpenAI rate_limit_error) = false, want true")
 	}
 }
+
+func TestIsRetryableError_OpenAIModelNotFound(t *testing.T) {
+	err := &UpstreamError{
+		Code: 404,
+		Body: `{"error":{"type":"invalid_request_error","code":"model_not_found","message":"The model does not exist"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(OpenAI model_not_found) = false, want true")
+	}
+}
+
+func TestIsRetryableError_OpenAIInsufficientQuota(t *testing.T) {
+	err := &UpstreamError{
+		Code: 429,
+		Body: `{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(OpenAI insufficient_quota) = false, want true")
+	}
+}
+
+func TestIsRetryableError_OpenAIServerError(t *testing.T) {
+	err := &UpstreamError{
+		Code: 500,
+		Body: `{"error":{"type":"server_error","message":"The server had an error"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(OpenAI server_error) = false, want true")
+	}
+}
+
+func TestIsRetryableError_AnthropicAPIError(t *testing.T) {
+	err := &UpstreamError{
+		Code: 500,
+		Body: `{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(Anthropic api_error) = false, want true")
+	}
+}
+
+func TestIsRetryableError_AnthropicRateLimit(t *testing.T) {
+	err := &UpstreamError{
+		Code: 429,
+		Body: `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(Anthropic rate_limit_error) = false, want true")
+	}
+}
+
+func TestIsRetryableError_NonRetryable4xx(t *testing.T) {
+	cases := []struct {
+		code int
+		body string
+	}{
+		{401, `{"error":{"type":"authentication_error"}}`},
+		{422, `{"error":{"type":"invalid_request_error","message":"Unprocessable"}}`},
+	}
+	for _, c := range cases {
+		err := &UpstreamError{Code: c.code, Body: c.body}
+		if IsRetryableError(err) {
+			t.Errorf("IsRetryableError(&UpstreamError{Code: %d}) = true, want false", c.code)
+		}
+	}
+}
