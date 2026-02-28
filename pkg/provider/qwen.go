@@ -1,4 +1,4 @@
-package qwen
+package provider
 
 import (
 	"context"
@@ -17,10 +17,8 @@ import (
 )
 
 const (
-	oauthTokenEndpoint = "https://chat.qwen.ai/api/v1/oauth2/token"
-	oauthClientID      = "f0304373b74a44d2b584a3fb70ca9e56"
-	// refresh token 30s before expiry
-	tokenExpiryBuffer = 30 * time.Second
+	qwenOAuthTokenEndpoint = "https://chat.qwen.ai/api/v1/oauth2/token"
+	qwenOAuthClientID      = "f0304373b74a44d2b584a3fb70ca9e56"
 )
 
 type oauthCreds struct {
@@ -31,7 +29,7 @@ type oauthCreds struct {
 	ExpiryDate   int64  `json:"expiry_date"` // unix timestamp in milliseconds
 }
 
-// oauthManager handles OAuth token lifecycle for a single provider.
+// oauthManager handles Qwen OAuth token lifecycle for a single config directory.
 type oauthManager struct {
 	mu        sync.Mutex
 	configDir string
@@ -39,27 +37,43 @@ type oauthManager struct {
 	creds     *oauthCreds
 }
 
-var (
-	managersMu sync.Mutex
-	managers   = make(map[string]*oauthManager)
-)
+// qwenProvider implements TokenProvider for Qwen.
+type qwenProvider struct {
+	mu       sync.Mutex
+	managers map[string]*oauthManager
+}
 
-// getOAuthManager returns a singleton oauthManager per configDir+sshHost.
-func getOAuthManager(configDir string, sshCfg *ssh.Config) *oauthManager {
-	managersMu.Lock()
-	defer managersMu.Unlock()
+func (p *qwenProvider) getManager(configDir string, sshCfg *ssh.Config) *oauthManager {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	key := configDir
 	if sshCfg != nil {
 		key = configDir + "@" + sshCfg.Host
 	}
 
-	if m, ok := managers[key]; ok {
+	if m, ok := p.managers[key]; ok {
 		return m
 	}
 	m := &oauthManager{configDir: configDir, sshCfg: sshCfg}
-	managers[key] = m
+	p.managers[key] = m
 	return m
+}
+
+func (p *qwenProvider) GetAccessToken(configDir string, sshCfg *ssh.Config) (string, error) {
+	return p.getManager(configDir, sshCfg).getAccessToken()
+}
+
+func (p *qwenProvider) InvalidateAuth(configDir string, sshCfg *ssh.Config) {
+	m := p.getManager(configDir, sshCfg)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creds = nil
+}
+
+func (p *qwenProvider) CheckCredsReadable(configDir string, sshCfg *ssh.Config) error {
+	_, err := readOAuthCreds(configDir, sshCfg)
+	return err
 }
 
 // getAccessToken returns a valid access token, refreshing if needed.
@@ -67,7 +81,6 @@ func (m *oauthManager) getAccessToken() (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// load credentials from file on first call
 	if m.creds == nil {
 		creds, err := readOAuthCreds(m.configDir, m.sshCfg)
 		if err != nil {
@@ -76,9 +89,8 @@ func (m *oauthManager) getAccessToken() (string, error) {
 		m.creds = creds
 	}
 
-	// refresh if token is expired or about to expire
-	if m.isExpired() {
-		if err := m.refresh(); err != nil {
+	if m.isQwenTokenExpired() {
+		if err := m.refreshQwenToken(); err != nil {
 			return "", fmt.Errorf("refresh oauth token: %w", err)
 		}
 	}
@@ -86,14 +98,14 @@ func (m *oauthManager) getAccessToken() (string, error) {
 	return m.creds.AccessToken, nil
 }
 
-func (m *oauthManager) isExpired() bool {
+func (m *oauthManager) isQwenTokenExpired() bool {
 	if m.creds.ExpiryDate == 0 {
 		return false
 	}
 	return time.Now().Add(tokenExpiryBuffer).UnixMilli() >= m.creds.ExpiryDate
 }
 
-func (m *oauthManager) refresh() error {
+func (m *oauthManager) refreshQwenToken() error {
 	if m.creds.RefreshToken == "" {
 		return fmt.Errorf("no refresh_token available, re-authenticate with qwen CLI")
 	}
@@ -101,10 +113,10 @@ func (m *oauthManager) refresh() error {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {m.creds.RefreshToken},
-		"client_id":     {oauthClientID},
+		"client_id":     {qwenOAuthClientID},
 	}
 
-	resp, err := http.Post(oauthTokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	resp, err := http.Post(qwenOAuthTokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("post token request: %w", err)
 	}
@@ -115,7 +127,7 @@ func (m *oauthManager) refresh() error {
 		TokenType    string `json:"token_type"`
 		RefreshToken string `json:"refresh_token"`
 		ResourceURL  string `json:"resource_url"`
-		ExpiresIn    int64  `json:"expires_in"` // seconds
+		ExpiresIn    int64  `json:"expires_in"`
 		Error        string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
@@ -128,7 +140,6 @@ func (m *oauthManager) refresh() error {
 		return fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, tokenResp.Error)
 	}
 
-	// update credentials
 	m.creds.AccessToken = tokenResp.AccessToken
 	m.creds.TokenType = tokenResp.TokenType
 	m.creds.ResourceURL = tokenResp.ResourceURL
@@ -145,13 +156,6 @@ func (m *oauthManager) refresh() error {
 	}
 
 	return nil
-}
-
-// GetAccessToken returns a valid access token for the given config directory,
-// refreshing automatically if the token is expired or about to expire.
-// If sshCfg is non-nil, credentials are read from the remote host via SSH.
-func GetAccessToken(configDir string, sshCfg *ssh.Config) (string, error) {
-	return getOAuthManager(configDir, sshCfg).getAccessToken()
 }
 
 // readOAuthCreds reads the full OAuth credentials from disk or remote host.
@@ -175,7 +179,6 @@ func readOAuthCreds(configDir string, sshCfg *ssh.Config) (*oauthCreds, error) {
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil, fmt.Errorf("parse oauth creds %s: %w", path, err)
 	}
-
 	if creds.AccessToken == "" {
 		return nil, fmt.Errorf("oauth creds %s: access_token is empty", path)
 	}
