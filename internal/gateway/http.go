@@ -15,9 +15,17 @@ import (
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 )
 
+// firstTokenTimeout is the fixed timeout for streaming requests.
+// Streaming responses should return the first token quickly (typically within seconds).
+// This is a fixed value to ensure consistent behavior across all streaming requests.
+// Non-streaming requests use the provider's configured timeout instead.
+const firstTokenTimeout = 30 * time.Second
+
 // sendRequest sends a raw request body to the upstream endpoint and returns the raw response body
 // along with the first-token latency (time from request start to receiving response headers).
-func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, time.Duration, error) {
+// For streaming requests, a fixed 30s first-token timeout is used; for non-streaming, the provider's
+// configured timeout applies.
+func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte, isStreaming bool) ([]byte, time.Duration, error) {
 	httpReq, err := http.NewRequest(http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("create request: %w", err)
@@ -25,7 +33,14 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) (
 
 	selector.SetAuthHeaders(httpReq.Header, provCfg)
 
-	client := provCfg.HTTPClient(0)
+	// Use fixed short timeout for streaming, configured timeout for non-streaming
+	var client *http.Client
+	if isStreaming {
+		client = provCfg.HTTPClient(firstTokenTimeout)
+	} else {
+		client = provCfg.HTTPClient(0) // use configured timeout
+	}
+
 	upstreamStart := time.Now()
 	resp, err := client.Do(httpReq)
 	latency := time.Since(upstreamStart) // first-token latency
@@ -82,9 +97,9 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) (
 }
 
 // pipeRawStream sends a raw request body upstream and returns the response bytes
-// after writing them to the client.
+// after writing them to the client. Uses streaming timeout (30s first-token).
 func pipeRawStream(w http.ResponseWriter, provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
-	rawBody, _, err := sendRequest(provCfg, endpoint, body)
+	rawBody, _, err := sendRequest(provCfg, endpoint, body, true)
 	// Always write the response body to the client if it exists
 	if rawBody != nil {
 		clientBody := rawBody

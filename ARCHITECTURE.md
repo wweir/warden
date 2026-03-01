@@ -175,9 +175,11 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 职责：封装所有与上游 LLM API 的 HTTP 通信。
 
 - `setAuthHeaders(h, provCfg)` — 根据协议注入认证头（OpenAI: Bearer, Anthropic: x-api-key）
-- `sendRequest(provCfg, endpoint, body)` — 发送 POST 请求，返回 raw response body
+- `sendRequest(provCfg, endpoint, body)` — 发送 POST 请求，返回 raw response body + 首-token 延迟
 - `pipeRawStream(w, provCfg, endpoint, body)` — 发送请求并直接 pipe 响应到客户端
 - 所有上游 HTTP 请求通过 `ProviderConfig.HTTPClient()` 创建客户端，自动配置代理和超时
+
+**超时策略**：使用 `Transport.ResponseHeaderTimeout`（首-token 超时）而非 `http.Client.Timeout`（全请求超时）。这确保 streaming 响应不会因总时间长而被强制终止，同时仍能在上游无响应时及时失败。延迟统计记录从请求发出到收到响应头的时间（首-token 延迟），而非包含 body 读取的总时间。
 
 ### 2.3. HTTP 中间件 (`internal/gateway/middleware.go`)
 
@@ -884,3 +886,8 @@ type Step struct {
 15. **SSH 远程支持（Shell out to system ssh）**：MCP server 启动支持通过 SSH 在远程主机执行。方案选择 shell out 到系统 `ssh` 命令（而非引入 Go SSH 库），原因：自动继承 `~/.ssh/config`、SSH agent、ProxyJump、证书等用户配置；`exec.Command("ssh", host, command...)` 提供与本地 exec 完全一致的 stdin/stdout pipe 接口，MCP JSON-RPC 协议无需任何修改；不引入新依赖。SSH 配置通过 `[ssh.<name>]` 配置块集中管理，MCP 通过 `ssh = "<name>"` 引用。
 
 16. **重启而非热重载**：配置保存后通过 `POST /_admin/api/restart` 发送 SIGTERM 触发进程优雅退出，由外部进程管理器（systemd 等）负责重启。避免了热重载方案中 feconf 重复注册 flag 的问题，同时简化了 App 结构（移除 `sync.RWMutex` 和 gateway 原子替换逻辑）。
+
+17. **双轨超时策略**：流式请求和非流式请求使用不同的超时策略：
+    - **流式请求**：使用固定的 30s 首-token 超时（`firstTokenTimeout`）。流式响应应该在几秒内返回首个 token，否则说明上游有问题。首 token 之后，body 读取无时间限制。
+    - **非流式请求**：使用可配置的超时（`provider.timeout`，默认 120s）。非流式请求需要等待完整响应生成，推理模型可能需要较长时间。超时仅应用于等待响应头（`ResponseHeaderTimeout`），body 读取无时间限制。
+    - 延迟统计记录首-token 时间，用于 provider 健康度评估和 failover 决策。

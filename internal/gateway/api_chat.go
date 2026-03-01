@@ -116,7 +116,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			}
 			endpoint := protocolEndpoint(selectedProvider.Protocol, false)
 
-			respBody, latency, err := sendRequest(selectedProvider, endpoint, reqBody)
+			respBody, latency, err := sendRequest(selectedProvider, endpoint, reqBody, stream)
 			if err != nil {
 				g.selector.RecordOutcome(selectedProvider.Name, err, latency)
 				if tryAuthRetry(err, selectedProvider, authRetried) {
@@ -175,7 +175,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			firstResp, latency, err := sendRequest(selectedProvider, protocolEndpoint(selectedProvider.Protocol, false), firstReqBody)
+			firstResp, latency, err := sendRequest(selectedProvider, protocolEndpoint(selectedProvider.Protocol, false), firstReqBody, true)
 			if err != nil {
 				g.selector.RecordOutcomeWithSource(selectedProvider.Name, err, latency, "pre_stream")
 				g.RecordStreamErrorMetric(selectedProvider.Name, "pre_stream")
@@ -228,9 +228,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	for {
 		logRequest(r, selectedProvider.Name, origModel)
 
-		resp, respBody, err := g.forwardNonStreamRequest(r.Context(), selectedProvider, req)
+		resp, respBody, latency, err := g.forwardNonStreamRequest(r.Context(), selectedProvider, req)
 		if err != nil {
-			g.selector.RecordOutcome(selectedProvider.Name, err, time.Since(startTime))
+			g.selector.RecordOutcome(selectedProvider.Name, err, latency)
 			if tryAuthRetry(err, selectedProvider, authRetried) {
 				continue
 			}
@@ -243,7 +243,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		g.selector.RecordOutcome(selectedProvider.Name, nil, time.Since(startTime))
+		g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
 
 		// no tool calls in response: passthrough raw upstream response
 		if len(resp.Choices) == 0 || len(resp.Choices[0].Message.ToolCalls) == 0 {
@@ -341,7 +341,7 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 
 		// mixed tool call: execute injected tools, then interrupt loop
 		if len(clientCalls) > 0 {
-			newResp, llmRespBody, err := g.forwardNonStreamRequest(ctx, provCfg, newReq)
+			newResp, llmRespBody, _, err := g.forwardNonStreamRequest(ctx, provCfg, newReq)
 			if err != nil {
 				slog.Error("Failed to forward after mixed tool execution", "error", err)
 				if steps != nil {
@@ -356,7 +356,7 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 			break
 		}
 
-		newResp, llmRespBody, err := g.forwardNonStreamRequest(ctx, provCfg, newReq)
+		newResp, llmRespBody, _, err := g.forwardNonStreamRequest(ctx, provCfg, newReq)
 		if err != nil {
 			slog.Error("Failed to forward request after tool execution", "error", err, "iteration", i+1)
 			if steps != nil {
@@ -454,26 +454,26 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 // --- upstream communication ---
 
 // forwardNonStreamRequest sends a non-streaming chat completion request upstream.
-// Returns both parsed response and raw body bytes for passthrough optimization.
-func (g *Gateway) forwardNonStreamRequest(_ context.Context, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, []byte, error) {
+// Returns parsed response, raw body bytes, and first-token latency for passthrough optimization.
+func (g *Gateway) forwardNonStreamRequest(_ context.Context, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, []byte, time.Duration, error) {
 	var resp openai.ChatCompletionResponse
 
 	reqBody, err := marshalProtocolRequest(provCfg.Protocol, req)
 	if err != nil {
-		return resp, nil, fmt.Errorf("marshal request: %w", err)
+		return resp, nil, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
-	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
+	body, latency, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody, false)
 	if err != nil {
-		return resp, nil, err
+		return resp, nil, latency, err
 	}
 
 	resp, err = unmarshalProtocolResponse(provCfg.Protocol, body)
 	if err != nil {
-		return resp, nil, fmt.Errorf("unmarshal response: %w", err)
+		return resp, nil, latency, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return resp, body, nil
+	return resp, body, latency, nil
 }
 
 // pipeChatStream sends a streaming chat request upstream and pipes the raw SSE response to the client.
@@ -491,6 +491,6 @@ func sendUpstreamChatRaw(provCfg *config.ProviderConfig, req openai.ChatCompleti
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
+	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody, true)
 	return body, err
 }

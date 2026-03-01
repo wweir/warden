@@ -92,7 +92,7 @@ type ProviderConfig struct {
 	Protocol     string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
 	APIKey       deferlog.Secret   `json:"api_key" usage:"API key for authentication"`
 	ConfigDir    string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	Timeout      string            `json:"timeout" usage:"Request timeout (e.g. 60s, 2m)"`
+	Timeout      string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
 	Proxy        string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers      map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models       []string          `json:"models" usage:"Supported model IDs (skips /models discovery when set)"`
@@ -169,14 +169,14 @@ func (b *ProviderConfig) InvalidateAuth() {
 
 // HTTPClient returns an *http.Client configured with the provider's proxy and timeout.
 // If override is non-zero it is used as the timeout; otherwise falls back to Timeout
-// (default 60s). The timeout applies to waiting for response headers (first-token latency),
-// not the entire request duration - this allows streaming responses to complete without
-// being terminated by a fixed deadline.
+// (default 120s). The timeout applies to waiting for response headers (first-token latency),
+// not the entire request duration - this allows streaming responses and slow non-streaming
+// responses to complete without being terminated by a fixed deadline.
 // Clients are cached by timeout value to reuse connections.
 func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	timeout := override
 	if timeout == 0 {
-		timeout = 60 * time.Second
+		timeout = 120 * time.Second // default first-token timeout
 		if b.Timeout != "" {
 			if d, err := time.ParseDuration(b.Timeout); err == nil {
 				timeout = d

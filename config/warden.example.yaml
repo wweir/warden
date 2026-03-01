@@ -45,25 +45,28 @@ addr: ":8080"
 #     identity_file: "~/.ssh/id_ed25519"   # optional (default: ssh config)
 
 # Provider 配置 - 上游 LLM API 地址和认证信息
+# timeout: first-token timeout for non-streaming requests (waiting for response headers).
+#          Streaming requests use a fixed 30s first-token timeout.
+#          After headers received, body reading has no time limit.
 provider:
   openai-fast:
     url: "https://api.openai.com/v1"
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
-    timeout: "30s"
-    # proxy: "socks5://127.0.0.1:1080"  # optional HTTP/SOCKS proxy
+    timeout: "60s"                         # non-streaming first-token timeout
+    # proxy: "socks5://127.0.0.1:1080"      # optional HTTP/SOCKS proxy
 
   openai:
     url: "https://api.openai.com/v1"
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
-    timeout: "60s"
+    timeout: "120s"                        # non-streaming first-token timeout
 
   anthropic:
     url: "https://api.anthropic.com/v1"
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "60s"
+    timeout: "120s"
     # request_patch applies JSON Patch (RFC 6902) operations to each request body before forwarding.
     # Useful for stripping fields unsupported by a specific upstream (e.g. extended thinking).
     # request_patch:
@@ -77,12 +80,12 @@ provider:
     url: "https://api.anthropic.com/v1"
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "300s"
+    timeout: "180s"                        # longer timeout for slow/fallback providers
 
   ollama:
     url: "http://localhost:11434/v1"
     protocol: "ollama"
-    timeout: "300s"
+    timeout: "180s"                        # local models may be slow
     # model_aliases: alias_name = real_name, alias appears in /models and is resolved before upstream request
     # model_aliases:
     #   gpt-4o: "llama3.3"
@@ -91,7 +94,7 @@ provider:
     protocol: "qwen"
     # url: "https://portal.qwen.ai/v1"  # default (OAuth); set api_key to use dashscope instead
     # config_dir: "~/.qwen"  # default
-    timeout: "60s"
+    timeout: "120s"
     models:
       - "qwen3-coder-plus"
       - "qwen3-coder-flash"
@@ -101,7 +104,7 @@ provider:
     protocol: "copilot"
     # url: "https://api.githubcopilot.com"  # default
     # config_dir: "~/.config/github-copilot"  # default; reads hosts.json or apps.json
-    timeout: "60s"
+    timeout: "120s"
     models:
       - "gpt-4o"
       - "claude-sonnet-4"
