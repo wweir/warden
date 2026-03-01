@@ -109,9 +109,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			provReqBody := prepareRawBody(rawReqBody, provCfg, model)
 			endpoint := protocolEndpoint(provCfg.Protocol, true)
 
-			upstreamStart := time.Now()
-			respBody, err := sendRequest(provCfg, endpoint, provReqBody)
-			latency := time.Since(upstreamStart)
+			respBody, latency, err := sendRequest(provCfg, endpoint, provReqBody)
 			if err != nil {
 				g.selector.RecordOutcome(provCfg.Name, err, latency)
 				if tryAuthRetry(err, provCfg, authRetried) {
@@ -408,7 +406,7 @@ func (g *Gateway) forwardResponsesRequest(provCfg *config.ProviderConfig, req op
 		return resp, nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	body, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
+	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
 	if err != nil {
 		return resp, nil, err
 	}
@@ -425,7 +423,11 @@ func sendResponsesRawRequest(provCfg *config.ProviderConfig, req openai.Response
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	return sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
+	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func (g *Gateway) pipeResponsesStream(w http.ResponseWriter, provCfg *config.ProviderConfig, req openai.ResponsesRequest) ([]byte, error) {
