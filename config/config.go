@@ -169,7 +169,9 @@ func (b *ProviderConfig) InvalidateAuth() {
 
 // HTTPClient returns an *http.Client configured with the provider's proxy and timeout.
 // If override is non-zero it is used as the timeout; otherwise falls back to Timeout
-// (default 60s). Format errors are caught during Validate, so errors here are ignored.
+// (default 60s). The timeout applies to waiting for response headers (first-token latency),
+// not the entire request duration - this allows streaming responses to complete without
+// being terminated by a fixed deadline.
 // Clients are cached by timeout value to reuse connections.
 func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	timeout := override
@@ -198,6 +200,7 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = timeout // first-token timeout
 	if b.Proxy != "" {
 		if proxyURL, err := url.Parse(b.Proxy); err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
@@ -208,7 +211,8 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 		b.clientCache = make(map[time.Duration]*http.Client)
 	}
 
-	client := &http.Client{Timeout: timeout, Transport: transport}
+	// No http.Client.Timeout - streaming responses should not have a total time limit
+	client := &http.Client{Transport: transport}
 	b.clientCache[timeout] = client
 	return client
 }
