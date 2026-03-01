@@ -241,7 +241,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
 		latency := time.Since(upstreamStart)
 		if err != nil {
-			g.selector.RecordOutcome(provCfg.Name, err, latency)
+			// Only record errors for inference endpoints to avoid suppressing providers on non-core URL failures
+			if allowFailover {
+				g.selector.RecordOutcome(provCfg.Name, err, latency)
+			}
 			// Only failover for inference endpoints
 			if allowFailover {
 				if next := g.tryFailover(err, provCfg.Name, &excluded, route, model); next != nil {
@@ -265,7 +268,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		}
 
 		if upErr != nil {
-			g.selector.RecordOutcome(provCfg.Name, upErr, latency)
+			// Only record errors for inference endpoints to avoid suppressing providers on non-core URL failures
+			if allowFailover {
+				g.selector.RecordOutcome(provCfg.Name, upErr, latency)
+			}
 			if tryAuthRetry(upErr, provCfg, authRetried) {
 				continue
 			}
