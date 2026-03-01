@@ -1,9 +1,10 @@
-package mcphook
+package toolhook
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path"
 	"regexp"
 	"sync"
 	"time"
@@ -14,11 +15,12 @@ import (
 // jsonObjectRe extracts the first JSON object from a string that may contain surrounding text.
 var jsonObjectRe = regexp.MustCompile(`\{[\s\S]*\}`)
 
-// HookContext is the JSON payload passed to every hook invocation.
+// CallContext is the JSON payload passed to every hook invocation.
 // For post hooks, Result and IsError are populated with the tool call outcome.
-type HookContext struct {
-	MCPName   string          `json:"mcp_name"`
-	ToolName  string          `json:"tool_name"`
+type CallContext struct {
+	ToolName  string          `json:"tool_name"` // original tool name from model output
+	FullName  string          `json:"full_name"` // normalized full name, e.g. mcp__tool
+	MCPName   string          `json:"mcp_name"`  // optional: only for MCP injected tools
 	CallID    string          `json:"call_id"`
 	Arguments json.RawMessage `json:"arguments"`
 	Result    string          `json:"result,omitempty"`   // post hook only
@@ -29,26 +31,43 @@ type HookContext struct {
 // err is non-nil only when the hook explicitly signals rejection (allow: false).
 // Execution errors (timeout, crash, network) leave err nil (fail-open).
 type hookResult struct {
-	index      int
-	htype      string // "exec" or "ai"
-	when       string // "pre" or "post"
-	stdout     string // exec only
-	stderr     string // exec only
-	aiResponse string // ai only: raw model response
-	rejected   bool   // true if hook explicitly returned allow:false
-	reason     string // rejection reason
+	index        int
+	htype        string // "exec", "ai" or "http"
+	when         string // "pre" or "post"
+	stdout       string // exec only
+	stderr       string // exec only
+	aiResponse   string // ai only: raw model response
+	httpResponse string // http only: raw webhook response
+	rejected     bool   // true if hook explicitly returned allow:false
+	reason       string // rejection reason
 }
 
-// hookResponse is the shared fixed JSON format for both exec stdout and AI response.
+// hookResponse is the shared fixed JSON format for exec/ai/http hook responses.
 type hookResponse struct {
 	Allow  bool   `json:"allow"`
 	Reason string `json:"reason"`
 }
 
+// MatchHooks returns all HookConfig entries whose Match pattern matches toolFullName.
+func MatchHooks(toolFullName string, rules []*config.HookRuleConfig) []config.HookConfig {
+	var hooks []config.HookConfig
+	for _, rule := range rules {
+		matched, err := path.Match(rule.Match, toolFullName)
+		if err != nil {
+			slog.Warn("Invalid hook rule match pattern", "pattern", rule.Match, "error", err)
+			continue
+		}
+		if matched {
+			hooks = append(hooks, rule.Hook)
+		}
+	}
+	return hooks
+}
+
 // RunPre runs all pre hooks for a tool concurrently.
 // Returns an error only when a hook explicitly signals rejection (allow: false).
 // Execution errors are logged and treated as pass-through (fail-open).
-func RunPre(ctx context.Context, mcpName, toolName, gatewayAddr string, hooks []config.HookConfig, hctx HookContext) error {
+func RunPre(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) error {
 	pre := filterHooks(hooks, "pre")
 	if len(pre) == 0 {
 		return nil
@@ -56,7 +75,7 @@ func RunPre(ctx context.Context, mcpName, toolName, gatewayAddr string, hooks []
 
 	results := runConcurrent(ctx, pre, hctx, gatewayAddr)
 	for _, r := range results {
-		logResult(mcpName, toolName, r)
+		logResult(hctx.FullName, r)
 		if r.rejected {
 			return rejectionError(r)
 		}
@@ -66,7 +85,7 @@ func RunPre(ctx context.Context, mcpName, toolName, gatewayAddr string, hooks []
 
 // RunPost runs all post hooks for a tool concurrently.
 // Results are logged; rejections have no effect (post hooks are audit-only).
-func RunPost(ctx context.Context, mcpName, toolName, gatewayAddr string, hooks []config.HookConfig, hctx HookContext) {
+func RunPost(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) {
 	post := filterHooks(hooks, "post")
 	if len(post) == 0 {
 		return
@@ -74,7 +93,7 @@ func RunPost(ctx context.Context, mcpName, toolName, gatewayAddr string, hooks [
 
 	results := runConcurrent(ctx, post, hctx, gatewayAddr)
 	for _, r := range results {
-		logResult(mcpName, toolName, r)
+		logResult(hctx.FullName, r)
 	}
 }
 
@@ -90,7 +109,7 @@ func filterHooks(hooks []config.HookConfig, when string) []config.HookConfig {
 }
 
 // runConcurrent executes all hooks concurrently and collects results.
-func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx HookContext, gatewayAddr string) []hookResult {
+func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx CallContext, gatewayAddr string) []hookResult {
 	results := make([]hookResult, len(hooks))
 	var wg sync.WaitGroup
 	for i, h := range hooks {
@@ -105,7 +124,7 @@ func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx HookCont
 }
 
 // runOne dispatches a single hook by type with timeout applied.
-func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx HookContext, gatewayAddr string) hookResult {
+func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gatewayAddr string) hookResult {
 	timeout := hook.TimeoutDuration
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -118,6 +137,8 @@ func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx HookConte
 		return runExec(ctx, idx, hook, hctx)
 	case "ai":
 		return runAI(ctx, idx, hook, hctx, gatewayAddr)
+	case "http":
+		return runHTTP(ctx, idx, hook, hctx)
 	default:
 		// unknown type: fail-open, log warning
 		slog.Warn("Hook: unknown type, skipping", "hook_index", idx, "hook_type", hook.Type)
@@ -126,10 +147,9 @@ func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx HookConte
 }
 
 // logResult writes a structured log entry for a completed hook execution.
-func logResult(mcpName, toolName string, r hookResult) {
+func logResult(toolFullName string, r hookResult) {
 	attrs := []any{
-		"mcp", mcpName,
-		"tool", toolName,
+		"tool", toolFullName,
 		"hook_index", r.index,
 		"hook_type", r.htype,
 		"hook_when", r.when,
@@ -142,6 +162,9 @@ func logResult(mcpName, toolName string, r hookResult) {
 	}
 	if r.aiResponse != "" {
 		attrs = append(attrs, "ai_response", r.aiResponse)
+	}
+	if r.httpResponse != "" {
+		attrs = append(attrs, "http_response", r.httpResponse)
 	}
 	if r.rejected {
 		slog.Warn("Hook rejected tool call", append(attrs, "reason", r.reason)...)

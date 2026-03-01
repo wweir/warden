@@ -1,4 +1,4 @@
-package mcphook
+package toolhook
 
 import (
 	"bytes"
@@ -17,11 +17,11 @@ func rejectionError(r hookResult) error {
 }
 
 // runExec executes an external command hook.
-// The HookContext is passed as JSON via stdin.
+// The CallContext is passed as JSON via stdin.
 // The command's stdout must contain a JSON object {"allow": bool, "reason": "..."}.
 // Any execution error (non-zero exit, timeout) is logged and treated as pass-through (fail-open).
 // Only an explicit allow:false in the stdout JSON triggers rejection.
-func runExec(ctx context.Context, idx int, hook config.HookConfig, hctx HookContext) hookResult {
+func runExec(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext) hookResult {
 	r := hookResult{index: idx, htype: "exec", when: hook.When}
 
 	payload, err := json.Marshal(hctx)

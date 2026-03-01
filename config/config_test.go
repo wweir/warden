@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,9 +35,9 @@ func TestApplyRequestPatch(t *testing.T) {
 			wantHas: true,
 		},
 		{
-			name:  "empty patch returns original",
-			body:  `{"model":"glm-5","thinking":{"type":"adaptive"}}`,
-			patch: []RequestPatchOp{},
+			name:    "empty patch returns original",
+			body:    `{"model":"glm-5","thinking":{"type":"adaptive"}}`,
+			patch:   []RequestPatchOp{},
 			wantKey: "thinking",
 			wantHas: true,
 		},
@@ -180,5 +181,81 @@ func TestProviderConfig_HTTPClient_Caching(t *testing.T) {
 	client4 := prov.HTTPClient(60 * time.Second)
 	if client3 != client4 {
 		t.Error("HTTPClient should cache instance for custom timeout")
+	}
+}
+
+func TestValidateToolHookHTTPType(t *testing.T) {
+	cfg := &ConfigStruct{
+		Webhook: map[string]*WebhookConfig{
+			"audit": {URL: "http://127.0.0.1:8080/hook"},
+		},
+		ToolHooks: []*HookRuleConfig{
+			{
+				Match: "*",
+				Hook: HookConfig{
+					Type:    "http",
+					When:    "pre",
+					Timeout: "3s",
+					Webhook: "audit",
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.ToolHooks[0].Hook.WebhookCfg == nil {
+		t.Fatal("expected webhook config to be resolved")
+	}
+}
+
+func TestValidateToolHookHTTPTypeUnknownWebhook(t *testing.T) {
+	cfg := &ConfigStruct{
+		Webhook: map[string]*WebhookConfig{
+			"audit": {URL: "http://127.0.0.1:8080/hook"},
+		},
+		ToolHooks: []*HookRuleConfig{
+			{
+				Match: "*",
+				Hook: HookConfig{
+					Type:    "http",
+					When:    "pre",
+					Timeout: "3s",
+					Webhook: "missing",
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "unknown webhook") {
+		t.Fatalf("expected unknown webhook error, got %v", err)
+	}
+}
+
+func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
+	cfg := &ConfigStruct{
+		ToolHooks: []*HookRuleConfig{
+			{
+				Match: "*",
+				Hook: HookConfig{
+					Type:    "http",
+					When:    "pre",
+					Timeout: "3s",
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "webhook is required") {
+		t.Fatalf("expected webhook required error, got %v", err)
 	}
 }

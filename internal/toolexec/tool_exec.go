@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"path"
 	"slices"
 	"strings"
 
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/mcp"
-	"github.com/wweir/warden/pkg/mcphook"
 	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // ToolResult contains the execution result for a single tool call.
@@ -27,14 +26,39 @@ func Execute(ctx context.Context, calls []protocol.ToolCallInfo, injectedTools [
 	defer func() { deferlog.DebugError(err, "execute tool calls") }()
 
 	for _, tc := range calls {
-		if !slices.Contains(injectedTools, tc.Name) {
+		isInjected := slices.Contains(injectedTools, tc.Name)
+		mcpName, originalToolName := parseToolName(tc.Name)
+
+		hooks := toolhook.MatchHooks(tc.Name, toolHooks)
+		hctx := toolhook.CallContext{
+			ToolName:  originalToolName,
+			FullName:  tc.Name,
+			MCPName:   mcpName,
+			CallID:    tc.ID,
+			Arguments: json.RawMessage(tc.Arguments),
+		}
+
+		if err := toolhook.RunPre(ctx, gatewayAddr, hooks, hctx); err != nil {
+			slog.Warn("Tool call blocked by pre hook", "tool", tc.Name, "error", err)
+			if isInjected {
+				results = append(results, ToolResult{
+					CallID:  tc.ID,
+					Output:  "Error: tool call blocked by pre hook: " + err.Error(),
+					IsError: true,
+				})
+			} else {
+				slog.Warn("Blocked non-injected tool call is audit-only", "tool", tc.Name)
+			}
+			continue
+		}
+
+		if !isInjected {
 			continue
 		}
 
 		slog.Debug("Executing injected tool", "tool", tc.Name)
 
-		parts := splitToolName(tc.Name)
-		if len(parts) != 2 {
+		if mcpName == "" {
 			slog.Warn("Invalid tool name format", "tool", tc.Name)
 			results = append(results, ToolResult{
 				CallID:  tc.ID,
@@ -43,7 +67,6 @@ func Execute(ctx context.Context, calls []protocol.ToolCallInfo, injectedTools [
 			})
 			continue
 		}
-		mcpName, originalToolName := parts[0], parts[1]
 
 		if mcpCfg, ok := mcpCfgs[mcpName]; ok {
 			if toolCfg, ok := mcpCfg.Tools[originalToolName]; ok && toolCfg.Disabled {
@@ -68,30 +91,11 @@ func Execute(ctx context.Context, calls []protocol.ToolCallInfo, injectedTools [
 			continue
 		}
 
-		hooks := matchHooks(tc.Name, toolHooks)
-
-		hctx := mcphook.HookContext{
-			MCPName:   mcpName,
-			ToolName:  originalToolName,
-			CallID:    tc.ID,
-			Arguments: json.RawMessage(tc.Arguments),
-		}
-
-		if err := mcphook.RunPre(ctx, mcpName, originalToolName, gatewayAddr, hooks, hctx); err != nil {
-			slog.Warn("Tool call blocked by pre hook", "mcp", mcpName, "tool", originalToolName, "error", err)
-			results = append(results, ToolResult{
-				CallID:  tc.ID,
-				Output:  "Error: tool call blocked by pre hook: " + err.Error(),
-				IsError: true,
-			})
-			continue
-		}
-
 		result, callErr := mcpClient.CallTool(ctx, originalToolName, json.RawMessage(tc.Arguments))
 
 		hctx.Result = result
 		hctx.IsError = callErr != nil
-		go mcphook.RunPost(ctx, mcpName, originalToolName, gatewayAddr, hooks, hctx)
+		go toolhook.RunPost(ctx, gatewayAddr, hooks, hctx)
 
 		if callErr != nil {
 			slog.Error("Failed to call tool", "tool", tc.Name, "error", callErr)
@@ -116,23 +120,11 @@ func Execute(ctx context.Context, calls []protocol.ToolCallInfo, injectedTools [
 	return results, nil
 }
 
-// matchHooks returns all HookConfig entries whose Match pattern matches the tool name.
-func matchHooks(toolName string, rules []*config.HookRuleConfig) []config.HookConfig {
-	var hooks []config.HookConfig
-	for _, rule := range rules {
-		matched, err := path.Match(rule.Match, toolName)
-		if err != nil {
-			slog.Warn("Invalid hook rule match pattern", "pattern", rule.Match, "error", err)
-			continue
-		}
-		if matched {
-			hooks = append(hooks, rule.Hook)
-		}
+// parseToolName parses "mcp_name__tool_name" and falls back to raw name for non-MCP tools.
+func parseToolName(name string) (mcpName string, toolName string) {
+	parts := strings.SplitN(name, "__", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
 	}
-	return hooks
-}
-
-// splitToolName splits "mcp_name__tool_name" into [mcpName, toolName].
-func splitToolName(name string) []string {
-	return strings.SplitN(name, "__", 2)
+	return "", name
 }

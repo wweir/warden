@@ -1,4 +1,4 @@
-package mcphook
+package toolhook
 
 import (
 	"bytes"
@@ -15,11 +15,11 @@ import (
 )
 
 // runAI calls the gateway's own chat completions endpoint to evaluate a tool call.
-// The prompt template is rendered with HookContext fields plus Args (parsed Arguments map).
+// The prompt template is rendered with CallContext fields plus Args (parsed Arguments map).
 // The model must respond with JSON {"allow": bool, "reason": "..."}.
 // Any error during the call is logged and treated as pass-through (fail-open).
 // Only an explicit allow:false in the response triggers rejection.
-func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx HookContext, gatewayAddr string) hookResult {
+func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gatewayAddr string) hookResult {
 	r := hookResult{index: idx, htype: "ai", when: hook.When}
 
 	prompt, err := renderPrompt(hook.Prompt, hctx)
@@ -39,8 +39,8 @@ func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx HookContex
 	return r
 }
 
-// renderPrompt renders the prompt template with HookContext and parsed Arguments fields.
-func renderPrompt(promptTmpl string, hctx HookContext) (string, error) {
+// renderPrompt renders the prompt template with CallContext and parsed Arguments fields.
+func renderPrompt(promptTmpl string, hctx CallContext) (string, error) {
 	tmpl, err := template.New("prompt").Parse(promptTmpl)
 	if err != nil {
 		return "", fmt.Errorf("parse prompt template: %w", err)
@@ -48,10 +48,10 @@ func renderPrompt(promptTmpl string, hctx HookContext) (string, error) {
 
 	// Args exposes individual fields from the Arguments JSON object
 	type data struct {
-		HookContext
+		CallContext
 		Args map[string]any
 	}
-	d := data{HookContext: hctx}
+	d := data{CallContext: hctx}
 	if len(hctx.Arguments) > 0 {
 		var args map[string]any
 		if err := json.Unmarshal(hctx.Arguments, &args); err == nil {

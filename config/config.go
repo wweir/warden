@@ -34,7 +34,7 @@ type ConfigStruct struct {
 	Route         map[string]*RouteConfig    `json:"route" usage:"Route prefix configurations"`
 	MCP           map[string]*MCPConfig      `json:"mcp" usage:"MCP server configurations"`
 	SSH           map[string]*SSHConfig      `json:"ssh" usage:"SSH connection configurations"`
-	ToolHooks     []*HookRuleConfig          `json:"tool_hooks" usage:"Global tool call hook rules (supports wildcards in match pattern)"`
+	ToolHooks     []*HookRuleConfig          `json:"tool_hooks" usage:"Global tool call hook rules for all tool calls (supports wildcards in match pattern)"`
 }
 
 type LogConfig struct {
@@ -60,7 +60,7 @@ type WebhookConfig struct {
 	URL          string            `json:"url" usage:"Target URL"`
 	Method       string            `json:"method" usage:"HTTP method, default POST"`
 	Headers      map[string]string `json:"headers" usage:"Static request headers"`
-	BodyTemplate string            `json:"body_template" usage:"Go template for request body; .Record holds the log record, sprig functions available; omit to send record as plain JSON"`
+	BodyTemplate string            `json:"body_template" usage:"Go template for request body; for log target use .Record, for tool hook http use .CallContext/.Args; omit to send caller default JSON"`
 	Timeout      string            `json:"timeout" usage:"Per-request timeout, default 5s"`
 	Retry        int               `json:"retry" usage:"Retry count on failure, default 2"`
 }
@@ -252,27 +252,29 @@ type ToolConfig struct {
 }
 
 // HookRuleConfig defines a hook rule that matches tool calls by pattern.
-// Match uses glob-style wildcards: "*" matches any sequence within a segment,
-// "**" matches across segments. Pattern format: "<mcp_name>__<tool_name>",
-// e.g. "my_mcp__write_*" matches all write tools in my_mcp.
+// Match uses glob-style wildcards and targets the full tool name seen by the model:
+// - injected MCP tools: "<mcp_name>__<tool_name>" (e.g. "fs__write_file")
+// - client/native tools: "<tool_name>" (e.g. "web_search")
 // A bare "*" matches all tool calls.
 type HookRuleConfig struct {
-	Match string       `json:"match" usage:"Tool name pattern to match (format: mcp_name__tool_name, supports * wildcard)"`
-	Hook  HookConfig   `json:"hook" usage:"Hook to run when the pattern matches"`
+	Match string     `json:"match" usage:"Full tool name pattern to match (supports * wildcard)"`
+	Hook  HookConfig `json:"hook" usage:"Hook to run when the pattern matches"`
 }
 
 // HookConfig defines a single hook execution target.
 type HookConfig struct {
-	Type    string   `json:"type" usage:"Hook type: exec or ai"`
+	Type    string   `json:"type" usage:"Hook type: exec, ai or http"`
 	When    string   `json:"when" usage:"Hook timing: pre (can block) or post (audit only)"`
 	Timeout string   `json:"timeout" usage:"Hook execution timeout (default: 5s)"`
 	Command string   `json:"command" usage:"Command to execute (exec type only)"`
 	Args    []string `json:"args" usage:"Command arguments (exec type only)"`
 	Route   string   `json:"route" usage:"Gateway route prefix for AI hook (e.g. /openai) (ai type only)"`
 	Model   string   `json:"model" usage:"Model name for AI hook (ai type only)"`
-	Prompt  string   `json:"prompt" usage:"Prompt template for AI hook; supports {{.ToolName}}, {{.Arguments}}, {{.Result}}, {{.CallID}} (ai type only)"`
+	Prompt  string   `json:"prompt" usage:"Prompt template for AI hook; supports {{.ToolName}}, {{.FullName}}, {{.MCPName}}, {{.Arguments}}, {{.Result}}, {{.CallID}} (ai type only)"`
+	Webhook string   `json:"webhook" usage:"Webhook config name to call (http type only)"`
 
-	TimeoutDuration time.Duration `json:"-"` // parsed from Timeout during Validate
+	TimeoutDuration time.Duration  `json:"-"` // parsed from Timeout during Validate
+	WebhookCfg      *WebhookConfig `json:"-"`
 }
 
 type MCPConfig struct {
@@ -483,7 +485,7 @@ func (c *ConfigStruct) Validate() error {
 		if rule.Match == "" {
 			return NewValidationError("tool_hooks[%d]: match is required", i)
 		}
-		if err := validateHookConfig(fmt.Sprintf("tool_hooks[%d]", i), &rule.Hook); err != nil {
+		if err := validateHookConfig(fmt.Sprintf("tool_hooks[%d]", i), &rule.Hook, c.Webhook); err != nil {
 			return err
 		}
 	}
@@ -492,7 +494,7 @@ func (c *ConfigStruct) Validate() error {
 }
 
 // validateHookConfig validates a single HookConfig and parses its timeout.
-func validateHookConfig(ctx string, hook *HookConfig) error {
+func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*WebhookConfig) error {
 	switch hook.Type {
 	case "exec":
 		if hook.Command == "" {
@@ -508,8 +510,17 @@ func validateHookConfig(ctx string, hook *HookConfig) error {
 		if hook.Prompt == "" {
 			return NewValidationError("%s: prompt is required for ai type", ctx)
 		}
+	case "http":
+		if hook.Webhook == "" {
+			return NewValidationError("%s: webhook is required for http type", ctx)
+		}
+		webhookCfg, ok := webhooks[hook.Webhook]
+		if !ok {
+			return NewValidationError("%s: unknown webhook %q", ctx, hook.Webhook)
+		}
+		hook.WebhookCfg = webhookCfg
 	default:
-		return NewValidationError("%s: invalid type %q (must be exec or ai)", ctx, hook.Type)
+		return NewValidationError("%s: invalid type %q (must be exec, ai or http)", ctx, hook.Type)
 	}
 	switch hook.When {
 	case "pre", "post":
