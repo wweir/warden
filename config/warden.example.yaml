@@ -11,9 +11,10 @@ addr: ":8080"
 #     headers:
 #       Authorization: "Bearer your-token"
 #       X-Source: "warden"
-#     # body_template: Go template rendered for each record; sprig functions available.
-#     # .Record exposes all fields of the log record.
-#     # Omit body_template to send the record as plain JSON.
+#     # body_template: Go template for request body.
+#     # - log target: .Record exposes all fields of the log record
+#     # - tool hook http: .CallContext / .Args expose tool call context
+#     # Omit body_template to send caller default JSON.
 #     body_template: |
 #       {
 #         "timestamp": "{{ .Record.Timestamp | date `2006-01-02T15:04:05Z07:00` }}",
@@ -130,6 +131,38 @@ route:
       - "ollama"
     tools: []
 
+# 全局 tool hooks（对任意 tool call 生效）
+# match 匹配的是完整工具名：
+# - 注入 MCP 工具：<mcp_name>__<tool_name>
+# - 客户端工具：<tool_name>
+# 支持 * 通配符，例如 "filesystem__*"、"web_*"、"*"
+# tool_hooks:
+#   - match: "filesystem__write_*"
+#     hook:
+#       type: exec
+#       when: pre
+#       timeout: "3s"
+#       command: "/usr/local/bin/check-write-permission"
+#       args: []
+#   - match: "web_search"
+#     hook:
+#       type: ai
+#       when: pre
+#       timeout: "15s"
+#       route: "/openai"
+#       model: "gpt-4o-mini"
+#       prompt: |
+#         Review tool call:
+#         tool={{.ToolName}} full={{.FullName}} mcp={{.MCPName}}
+#         args={{.Arguments}}
+#         Return JSON only: {"allow": true, "reason": "ok"} or {"allow": false, "reason": "..."}
+#   - match: "filesystem__delete_file"
+#     hook:
+#       type: http
+#       when: pre
+#       timeout: "5s"
+#       webhook: "audit-webhook"   # references webhook.<name>; body uses webhook.body_template or default CallContext JSON
+
 # MCP 工具配置 - 启用的 MCP 工具
 mcp:
   web-search:
@@ -146,11 +179,11 @@ mcp:
       - "-y"
       - "@modelcontextprotocol/server-filesystem"
     env: {}
-    # Per-tool configuration: disable individual tools or attach hooks
+    # Per-tool configuration: disable individual tools
     # tools:
     #   write_file:
     #     hooks:
-    #       # exec hook: stdin receives HookContext JSON; stdout must be {"allow":bool,"reason":"..."}
+    #       # exec hook: stdin receives CallContext JSON; stdout must be {"allow":bool,"reason":"..."}
     #       # execution errors (timeout, crash) are pass-through; only allow:false blocks the call
     #       - type: exec
     #         when: pre
@@ -166,7 +199,7 @@ mcp:
     #         model: "gpt-4o-mini"
     #         prompt: |
     #           You are a security guard reviewing MCP tool calls.
-    #           Tool: {{.ToolName}}
+    #           Tool: {{.ToolName}} (full={{.FullName}})
     #           Arguments (raw): {{.Arguments}}
     #           Arguments (parsed fields): path={{.Args.path}} content={{.Args.content}}
     #           Respond ONLY with JSON: {"allow": true, "reason": "ok"} or {"allow": false, "reason": "explain why"}

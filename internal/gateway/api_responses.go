@@ -12,8 +12,8 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
-	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/internal/reqlog"
+	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
@@ -220,8 +220,15 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		}
 		g.selector.RecordOutcome(provCfg.Name, nil, time.Since(startTime))
 
-		// no function_call in output: passthrough raw upstream response
+		funcCalls, _ := extractFunctionCalls(resp.Output)
+		// no injected function_call in output: passthrough raw upstream response
 		if !hasInjectedFunctionCalls(resp.Output, injectedTools) {
+			if len(funcCalls) > 0 {
+				allInfos := funcCallsToInfos(funcCalls)
+				if _, err := toolexec.Execute(r.Context(), allInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr); err != nil {
+					slog.Error("Responses: failed to run tool hooks", "error", err)
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
 			logRecord(respBody, "")
@@ -246,6 +253,13 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 	for i := range maxToolCallIterations {
 		funcCalls, _ := extractFunctionCalls(resp.Output)
 		injectedCalls, clientCalls := splitFuncCalls(funcCalls, injectedTools)
+		allInfos := funcCallsToInfos(funcCalls)
+
+		results, err := toolexec.Execute(r.Context(), allInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		if err != nil {
+			slog.Error("Responses: failed to execute tools", "error", err)
+			break
+		}
 
 		if len(injectedCalls) == 0 {
 			break
@@ -253,13 +267,6 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 
 		slog.Debug("Responses: executing injected function calls", "iteration", i+1,
 			"injected", len(injectedCalls), "client", len(clientCalls))
-
-		callInfos := funcCallsToInfos(injectedCalls)
-		results, err := toolexec.Execute(r.Context(), callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
-		if err != nil {
-			slog.Error("Responses: failed to execute tools", "error", err)
-			break
-		}
 
 		newInput, err := buildResponsesInput(req.Input, resp.Output, results)
 		if err != nil {
@@ -277,10 +284,10 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 			newResp, llmRespBody, err := g.forwardResponsesRequest(provCfg, req)
 			if err != nil {
 				slog.Error("Responses: failed to forward after mixed tool execution", "error", err)
-				steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
+				steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
 			} else {
 				resp = newResp
-				steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
+				steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, llmRespBody))
 			}
 			break
 		}
@@ -288,11 +295,11 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 		newResp, llmRespBody, err := g.forwardResponsesRequest(provCfg, req)
 		if err != nil {
 			slog.Error("Responses: failed to forward after tool execution", "error", err, "iteration", i+1)
-			steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
+			steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
 			break
 		}
 		resp = newResp
-		steps = append(steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
+		steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, llmRespBody))
 	}
 
 	// filter out injected function_call items from final output
@@ -332,7 +339,20 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 
 		events := protocol.ParseEvents(rawBody)
 		sseInfos, hasInjected, err := parser.Parse(events, injectedTools)
-		if err != nil || !hasInjected {
+		if err != nil {
+			filteredEvents := parser.Filter(events, injectedTools)
+			replayData := protocol.ReplayEvents(filteredEvents)
+			w.Write(replayData)
+			w.(http.Flusher).Flush()
+			return replayData, steps, nil
+		}
+
+		results, execErr := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		if execErr != nil {
+			slog.Error("Responses stream: failed to execute tools", "error", execErr)
+		}
+
+		if !hasInjected {
 			filteredEvents := parser.Filter(events, injectedTools)
 			replayData := protocol.ReplayEvents(filteredEvents)
 			w.Write(replayData)
@@ -342,10 +362,7 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Responses stream: executing injected tool calls", "iteration", i+1)
-
-		results, err := toolexec.Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
-		if err != nil {
-			slog.Error("Responses stream: failed to execute tools", "error", err)
+		if execErr != nil {
 			w.Write(rawBody)
 			w.(http.Flusher).Flush()
 			return rawBody, steps, nil

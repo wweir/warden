@@ -30,7 +30,6 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── adapter.go           # 协议适配：endpoint 路由、请求/响应序列化、流式 parser 工厂
 │   │   ├── http.go              # upstream HTTP 通信：sendRequest、pipeRawStream、认证注入、模型拉取
 │   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离（泛型实现）、过滤
-│   │   ├── tool_exec.go         # 工具执行：matchHooks 按全局规则匹配、pre/post hook 运行、MCP 调用
 │   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 滑动窗口统计 + 状态暴露
 │   │   ├── middleware.go        # HTTP 中间件：日志、panic 恢复、CORS
 │   │   ├── metrics.go           # Prometheus 指标：requests_total、request_duration_ms、provider_health、provider_suppressed、tokens_total、token_rate（按 provider/model 统计 token/s）
@@ -41,6 +40,8 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── http.go              # HTTPLogger：异步推送日志到 HTTP 端点，支持模板渲染（sprig）
 │   │   ├── broadcast.go         # Broadcaster：内存广播器，SSE 订阅者推送 + 最近 50 条环形缓冲
 │   │   └── logger.go            # newLogger/multiLogger：按配置构建多后端 Logger
+│   ├── toolexec/
+│   │   └── tool_exec.go         # 工具执行：对任意 tool call 触发 hook，注入 MCP tool 由网关执行
 │   └── mcp/
 │       └── client.go            # MCP client 实现（JSON-RPC stdio、工具发现、调用）
 ├── pkg/
@@ -60,6 +61,11 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── provider.go          # TokenProvider 接口定义、Get() 工厂函数
 │   │   ├── qwen.go              # Qwen OAuth token 管理（自动刷新，支持 SSH 远程读取）
 │   │   └── copilot.go           # GitHub Copilot token 管理（自动刷新，支持 SSH 远程读取）
+│   ├── toolhook/
+│   │   ├── hook.go              # 通用 tool hook 调度：规则匹配、pre/post 并发执行、拒绝处理
+│   │   ├── exec.go              # exec hook：stdin 传入 CallContext JSON，stdout 解析 allow/reason
+│   │   ├── ai.go                # ai hook：调用网关 chat/completions，解析 allow/reason
+│   │   └── http.go              # http hook：调用 webhook 配置，解析 allow/reason
 │   ├── ssh/
 │   │   └── ssh.go               # SSH 工具包：远程命令执行、文件读取（shell out to system ssh）
 │   └── protocol/
@@ -72,7 +78,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。MCP 工具可通过 `tools.<name>.disabled` 禁用，也可通过 `tools.<name>.hooks` 配置 exec/ai 类型的 pre/post hook。
+主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
 
 ### provider 多选策略 (internal/gateway/selector.go)
 
@@ -137,7 +143,7 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 
 - `Validate()` 方法：
     - 校验每个 provider 的 URL 合法性、protocol 为已知值、timeout 可解析
-    - 校验全局 `tool_hooks` 每条规则的 `match` 非空、hook 的 type/when/command（exec）或 route+model+prompt（ai）字段完整、timeout 可解析
+    - 校验全局 `tool_hooks` 每条规则的 `match` 非空、hook 的 type/when 必填；exec 需 command、ai 需 route+model+prompt、http 需 webhook（引用 `webhook` 配置）；timeout 可解析
     - 校验 route 中引用的 providers 名称在 `provider` 配置中存在
     - 校验 route 中引用的 tools 名称在 `mcp` 配置中存在
     - 校验路由前缀格式正确（以 `/` 开头）
@@ -279,9 +285,9 @@ Responses API 字段众多且持续扩展，网关必须严格遵守透传原则
 
 #### 与 Chat Completions 的复用
 
-`responses.go` 与 `chat.go` 共享以下逻辑（通过 `gateway/convert.go` 和 `gateway/tool_exec.go` 复用）：
+`responses.go` 与 `chat.go` 共享以下逻辑（通过 `gateway/convert.go` 和 `toolexec/tool_exec.go` 复用）：
 
-- MCP 工具执行逻辑（`gateway/tool_exec.go`）
+- MCP 工具执行逻辑（`internal/toolexec/tool_exec.go`）
 - 工具名称映射（`<mcp_name>__<tool_name>`）和注入工具集合管理
 - provider 选择和 fallback 逻辑（`gateway/selector.go`）
 - 循环保护和超时控制
@@ -502,9 +508,9 @@ MCP Tool.inputSchema → tools[].parameters
 （扁平格式 {"type":"function", "name":..., "description":..., "parameters":...}）
 ```
 
-### 8. 工具执行 (`internal/gateway/tool_exec.go`)
+### 8. 工具执行 (`internal/toolexec/tool_exec.go`)
 
-职责：检测响应中的注入工具调用，执行并返回结果。工具执行逻辑本身与 API 格式无关，上层（chat.go / responses.go）负责将各自格式的 tool call 提取为统一的 `sse.ToolCallInfo` 传入。
+职责：接收统一的 `ToolCallInfo`，对任意 tool call 触发全局 hook；对注入 MCP 工具执行调用并返回结果。工具执行逻辑本身与 API 格式无关，上层（chat.go / responses.go）负责将各自格式的 tool call 提取为统一类型传入。
 
 ```go
 // ToolCallInfo 定义在 pkg/protocol/sse.go 中，是所有协议共享的统一类型
@@ -514,7 +520,7 @@ type ToolCallInfo struct {
     Arguments string // function arguments JSON
 }
 
-// Execute 执行注入的 tool_calls，返回每个调用的结果
+// Execute 对任意 tool_call 执行 hook，并返回注入 MCP 工具的执行结果
 func Execute(ctx context.Context, calls []sse.ToolCallInfo, injectedTools []string,
     mcpClients map[string]*mcp.Client, mcpCfgs map[string]*config.MCPConfig,
     toolHooks []*config.HookRuleConfig, gatewayAddr string) ([]ToolResult, error)
@@ -531,6 +537,7 @@ type ToolResult struct {
 
 - `chat.go`：转换为 `role:"tool"` 的 Message
 - `responses.go`：转换为 `type:"function_call_output"` 的 Item
+- 非注入工具（客户端自行执行）同样会触发 hook；若 pre hook 返回拒绝，当前版本仅记录审计日志，不会由网关代为拦截客户端执行
 
 ### 9. OpenAI 类型定义 (`pkg/protocol/openai/types.go`)
 
@@ -801,7 +808,7 @@ type Step struct {
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
 - McpToolDetail：工具详情（名称、描述、input schema）、enabled/disabled toggle 开关（运行时生效）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
-- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai hook 完整字段配置、Save & Apply）
+- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply）
 - Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
 - Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停
 
@@ -812,7 +819,7 @@ type Step struct {
 | **P1**   | `config/`、`pkg/protocol/openai/types.go`、`pkg/protocol/openai/responses.go`、`pkg/protocol/sse.go`、`cmd/warden/main.go`、`Makefile`            | 无        |
 | **P2**   | `internal/gateway/gateway.go`、`internal/gateway/http.go`、`internal/gateway/adapter.go`、`internal/gateway/middleware.go`、`internal/app/app.go` | P1        |
 | **P3**   | `internal/mcp/client.go` — MCP client，工具发现和调用                                                                                             | P1        |
-| **P4**   | `internal/gateway/tool_inject.go`、`internal/gateway/tool_exec.go` — 注入和执行                                                                   | P3        |
+| **P4**   | `internal/gateway/tool_inject.go`、`internal/toolexec/tool_exec.go` — 注入和执行                                                                  | P3        |
 | **P5**   | `internal/gateway/chat.go` — Chat Completions 处理（非流式 + 流式）                                                                               | P2 + P4   |
 | **P5.5** | `internal/gateway/responses.go` — Responses API 处理（非流式 + 流式）                                                                             | P2 + P4   |
 | **P6**   | `pkg/protocol/openai/stream.go`、`pkg/protocol/anthropic/` — 协议适配和流式解析器                                                                 | P5 + P5.5 |
@@ -864,7 +871,7 @@ type Step struct {
 
 11. **Responses API 流式优化**：Responses API 的 `response.completed` 事件包含完整的 response 对象（包括所有 output items），因此流式场景下无需像 Chat Completions 那样手动从 delta chunks 中拼接 tool_call arguments。网关可以直接从 `response.completed` 事件中提取完整的 function_call items，简化流式处理逻辑。但缓冲策略仍然必要——需要等到流结束才能判断是否包含注入工具的调用。
 
-12. **统一 ToolCallInfo 类型**：`protocol.ToolCallInfo`（定义在 `pkg/protocol/sse.go`）是所有协议共享的工具调用信息类型，`Arguments` 字段为 `string` 类型。`tool_exec.go` 直接使用 `[]protocol.ToolCallInfo` 作为参数，消除冗余转换。`chat.go` 和 `responses.go` 各自负责从自有格式中提取 `protocol.ToolCallInfo`、将 `ToolResult` 转换回自有格式。MCP 工具执行逻辑完全复用，不因 API 格式差异而重复实现。
+12. **统一 ToolCallInfo 类型**：`protocol.ToolCallInfo`（定义在 `pkg/protocol/sse.go`）是所有协议共享的工具调用信息类型，`Arguments` 字段为 `string` 类型。`internal/toolexec/tool_exec.go` 直接使用 `[]protocol.ToolCallInfo` 作为参数，消除冗余转换。`chat.go` 和 `responses.go` 各自负责从自有格式中提取 `protocol.ToolCallInfo`、将 `ToolResult` 转换回自有格式。MCP 工具执行逻辑完全复用，不因 API 格式差异而重复实现。
 
 13. **混合工具调用中断策略**：当 LLM 在同一轮同时调用了客户端工具和网关注入工具时，网关无法为客户端工具提供 tool result（只有客户端知道如何执行自己的工具）。继续循环会导致 LLM 因缺少 tool result 而报错。解决方案：网关执行完注入工具后**中断循环**，将注入工具的执行结果通过追加到上下文中继续请求 LLM，但在最终返回的响应中只保留客户端工具的 tool_calls。此策略同时适用于 Chat Completions 和 Responses API。
 

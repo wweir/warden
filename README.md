@@ -7,7 +7,7 @@ Warden 是一个轻量级 AI Gateway，提供统一的 OpenAI 兼容接口，将
 - **多协议适配** — 统一 OpenAI 格式入口，自动转换 Anthropic/Ollama/Qwen/Copilot 协议
 - **Provider 路由与容错** — 按前缀路由，配置顺序决定优先级，失败自动指数退避抑制，支持多 Provider Failover
 - **MCP 工具注入** — 自动注入 MCP 工具到请求，拦截并执行工具调用后继续对话，支持多轮递归和混合工具调用
-- **MCP 工具 Hook** — 支持 exec/ai 类型的 pre/post hook，可对工具调用进行安全审查或增强
+- **MCP 工具 Hook** — 支持 exec/ai/http 类型的 pre/post hook，可对工具调用进行安全审查或增强
 - **模型别名** — Provider 级别的模型别名映射，别名在 `/models` 中可见，请求时自动解析为真实模型名
 - **模型发现** — 自动查询上游 `/models` 端点，聚合多 Provider 模型列表，按模型名智能路由
 - **System Prompt 注入** — 按路由和模型精确匹配，自动注入自定义 system 提示词
@@ -149,7 +149,7 @@ pkg/
     openai/          # OpenAI 类型定义、流式解析、工具/提示词注入
     anthropic/       # Anthropic 协议转换、流式解析、认证
   provider/          # OAuth token 管理（Qwen、GitHub Copilot）
-  mcphook/           # MCP 工具 Hook 执行
+  toolhook/          # 通用 Tool Hook 执行（适用于任意 tool call）
   ssh/               # SSH 远程执行
 ```
 

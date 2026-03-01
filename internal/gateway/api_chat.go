@@ -12,9 +12,9 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/toolexec"
-	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
@@ -116,9 +116,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			}
 			endpoint := protocolEndpoint(selectedProvider.Protocol, false)
 
-			upstreamStart := time.Now()
-			respBody, err := sendRequest(selectedProvider, endpoint, reqBody)
-			latency := time.Since(upstreamStart)
+			respBody, latency, err := sendRequest(selectedProvider, endpoint, reqBody)
 			if err != nil {
 				g.selector.RecordOutcome(selectedProvider.Name, err, latency)
 				if tryAuthRetry(err, selectedProvider, authRetried) {
@@ -177,9 +175,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			firstResp, err := sendRequest(selectedProvider, protocolEndpoint(selectedProvider.Protocol, false), firstReqBody)
+			firstResp, latency, err := sendRequest(selectedProvider, protocolEndpoint(selectedProvider.Protocol, false), firstReqBody)
 			if err != nil {
-				g.selector.RecordOutcomeWithSource(selectedProvider.Name, err, time.Since(startTime), "pre_stream")
+				g.selector.RecordOutcomeWithSource(selectedProvider.Name, err, latency, "pre_stream")
 				g.RecordStreamErrorMetric(selectedProvider.Name, "pre_stream")
 				if tryAuthRetry(err, selectedProvider, authRetried) {
 					continue
@@ -193,7 +191,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				http.Error(w, err.Error(), http.StatusBadGateway)
 				return
 			}
-			g.selector.RecordOutcome(selectedProvider.Name, nil, time.Since(startTime))
+			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
 
 			// first request succeeded, write SSE response to client
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -316,6 +314,13 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 
 		allCalls := resp.Choices[0].Message.ToolCalls
 		injectedCalls, clientCalls := splitCalls(allCalls, injectedTools)
+		allInfos := toolCallsToInfos(allCalls)
+
+		results, err := toolexec.Execute(ctx, allInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		if err != nil {
+			slog.Error("Failed to execute tools", "error", err)
+			break
+		}
 
 		if len(injectedCalls) == 0 {
 			break
@@ -323,13 +328,6 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 
 		slog.Debug("Executing injected tool calls", "iteration", i+1,
 			"injected", len(injectedCalls), "client", len(clientCalls))
-
-		callInfos := toolCallsToInfos(injectedCalls)
-		results, err := toolexec.Execute(ctx, callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
-		if err != nil {
-			slog.Error("Failed to execute tools", "error", err)
-			break
-		}
 
 		messages = append(messages, resp.Choices[0].Message)
 		messages = append(messages, toolResultsToMessages(results)...)
@@ -347,12 +345,12 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 			if err != nil {
 				slog.Error("Failed to forward after mixed tool execution", "error", err)
 				if steps != nil {
-					*steps = append(*steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
+					*steps = append(*steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
 				}
 			} else {
 				resp = newResp
 				if steps != nil {
-					*steps = append(*steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
+					*steps = append(*steps, buildStep(i+1, allInfos, results, llmReqBody, llmRespBody))
 				}
 			}
 			break
@@ -362,13 +360,13 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 		if err != nil {
 			slog.Error("Failed to forward request after tool execution", "error", err, "iteration", i+1)
 			if steps != nil {
-				*steps = append(*steps, buildStep(i+1, callInfos, results, llmReqBody, nil))
+				*steps = append(*steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
 			}
 			break
 		}
 		resp = newResp
 		if steps != nil {
-			*steps = append(*steps, buildStep(i+1, callInfos, results, llmReqBody, llmRespBody))
+			*steps = append(*steps, buildStep(i+1, allInfos, results, llmReqBody, llmRespBody))
 		}
 	}
 
@@ -408,6 +406,11 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 
 		// no injected tool calls: replay buffered SSE to client
 		if !hasInjected {
+			if len(sseInfos) > 0 {
+				if _, err := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr); err != nil {
+					slog.Error("Stream: failed to run tool hooks", "error", err)
+				}
+			}
 			if _, writeErr := w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody)); writeErr != nil {
 				slog.Warn("Failed to write stream response", "error", writeErr)
 			}
@@ -418,7 +421,7 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Stream: executing injected tool calls", "iteration", i+1, "tool_calls", len(injectedInfos))
 
-		results, err := toolexec.Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		results, err := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Stream: failed to execute tools", "error", err)
 			if _, writeErr := w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody)); writeErr != nil {
