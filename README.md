@@ -122,6 +122,17 @@ curl http://localhost:8080/openai/models
 
 MCP 工具对客户端完全透明 — Warden 自动注入工具定义、拦截工具调用、执行后将结果回传 LLM 继续生成。客户端只看到最终回复（或仅看到客户端自己定义的工具调用）。
 
+Anthropic 原生 `/messages` 端点也可通过路由前缀访问，但走透明代理路径，**不支持 MCP 工具注入和 System Prompt 注入**：
+
+```bash
+# Anthropic native Messages API（透明代理）
+curl http://localhost:8080/anthropic/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-opus-4-6", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+如需 MCP 工具注入，改用 `chat/completions` 端点以 OpenAI 格式访问 Anthropic provider，网关自动完成协议转换。
+
 ## 项目结构
 
 ```

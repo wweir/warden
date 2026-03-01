@@ -149,7 +149,7 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 - `NewGateway()` 初始化时启动所有 MCP 客户端，创建 Selector，注册路由，组装中间件链
 - `selectProvider()` 委托到 `selector.Select`，支持 providers order + model match + 失败抑制
 - `recordOutcome()` 辅助函数，用于调用后结果记录
-- `handleProxy()` 对非 chat/responses 请求透明转发：clone headers + 注入认证 + pipe body
+- `handleProxy()` 对非 chat/responses 请求透明转发：clone headers + 注入认证 + pipe body。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
 - `Close()` 优雅关闭所有 MCP 客户端
 
 **删除的旧实现：** 不再使用 `checkProvider()` 进行 HTTP HEAD 健康检查（过于频繁且浪费），改为被动健康感知。
@@ -292,6 +292,22 @@ Responses API 字段众多且持续扩展，网关必须严格遵守透传原则
 - 工具定义注入格式（Chat Completions 有 `function` wrapper，Responses API 更扁平）
 - 工具调用结果的回传格式（Message vs Item）
 - 流式事件解析格式
+
+### 4.6. Anthropic Messages API（透明代理，`handleProxy`）
+
+`POST /*/v1/messages` 不在显式注册路由中，由 `router.NotFound` fallback 匹配路由前缀后调用 `handleProxy()` 透明转发。
+
+**已具备的能力**（与 chat/responses 相同）：
+- Provider 选择与 Failover
+- 认证重试（401 时重新加载凭据）
+- 请求日志与 Token 指标
+- 流式响应的 SSE 日志组装（`anthropic.AssembleStream`）
+
+**缺失的能力**（因不解析请求体结构）：
+- MCP 工具注入与执行
+- System Prompt 注入
+
+如需上述功能，应通过 `chat/completions` 端点以 OpenAI 格式发起请求，网关自动将其转换为 Anthropic Messages API 格式转发上游。
 
 ### 5. SSE 流式响应处理 (`pkg/protocol/sse.go`, `pkg/protocol/openai/stream.go`, `pkg/protocol/anthropic/stream.go`)
 
