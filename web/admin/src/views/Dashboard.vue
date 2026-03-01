@@ -123,6 +123,7 @@
           <div class="metric-header">
             <span class="metric-title">{{ $t('dashboard.tokens') }}</span>
           </div>
+          <div class="token-rate-hint">{{ $t('dashboard.outputRateHint') }}</div>
           <div class="token-inline">
             <div class="token-item">
               <span class="token-num">{{ fmtNum(tokenStats.promptTotal) }}</span>
@@ -135,9 +136,9 @@
             </div>
           </div>
           <div v-if="tokenStats.rates.length" class="token-rates-mini">
-            <div v-for="r in tokenStats.rates.slice(0, 3)" :key="r.provider + r.model" class="rate-mini">
+            <div v-for="r in tokenStats.rates.slice(0, 3)" :key="r.provider" class="rate-mini">
               <span class="rate-provider">{{ r.provider }}</span>
-              <span class="rate-value">{{ (r.promptRate + r.completionRate).toFixed(1) }}/s</span>
+              <span class="rate-value">{{ r.completionRate.toFixed(1) }}/s</span>
             </div>
           </div>
         </div>
@@ -406,23 +407,21 @@ const tokenStats = computed(() => {
     }
   }
 
-  // Group token rates by provider-model
+  // Group output token rates by provider
   if (metricsData.value?.token_rate) {
     const rateMap = {}
     for (const item of metricsData.value.token_rate) {
-      const key = `${item.provider}/${item.model}`
+      const key = item.provider || 'unknown'
       if (!rateMap[key]) {
-        rateMap[key] = { provider: item.provider, model: item.model, promptRate: 0, completionRate: 0 }
+        rateMap[key] = { provider: key, completionRate: 0 }
       }
-      if (item.type === 'prompt') {
-        rateMap[key].promptRate = item.value
-      } else if (item.type === 'completion') {
-        rateMap[key].completionRate = item.value
+      if (item.type === 'completion') {
+        rateMap[key].completionRate += item.value
       }
     }
     stats.rates = Object.values(rateMap)
-      .filter(r => r.promptRate > 0 || r.completionRate > 0)
-      .sort((a, b) => (b.promptRate + b.completionRate) - (a.promptRate + a.completionRate))
+      .filter(r => r.completionRate > 0)
+      .sort((a, b) => b.completionRate - a.completionRate)
       .slice(0, 5)
   }
 
@@ -726,6 +725,7 @@ a.stat-card:hover {
 .token-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .token-num { font-size: 20px; font-weight: 700; color: var(--c-text); }
 .token-lbl { font-size: 11px; color: var(--c-text-3); text-transform: uppercase; }
+.token-rate-hint { font-size: 11px; color: var(--c-text-3); margin: -2px 0 2px; }
 .token-divider-v { width: 1px; height: 36px; background: var(--c-border); }
 .token-rates-mini { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid var(--c-border-light, var(--c-border)); padding-top: 8px; }
 .rate-mini { display: flex; justify-content: space-between; font-size: 11px; }

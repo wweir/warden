@@ -49,42 +49,42 @@ addr: ":8080"
 # admin_password: "your-secret-password"
 
 provider:
-  openai:
-    url: "https://api.openai.com/v1"
-    protocol: "openai"
-    api_key: "${OPENAI_API_KEY}"
-    timeout: "60s"
+    openai:
+        url: "https://api.openai.com/v1"
+        protocol: "openai"
+        api_key: "${OPENAI_API_KEY}"
+        timeout: "60s"
 
-  anthropic:
-    url: "https://api.anthropic.com/v1"
-    protocol: "anthropic"
-    api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "60s"
+    anthropic:
+        url: "https://api.anthropic.com/v1"
+        protocol: "anthropic"
+        api_key: "${ANTHROPIC_API_KEY}"
+        timeout: "60s"
 
-  ollama:
-    url: "http://localhost:11434/v1"
-    protocol: "ollama"
-    timeout: "300s"
+    ollama:
+        url: "http://localhost:11434/v1"
+        protocol: "ollama"
+        timeout: "300s"
 
 route:
-  /openai:
-    providers: ["openai"]
-    tools: ["web-search"]
+    /openai:
+        providers: ["openai"]
+        tools: ["web-search"]
 
-  /anthropic:
-    providers: ["anthropic"]
-    tools: ["web-search", "filesystem"]
+    /anthropic:
+        providers: ["anthropic"]
+        tools: ["web-search", "filesystem"]
 
 mcp:
-  web-search:
-    command: "npx"
-    args: ["-y", "@anthropic/mcp-server-web-search"]
-    env:
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+    web-search:
+        command: "npx"
+        args: ["-y", "@anthropic/mcp-server-web-search"]
+        env:
+            ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
 
-  filesystem:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem"]
+    filesystem:
+        command: "npx"
+        args: ["-y", "@modelcontextprotocol/server-filesystem"]
 ```
 
 支持的 Provider 协议：`openai`、`anthropic`、`ollama`、`qwen`（OAuth 自动刷新）、`copilot`（GitHub Copilot OAuth）。API Key 支持 `${ENV_VAR}` 环境变量展开。
@@ -93,7 +93,7 @@ mcp:
 
 设置 `admin_password` 后，访问 `http://localhost:8080/_admin/`（用户名 `admin`）。
 
-- Dashboard — Provider 健康状态、路由概览、MCP 连接状态
+- Dashboard — Provider 健康状态、路由概览、MCP 连接状态、Tokens（按 provider 聚合的模型输出 token/s）
 - Providers — 详情、模型列表、探活
 - Routes — 关联 Provider 统计、MCP 工具状态、请求测试
 - MCP Tools — 工具详情、参数调试、enable/disable 开关

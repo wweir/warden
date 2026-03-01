@@ -298,12 +298,14 @@ Responses API 字段众多且持续扩展，网关必须严格遵守透传原则
 `POST /*/v1/messages` 不在显式注册路由中，由 `router.NotFound` fallback 匹配路由前缀后调用 `handleProxy()` 透明转发。
 
 **已具备的能力**（与 chat/responses 相同）：
+
 - Provider 选择与 Failover
 - 认证重试（401 时重新加载凭据）
 - 请求日志与 Token 指标
 - 流式响应的 SSE 日志组装（`anthropic.AssembleStream`）
 
 **缺失的能力**（因不解析请求体结构）：
+
 - MCP 工具注入与执行
 - System Prompt 注入
 
@@ -674,6 +676,7 @@ type ResponsesFunctionTool struct {
 ### 10.1. 服务安装 (`internal/install/service.go`)
 
 安装 warden 为 systemd 服务：
+
 - 复制二进制到 `/usr/local/bin/warden`
 - 创建 systemd service 文件（`ExecStart={path} -p -c /etc/warden.yaml`）
 - 使用 `config.ExampleConfig` 写入默认配置到 `/etc/warden.yaml`
@@ -721,16 +724,17 @@ type Step struct {
 ```
 
 **导出函数**：
+
 - `GenerateID() string` — 生成 8 字符十六进制请求 ID
 - `BuildFingerprint(rawBody json.RawMessage) string` — 从请求体构建会话指纹（见下）
 - `(r *Record) Sanitize()` — 确保所有 `json.RawMessage` 字段包含有效 JSON
 
 **日志后端**：
 
-| 文件 | 类型 | 说明 |
-|------|------|------|
-| `file.go` | `FileLogger` | 每条记录写入独立 JSON 文件，文件名格式：`{route}_{时间戳}_{id}.json` |
-| `http.go` | `HTTPLogger` | 异步推送到 HTTP 端点，缓冲队列 256 条，支持 Go 模板渲染请求体（sprig 函数可用），内置重试 |
+| 文件        | 类型          | 说明                                                                                          |
+| ----------- | ------------- | --------------------------------------------------------------------------------------------- |
+| `file.go`   | `FileLogger`  | 每条记录写入独立 JSON 文件，文件名格式：`{route}_{时间戳}_{id}.json`                          |
+| `http.go`   | `HTTPLogger`  | 异步推送到 HTTP 端点，缓冲队列 256 条，支持 Go 模板渲染请求体（sprig 函数可用），内置重试     |
 | `logger.go` | `multiLogger` | 扇出到多个后端；`newLogger(cfg)` 工厂函数按配置构建，返回 nil（无目标）/ 单后端 / multiLogger |
 
 **会话指纹（Fingerprint）**：
@@ -738,8 +742,8 @@ type Step struct {
 `BuildFingerprint` 用 gjson 轻量解析请求体，从消息内容构建紧凑的会话标识字符串，用于在日志中识别连续对话。
 
 - 格式：`{sys_hash}{fsm}`
-  - `sys_hash`：所有 system prompt 文本的 FNV-32a hash，6 位十六进制
-  - `fsm`：各轮用户/助手输入的 hash 链，宽度递减（6→5→4→3→2→2→…）
+    - `sys_hash`：所有 system prompt 文本的 FNV-32a hash，6 位十六进制
+    - `fsm`：各轮用户/助手输入的 hash 链，宽度递减（6→5→4→3→2→2→…）
 - 两条记录属于同一会话：model 相同、sys_hash 相同、且较早记录的 fsm 是较新记录 fsm 的严格前缀
 - 跳过 `x-anthropic-billing-header` 行（billing 内容变化不影响指纹）
 - 跳过 `thinking` 块（推理内容动态变化不影响指纹）
@@ -757,22 +761,22 @@ type Step struct {
 
 **后端 API**（`internal/gateway/admin.go`）：
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/_admin/` | embed 的前端 SPA |
-| GET | `/_admin/*filepath` | 前端静态资源 |
-| GET | `/_admin/api/status` | provider 状态（含请求统计）+ route + MCP 信息 |
-| GET | `/_admin/api/config` | 当前配置（api_key 脱敏为 `"***"`） |
-| PUT | `/_admin/api/config` | 更新配置（validate + 写入文件 + 还原 `***` 值） |
-| POST | `/_admin/api/restart` | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启） |
-| POST | `/_admin/api/providers/health` | Provider 探活（调用 fetchModels 测试连通性） |
-| GET | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表） |
-| POST | `/_admin/api/config/validate` | 配置验证（不保存） |
-| GET | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
-| GET | `/_admin/api/mcp/detail?name=xxx` | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态） |
-| POST | `/_admin/api/mcp/tool-call` | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时） |
-| POST | `/_admin/api/mcp/tool-toggle` | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置） |
-| GET | `/_admin/api/logs/stream` | SSE 实时日志推送 |
+| 方法 | 路径                                    | 说明                                                              |
+| ---- | --------------------------------------- | ----------------------------------------------------------------- |
+| GET  | `/_admin/`                              | embed 的前端 SPA                                                  |
+| GET  | `/_admin/*filepath`                     | 前端静态资源                                                      |
+| GET  | `/_admin/api/status`                    | provider 状态（含请求统计）+ route + MCP 信息                     |
+| GET  | `/_admin/api/config`                    | 当前配置（api_key 脱敏为 `"***"`）                                |
+| PUT  | `/_admin/api/config`                    | 更新配置（validate + 写入文件 + 还原 `***` 值）                   |
+| POST | `/_admin/api/restart`                   | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启）             |
+| POST | `/_admin/api/providers/health`          | Provider 探活（调用 fetchModels 测试连通性）                      |
+| GET  | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表）                           |
+| POST | `/_admin/api/config/validate`           | 配置验证（不保存）                                                |
+| GET  | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
+| GET  | `/_admin/api/mcp/detail?name=xxx`       | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态）    |
+| POST | `/_admin/api/mcp/tool-call`             | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时）         |
+| POST | `/_admin/api/mcp/tool-toggle`           | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置）      |
+| GET  | `/_admin/api/logs/stream`               | SSE 实时日志推送                                                  |
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
 - 配置更新：写入前检查文件 hash 防止并发冲突
@@ -792,7 +796,7 @@ type Step struct {
 **前端**（`web/admin/`）：
 
 - Vue 3 + Vite，纯 CSS（无 UI 框架），构建产物 embed 到 Go 二进制
-- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页），每 5s 轮询
+- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；Tokens 卡片展示 prompt/completion 总量，provider 速率列表按 provider 聚合并仅统计 completion（模型输出）token/s；每 5s 轮询
 - ProviderDetail：Provider 基本信息、运行时状态、模型别名、可用模型列表、Health Check 按钮
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
@@ -803,28 +807,28 @@ type Step struct {
 
 ## 实现顺序
 
-| 阶段     | 内容                                                                                                                                                  | 依赖      |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| **P1**   | `config/`、`pkg/protocol/openai/types.go`、`pkg/protocol/openai/responses.go`、`pkg/protocol/sse.go`、`cmd/warden/main.go`、`Makefile`                                       | 无        |
+| 阶段     | 内容                                                                                                                                              | 依赖      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| **P1**   | `config/`、`pkg/protocol/openai/types.go`、`pkg/protocol/openai/responses.go`、`pkg/protocol/sse.go`、`cmd/warden/main.go`、`Makefile`            | 无        |
 | **P2**   | `internal/gateway/gateway.go`、`internal/gateway/http.go`、`internal/gateway/adapter.go`、`internal/gateway/middleware.go`、`internal/app/app.go` | P1        |
-| **P3**   | `internal/mcp/client.go` — MCP client，工具发现和调用                                                                                                 | P1        |
+| **P3**   | `internal/mcp/client.go` — MCP client，工具发现和调用                                                                                             | P1        |
 | **P4**   | `internal/gateway/tool_inject.go`、`internal/gateway/tool_exec.go` — 注入和执行                                                                   | P3        |
-| **P5**   | `internal/gateway/chat.go` — Chat Completions 处理（非流式 + 流式）                                                                                   | P2 + P4   |
-| **P5.5** | `internal/gateway/responses.go` — Responses API 处理（非流式 + 流式）                                                                                 | P2 + P4   |
-| **P6**   | `pkg/protocol/openai/stream.go`、`pkg/protocol/anthropic/` — 协议适配和流式解析器                                                                                       | P5 + P5.5 |
+| **P5**   | `internal/gateway/chat.go` — Chat Completions 处理（非流式 + 流式）                                                                               | P2 + P4   |
+| **P5.5** | `internal/gateway/responses.go` — Responses API 处理（非流式 + 流式）                                                                             | P2 + P4   |
+| **P6**   | `pkg/protocol/openai/stream.go`、`pkg/protocol/anthropic/` — 协议适配和流式解析器                                                                 | P5 + P5.5 |
 
 ## 第三方依赖说明
 
-| 依赖                                  | 用途                                                |
-| ------------------------------------- | --------------------------------------------------- |
-| `github.com/julienschmidt/httprouter` | 轻量级 HTTP 路由，与 contatto 保持一致              |
-| `github.com/sower-proxy/deferlog/v2`  | 函数退出日志，项目规范要求                          |
-| `github.com/sower-proxy/feconf`       | 配置解析管理，项目规范要求                          |
-| `github.com/lmittmann/tint`           | slog 彩色输出                                       |
-| `github.com/mark3labs/mcp-go`         | MCP 协议 Go SDK（避免重新实现 JSON-RPC + MCP 握手） |
+| 依赖                                  | 用途                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------- |
+| `github.com/julienschmidt/httprouter` | 轻量级 HTTP 路由，与 contatto 保持一致                                     |
+| `github.com/sower-proxy/deferlog/v2`  | 函数退出日志，项目规范要求                                                 |
+| `github.com/sower-proxy/feconf`       | 配置解析管理，项目规范要求                                                 |
+| `github.com/lmittmann/tint`           | slog 彩色输出                                                              |
+| `github.com/mark3labs/mcp-go`         | MCP 协议 Go SDK（避免重新实现 JSON-RPC + MCP 握手）                        |
 | `github.com/tidwall/gjson`            | 轻量级只读 JSON 解析，用于路由层字段提取和指纹构建，避免完整结构体反序列化 |
-| `github.com/go-resty/resty/v2`        | HTTP 客户端，用于 HTTPLogger 推送日志，内置重试支持 |
-| `github.com/Masterminds/sprig/v3`     | HTTPLogger 模板函数库，支持自定义日志体渲染         |
+| `github.com/go-resty/resty/v2`        | HTTP 客户端，用于 HTTPLogger 推送日志，内置重试支持                        |
+| `github.com/Masterminds/sprig/v3`     | HTTPLogger 模板函数库，支持自定义日志体渲染                                |
 
 ## 关键设计决策
 
