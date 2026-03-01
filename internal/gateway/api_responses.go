@@ -12,6 +12,7 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -22,8 +23,9 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses", "route", route.Prefix) }()
 
-	// Set route header for metrics middleware
+	// Set headers for metrics middleware
 	w.Header().Set("X-Route", route.Prefix)
+	w.Header().Set("X-Endpoint", "responses")
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
@@ -43,6 +45,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	w.Header().Set("X-Model", model)
 
 	availableTools, _ := g.collectTools(r.Context(), route)
 
@@ -252,7 +255,7 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 			"injected", len(injectedCalls), "client", len(clientCalls))
 
 		callInfos := funcCallsToInfos(injectedCalls)
-		results, err := Execute(r.Context(), callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		results, err := toolexec.Execute(r.Context(), callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Responses: failed to execute tools", "error", err)
 			break
@@ -340,7 +343,7 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Responses stream: executing injected tool calls", "iteration", i+1)
 
-		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		results, err := toolexec.Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Responses stream: failed to execute tools", "error", err)
 			w.Write(rawBody)
@@ -474,7 +477,7 @@ func funcCallsToInfos(calls []openai.FunctionCallItem) []protocol.ToolCallInfo {
 
 // buildResponsesInput builds new input for the next iteration:
 // original input + output items (for reasoning etc.) + function_call_output items.
-func buildResponsesInput(originalInput json.RawMessage, outputItems []json.RawMessage, results []ToolResult) (json.RawMessage, error) {
+func buildResponsesInput(originalInput json.RawMessage, outputItems []json.RawMessage, results []toolexec.ToolResult) (json.RawMessage, error) {
 	var inputItems []json.RawMessage
 
 	if len(originalInput) > 0 && originalInput[0] == '"' {

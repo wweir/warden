@@ -21,6 +21,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/web"
 	"gopkg.in/yaml.v3"
@@ -455,7 +456,7 @@ func (g *Gateway) handleProviderHealth(w http.ResponseWriter, r *http.Request, _
 	}
 
 	start := time.Now()
-	_, rawModels, err := fetchModels(provCfg)
+	_, rawModels, err := sel.FetchModels(provCfg)
 	latency := time.Since(start)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -601,14 +602,14 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		return
 	}
 
-	var providers []ProviderStatus
+	var providers []sel.ProviderStatus
 	for _, provName := range route.Providers {
 		if status := g.selector.ProviderDetail(provName); status != nil {
 			providers = append(providers, *status)
 		}
 	}
 	if providers == nil {
-		providers = []ProviderStatus{}
+		providers = []sel.ProviderStatus{}
 	}
 
 	type mcpToolStatus struct {
@@ -795,6 +796,8 @@ func (g *Gateway) collectMetricsData() map[string]any {
 	type requestStat struct {
 		Route    string `json:"route"`
 		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Endpoint string `json:"endpoint"`
 		Status   string `json:"status"`
 		Value    int    `json:"value"`
 	}
@@ -807,6 +810,10 @@ func (g *Gateway) collectMetricsData() map[string]any {
 				req.Route = l.GetValue()
 			case "provider":
 				req.Provider = l.GetValue()
+			case "model":
+				req.Model = l.GetValue()
+			case "endpoint":
+				req.Endpoint = l.GetValue()
 			case "status":
 				req.Status = l.GetValue()
 			}
@@ -817,6 +824,8 @@ func (g *Gateway) collectMetricsData() map[string]any {
 	type durationBucket struct {
 		Route    string  `json:"route"`
 		Provider string  `json:"provider"`
+		Model    string  `json:"model"`
+		Endpoint string  `json:"endpoint"`
 		Le       float64 `json:"le"`
 		Value    int     `json:"value"`
 	}
@@ -833,6 +842,10 @@ func (g *Gateway) collectMetricsData() map[string]any {
 					db.Route = l.GetValue()
 				case "provider":
 					db.Provider = l.GetValue()
+				case "model":
+					db.Model = l.GetValue()
+				case "endpoint":
+					db.Endpoint = l.GetValue()
 				}
 			}
 			durations = append(durations, db)

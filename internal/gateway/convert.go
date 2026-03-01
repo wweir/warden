@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
@@ -11,7 +12,7 @@ import (
 )
 
 // buildStep creates a reqlog.Step from tool call infos, results, and optional LLM request/response.
-func buildStep(iteration int, calls []protocol.ToolCallInfo, results []ToolResult, llmReq, llmResp json.RawMessage) reqlog.Step {
+func buildStep(iteration int, calls []protocol.ToolCallInfo, results []toolexec.ToolResult, llmReq, llmResp json.RawMessage) reqlog.Step {
 	return reqlog.Step{
 		Iteration:   iteration,
 		ToolCalls:   toToolCallEntries(calls),
@@ -31,7 +32,7 @@ func toToolCallEntries(calls []protocol.ToolCallInfo) []reqlog.ToolCallEntry {
 }
 
 // toToolResultEntries converts ToolResult slice to reqlog.ToolResultEntry slice.
-func toToolResultEntries(results []ToolResult) []reqlog.ToolResultEntry {
+func toToolResultEntries(results []toolexec.ToolResult) []reqlog.ToolResultEntry {
 	entries := make([]reqlog.ToolResultEntry, len(results))
 	for i, r := range results {
 		entries[i] = reqlog.ToolResultEntry{CallID: r.CallID, Output: r.Output, IsError: r.IsError}
@@ -96,7 +97,7 @@ func infosToToolCalls(infos []protocol.ToolCallInfo) []openai.ToolCall {
 }
 
 // toolResultsToMessages converts ToolResult slice to openai.Message slice (role: "tool").
-func toolResultsToMessages(results []ToolResult) []openai.Message {
+func toolResultsToMessages(results []toolexec.ToolResult) []openai.Message {
 	msgs := make([]openai.Message, len(results))
 	for i, r := range results {
 		msgs[i] = openai.Message{

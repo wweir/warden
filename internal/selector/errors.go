@@ -1,13 +1,14 @@
-package gateway
+package selector
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 // UpstreamError represents an HTTP error from the upstream LLM API.
@@ -58,43 +59,51 @@ func (e *UpstreamError) IsRetryable() bool {
 	}
 
 	// parse JSON error body for provider-specific retryable error types
-	return isRetryableByBody(body)
+	return IsRetryableByBody(body)
 }
 
-// isRetryableByBody checks parsed error body for known retryable error patterns.
-func isRetryableByBody(body string) bool {
-	// try Anthropic format: {"type":"error","error":{"type":"...", ...}}
-	var anthropic struct {
-		Error struct {
-			Type string `json:"type"`
-		} `json:"error"`
-	}
-	if json.Unmarshal([]byte(body), &anthropic) == nil && anthropic.Error.Type != "" {
-		switch anthropic.Error.Type {
-		case "overloaded_error", "api_error", "rate_limit_error":
+// IsRetryableByBody checks parsed error body for known retryable error patterns.
+func IsRetryableByBody(body string) bool {
+	errType := gjson.Get(body, "error.type").String()
+	if errType != "" {
+		switch errType {
+		case "overloaded_error", "api_error", "rate_limit_error", "new_api_error",
+			"server_error", "insufficient_quota":
 			return true
 		}
 	}
-
-	// try OpenAI format: {"error":{"type":"...", "code":"..."}}
-	var openai struct {
-		Error struct {
-			Type string `json:"type"`
-			Code string `json:"code"`
-		} `json:"error"`
+	errCode := gjson.Get(body, "error.code").String()
+	switch errCode {
+	case "server_error", "rate_limit", "insufficient_quota", "model_not_found":
+		return true
 	}
-	if json.Unmarshal([]byte(body), &openai) == nil {
-		switch openai.Error.Type {
-		case "server_error", "rate_limit_error", "insufficient_quota":
-			return true
-		}
-		switch openai.Error.Code {
-		case "server_error", "rate_limit", "insufficient_quota", "model_not_found":
-			return true
-		}
-	}
-
 	return false
+}
+
+// ParseErrorBody checks if a response body contains an error object.
+// Returns the error type and message if found, empty strings otherwise.
+// Supports both Anthropic and OpenAI error formats.
+func ParseErrorBody(body string) (errorType, errorMsg string) {
+	body = strings.TrimSpace(body)
+	if body == "" || body[0] != '{' {
+		return "", ""
+	}
+
+	// Anthropic: {"type":"error","error":{"type":"...", "message":"..."}}
+	if gjson.Get(body, "type").String() == "error" {
+		errType := gjson.Get(body, "error.type").String()
+		if errType != "" {
+			return errType, gjson.Get(body, "error.message").String()
+		}
+	}
+
+	// OpenAI: {"error":{"type":"...", "message":"..."}}
+	errType := gjson.Get(body, "error.type").String()
+	if errType != "" {
+		return errType, gjson.Get(body, "error.message").String()
+	}
+
+	return "", ""
 }
 
 // IsRetryableError determines if an error should trigger failover to another provider.

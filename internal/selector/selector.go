@@ -1,36 +1,33 @@
-package gateway
+package selector
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/pkg/protocol/anthropic"
 )
 
 const (
-	// baseSuppressDuration is the initial suppression duration after first failure.
-	baseSuppressDuration = 30 * time.Second
-	// maxConsecutiveFailures caps the exponential backoff at 2^4 * 30s = 480s.
+	baseSuppressDuration   = 30 * time.Second
 	maxConsecutiveFailures = 5
-	// outcomeWindowSize is the number of recent outcomes to keep for sliding window stats.
-	outcomeWindowSize = 1000
-	// maxSuppressReasons is the max number of recent suppress reasons to keep.
-	maxSuppressReasons = 20
-	// suppressReasonTTL is the duration to keep suppress reasons.
-	suppressReasonTTL = time.Hour
+	outcomeWindowSize      = 1000
+	maxSuppressReasons     = 20
+	suppressReasonTTL      = time.Hour
 )
 
-// outcome represents a single request outcome for sliding window statistics.
 type outcome struct {
 	timestamp   time.Time
 	success     bool
 	latencyMs   int64
-	errorSource string // "pre_stream", "in_stream", or "" for non-stream
+	errorSource string
 }
 
 // SuppressReason records the cause and time of a provider suppression event.
@@ -43,23 +40,19 @@ type SuppressReason struct {
 type providerState struct {
 	consecutiveFailures int
 	suppressUntil       time.Time
-	availableModels     map[string]bool   // nil = unknown (fetch failed), don't filter
-	rawModels           []json.RawMessage // raw model objects from GET /models
+	availableModels     map[string]bool
+	rawModels           []json.RawMessage
 
-	// sliding window outcomes (ring buffer)
 	outcomes     []outcome
-	outcomeStart int // index of oldest entry
+	outcomeStart int
 
-	// recent suppress reasons (bounded, TTL-evicted)
 	suppressReasons []SuppressReason
 
-	// error source counters
-	preStreamErrors  int64 // errors before first stream packet
-	inStreamErrors   int64 // errors after first stream packet
-	failoverCount    int64 // number of times this provider triggered a failover
+	preStreamErrors int64
+	inStreamErrors  int64
+	failoverCount   int64
 }
 
-// recordOutcome records an outcome in the sliding window.
 func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource string) {
 	if len(s.outcomes) < outcomeWindowSize {
 		s.outcomes = append(s.outcomes, outcome{
@@ -79,7 +72,6 @@ func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource
 	}
 }
 
-// windowStats returns statistics for the sliding window.
 func (s *providerState) windowStats() (total, success, failure int, avgLatencyMs float64) {
 	total = len(s.outcomes)
 	if total == 0 {
@@ -102,7 +94,7 @@ func (s *providerState) windowStats() (total, success, failure int, avgLatencyMs
 // model matching, and failure suppression.
 type Selector struct {
 	mu     sync.RWMutex
-	states map[string]*providerState // keyed by provider name
+	states map[string]*providerState
 }
 
 // NewSelector creates a new Selector and initializes state for all providers.
@@ -115,19 +107,12 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 }
 
 // Select returns the best provider for the given route and model.
-// Selection priority:
-//  1. Providers order in route config (first = highest precedence), skipping suppressed
-//  2. If all suppressed, return the one whose suppression expires soonest
-//
-// When model is specified, candidates are filtered by availableModels (from GET /models).
-// exclude contains provider names to skip (used for failover after retryable errors).
 func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, model string, exclude ...string) (*config.ProviderConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	now := time.Now()
 
-	// build candidates in route.Providers order (position = priority)
 	type candidate struct {
 		name    string
 		provCfg *config.ProviderConfig
@@ -147,7 +132,6 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 			continue
 		}
 		if model != "" && st.availableModels != nil {
-			// match both real model and aliases
 			if !st.availableModels[model] && provCfg.ModelAliases[model] == "" {
 				continue
 			}
@@ -155,14 +139,12 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 		candidates = append(candidates, candidate{name: provName, provCfg: provCfg, state: st})
 	}
 
-	// first non-suppressed candidate by config order
 	for _, c := range candidates {
 		if now.After(c.state.suppressUntil) {
 			return c.provCfg, nil
 		}
 	}
 
-	// all suppressed — pick the one expiring soonest
 	if len(candidates) > 0 {
 		earliest := candidates[0]
 		for _, c := range candidates[1:] {
@@ -184,14 +166,11 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 }
 
 // RecordOutcome records the result of an upstream request.
-// Only retryable errors (5xx, 429, connection failures) trigger suppression.
-// Client errors (4xx except 429) and successes reset the failure counter.
 func (s *Selector) RecordOutcome(name string, err error, latency time.Duration) {
 	s.RecordOutcomeWithSource(name, err, latency, "")
 }
 
 // RecordOutcomeWithSource records the result of an upstream request with error source tracking.
-// errorSource can be "pre_stream", "in_stream", or "" for non-stream requests.
 func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.Duration, errorSource string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,9 +189,7 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 		return
 	}
 
-	// only suppress on retryable errors
 	if ue, ok := err.(*UpstreamError); ok && !ue.IsRetryable() {
-		// 4xx client errors don't count as success or failure - just don't suppress the provider
 		return
 	}
 
@@ -222,7 +199,6 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 		st.consecutiveFailures = maxConsecutiveFailures
 	}
 
-	// track error source
 	switch errorSource {
 	case "pre_stream":
 		st.preStreamErrors++
@@ -230,11 +206,9 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 		st.inStreamErrors++
 	}
 
-	// exponential backoff: 30s, 60s, 120s, 240s, 480s
 	duration := baseSuppressDuration << (st.consecutiveFailures - 1)
 	st.suppressUntil = time.Now().Add(duration)
 
-	// record suppress reason
 	reason := err.Error()
 	if ue, ok := err.(*UpstreamError); ok {
 		body := ue.Body
@@ -245,7 +219,6 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 	}
 	now := time.Now()
 	cutoff := now.Add(-suppressReasonTTL)
-	// evict expired entries
 	n := 0
 	for _, r := range st.suppressReasons {
 		if r.Time.After(cutoff) {
@@ -254,7 +227,6 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 		}
 	}
 	st.suppressReasons = st.suppressReasons[:n]
-	// append and trim to max
 	st.suppressReasons = append(st.suppressReasons, SuppressReason{Time: now, Reason: reason})
 	if len(st.suppressReasons) > maxSuppressReasons {
 		st.suppressReasons = st.suppressReasons[len(st.suppressReasons)-maxSuppressReasons:]
@@ -278,13 +250,10 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 	slog.Warn("Provider suppressed", attrs...)
 }
 
-// RefreshModels queries GET /models for all providers in parallel
-// and populates availableModels. Failures are logged but non-fatal
-// (availableModels stays nil, meaning no filtering for that provider).
+// RefreshModels queries GET /models for all providers in parallel.
 func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 	var wg sync.WaitGroup
 	for name, provCfg := range cfg.Provider {
-		// use statically configured models if available
 		if len(provCfg.Models) > 0 {
 			models := make(map[string]bool, len(provCfg.Models))
 			rawModels := make([]json.RawMessage, 0, len(provCfg.Models))
@@ -308,7 +277,7 @@ func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 		go func(name string, provCfg *config.ProviderConfig) {
 			defer wg.Done()
 
-			models, rawModels, err := fetchModels(provCfg)
+			models, rawModels, err := FetchModels(provCfg)
 			if err != nil {
 				slog.Warn("Models discovery failed, model filter disabled for this provider; set 'models' in config to suppress",
 					"provider", name, "error", err)
@@ -329,9 +298,7 @@ func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 	wg.Wait()
 }
 
-// Models returns aggregated raw model objects from all providers in the route,
-// deduplicated by model ID. Each model's owned_by field is set to the provider name.
-// Model aliases are included as additional model entries.
+// Models returns aggregated raw model objects from all providers in the route.
 func (s *Selector) Models(cfg *config.ConfigStruct, route *config.RouteConfig) []json.RawMessage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -369,7 +336,6 @@ func (s *Selector) Models(cfg *config.ConfigStruct, route *config.RouteConfig) [
 			result = append(result, out)
 		}
 
-		// add alias models
 		for alias, real := range provCfg.ModelAliases {
 			if seen[alias] {
 				continue
@@ -404,13 +370,11 @@ type ProviderStatus struct {
 	SuccessCount        int64            `json:"success_count"`
 	FailureCount        int64            `json:"failure_count"`
 	AvgLatencyMs        float64          `json:"avg_latency_ms"`
-	// New metrics for stream error tracking
-	PreStreamErrors int64 `json:"pre_stream_errors"` // errors before first stream packet
-	InStreamErrors  int64 `json:"in_stream_errors"`  // errors after first stream packet
-	FailoverCount   int64 `json:"failover_count"`    // times this provider triggered a failover
+	PreStreamErrors     int64            `json:"pre_stream_errors"`
+	InStreamErrors      int64            `json:"in_stream_errors"`
+	FailoverCount       int64            `json:"failover_count"`
 }
 
-// recentSuppressReasons returns suppress reasons within TTL, caller must hold lock.
 func (s *providerState) recentSuppressReasons() []SuppressReason {
 	if len(s.suppressReasons) == 0 {
 		return nil
@@ -425,7 +389,6 @@ func (s *providerState) recentSuppressReasons() []SuppressReason {
 	return result
 }
 
-// buildStatus constructs a ProviderStatus snapshot. Caller must hold at least a read lock.
 func (s *providerState) buildStatus(name string) ProviderStatus {
 	now := time.Now()
 	total, success, failure, avgLatency := s.windowStats()
@@ -497,4 +460,107 @@ func (s *Selector) ProviderModels(name string) []json.RawMessage {
 		return nil
 	}
 	return st.rawModels
+}
+
+// SetAuthHeaders injects authentication headers based on protocol type.
+func SetAuthHeaders(h http.Header, provCfg *config.ProviderConfig) {
+	h.Set("Content-Type", "application/json")
+	apiKey := provCfg.GetAPIKey()
+	if apiKey != "" {
+		switch provCfg.Protocol {
+		case "anthropic":
+			anthropic.SetAuthHeaders(h, apiKey)
+		default:
+			h.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+	for k, v := range provCfg.Headers {
+		h.Set(k, v)
+	}
+}
+
+// modelsResponse is the common format for GET /models across all protocols.
+type modelsResponse struct {
+	Data    []json.RawMessage `json:"data"`
+	HasMore bool              `json:"has_more"`
+	LastID  string            `json:"last_id"`
+}
+
+// FetchModels queries GET <base_url>/models to discover available model IDs.
+func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMessage, error) {
+	client := provCfg.HTTPClient(30 * time.Second)
+	models := make(map[string]bool)
+	var rawModels []json.RawMessage
+	afterID := ""
+
+	for {
+		url := provCfg.URL + protocolModelsEndpoint(provCfg.Protocol)
+		if afterID != "" {
+			url += "?after_id=" + afterID
+		}
+
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create models request: %w", err)
+		}
+		SetAuthHeaders(req.Header, provCfg)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch models: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("read models response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			msg := strings.TrimSpace(string(body))
+			if msg == "" || strings.HasPrefix(msg, "<") {
+				msg = http.StatusText(resp.StatusCode)
+			} else if len(msg) > 200 {
+				msg = msg[:200] + "..."
+			}
+			return nil, nil, fmt.Errorf("fetch models: HTTP %d %s", resp.StatusCode, msg)
+		}
+
+		ct := resp.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "application/json") && len(body) > 0 && body[0] != '{' && body[0] != '[' {
+			return nil, nil, fmt.Errorf("unexpected response Content-Type %q, not JSON", ct)
+		}
+
+		var result modelsResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, nil, fmt.Errorf("parse models response: %w", err)
+		}
+
+		for _, raw := range result.Data {
+			var entry struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &entry); err == nil {
+				models[entry.ID] = true
+			}
+			rawModels = append(rawModels, raw)
+		}
+
+		if !result.HasMore {
+			break
+		}
+		afterID = result.LastID
+	}
+
+	return models, rawModels, nil
+}
+
+// protocolModelsEndpoint returns the models endpoint path for a given protocol.
+func protocolModelsEndpoint(protocol string) string {
+	switch protocol {
+	case "anthropic":
+		return "/v1/models"
+	default:
+		return "/models"
+	}
 }

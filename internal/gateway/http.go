@@ -3,35 +3,16 @@ package gateway
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 )
-
-// setAuthHeaders injects authentication headers based on protocol type.
-// Custom headers from provider config are applied last and override defaults.
-func setAuthHeaders(h http.Header, provCfg *config.ProviderConfig) {
-	h.Set("Content-Type", "application/json")
-	apiKey := provCfg.GetAPIKey()
-	if apiKey != "" {
-		switch provCfg.Protocol {
-		case "anthropic":
-			anthropic.SetAuthHeaders(h, apiKey)
-		default:
-			h.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-	for k, v := range provCfg.Headers {
-		h.Set(k, v)
-	}
-}
 
 // sendRequest sends a raw request body to the upstream endpoint and returns the raw response body.
 func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
@@ -40,7 +21,7 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) (
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	setAuthHeaders(httpReq.Header, provCfg)
+	selector.SetAuthHeaders(httpReq.Header, provCfg)
 
 	client := provCfg.HTTPClient(0)
 	resp, err := client.Do(httpReq)
@@ -80,20 +61,24 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte) (
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+		return nil, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	// detect HTML body on 200 (misconfigured proxy returning HTML instead of JSON)
 	if trimmed := strings.TrimSpace(string(respBody)); len(trimmed) > 0 && (trimmed[0] == '<' || strings.HasPrefix(trimmed, "<!DOCTYPE")) {
-		return nil, &UpstreamError{Code: resp.StatusCode, Body: trimmed}
+		return nil, &selector.UpstreamError{Code: resp.StatusCode, Body: trimmed}
+	}
+
+	// detect error in HTTP 200 response body (some APIs return errors with 200 status)
+	if errType, _ := selector.ParseErrorBody(string(respBody)); errType != "" && selector.IsRetryableByBody(string(respBody)) {
+		return nil, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
 	return respBody, nil
 }
 
 // pipeRawStream sends a raw request body upstream and returns the response bytes
-// after writing them to the client. For Anthropic protocol, the SSE response is
-// converted to OpenAI Chat Completions SSE format before writing.
+// after writing them to the client.
 func pipeRawStream(w http.ResponseWriter, provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
 	rawBody, err := sendRequest(provCfg, endpoint, body)
 	// Always write the response body to the client if it exists
@@ -109,85 +94,4 @@ func pipeRawStream(w http.ResponseWriter, provCfg *config.ProviderConfig, endpoi
 	}
 	// Always return the raw body even if there's an error
 	return rawBody, err
-}
-
-// modelsResponse is the common format for GET /models across all protocols.
-type modelsResponse struct {
-	Data    []json.RawMessage `json:"data"`
-	HasMore bool              `json:"has_more"`
-	LastID  string            `json:"last_id"`
-}
-
-// fetchModels queries GET <base_url>/models to discover available model IDs.
-// Handles Anthropic pagination (has_more + after_id).
-// Returns both a model ID set (for Select filtering) and raw model objects
-// (for aggregated /models endpoint). Returns nil on error (caller should
-// treat nil as "unknown, don't filter").
-func fetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMessage, error) {
-	client := provCfg.HTTPClient(30 * time.Second)
-	models := make(map[string]bool)
-	var rawModels []json.RawMessage
-	afterID := ""
-
-	for {
-		url := provCfg.URL + protocolModelsEndpoint(provCfg.Protocol)
-		if afterID != "" {
-			url += "?after_id=" + afterID
-		}
-
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, nil, fmt.Errorf("create models request: %w", err)
-		}
-		setAuthHeaders(req.Header, provCfg)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, nil, fmt.Errorf("fetch models: %w", err)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("read models response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			msg := strings.TrimSpace(string(body))
-			// discard non-JSON bodies (HTML error pages, etc.)
-			if msg == "" || strings.HasPrefix(msg, "<") {
-				msg = http.StatusText(resp.StatusCode)
-			} else if len(msg) > 200 {
-				msg = msg[:200] + "..."
-			}
-			return nil, nil, fmt.Errorf("fetch models: HTTP %d %s", resp.StatusCode, msg)
-		}
-
-		ct := resp.Header.Get("Content-Type")
-		if !strings.HasPrefix(ct, "application/json") && len(body) > 0 && body[0] != '{' && body[0] != '[' {
-			return nil, nil, fmt.Errorf("unexpected response Content-Type %q, not JSON", ct)
-		}
-
-		var result modelsResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, nil, fmt.Errorf("parse models response: %w", err)
-		}
-
-		for _, raw := range result.Data {
-			var entry struct {
-				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(raw, &entry); err == nil {
-				models[entry.ID] = true
-			}
-			rawModels = append(rawModels, raw)
-		}
-
-		if !result.HasMore {
-			break
-		}
-		afterID = result.LastID
-	}
-
-	return models, rawModels, nil
 }

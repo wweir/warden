@@ -12,6 +12,8 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
+	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -22,8 +24,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	var err error
 	defer func() { deferlog.DebugError(err, "handle chat completion", "route", route.Prefix) }()
 
-	// Set route header for metrics middleware
+	// Set headers for metrics middleware
 	w.Header().Set("X-Route", route.Prefix)
+	w.Header().Set("X-Endpoint", "chat/completions")
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
@@ -43,6 +46,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	w.Header().Set("X-Model", model)
 
 	// collect enabled MCP tools
 	availableTools, injectedTools := g.collectTools(r.Context(), route)
@@ -268,7 +272,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 // tryFailover checks if an error is retryable and selects the next provider.
 // Returns nil if no failover is possible.
 func (g *Gateway) tryFailover(err error, failedName string, excluded *[]string, route *config.RouteConfig, model string) *config.ProviderConfig {
-	if !IsRetryableError(err) {
+	if !sel.IsRetryableError(err) {
 		return nil
 	}
 	*excluded = append(*excluded, failedName)
@@ -286,7 +290,7 @@ func (g *Gateway) tryFailover(err error, failedName string, excluded *[]string, 
 // invalidating cached credentials. Returns true if the caller should continue the loop.
 // retried tracks which providers have already been auth-retried to prevent infinite loops.
 func tryAuthRetry(err error, provCfg *config.ProviderConfig, retried map[string]bool) bool {
-	ue, ok := err.(*UpstreamError)
+	ue, ok := err.(*sel.UpstreamError)
 	if !ok || !ue.IsAuthError() {
 		return false
 	}
@@ -321,7 +325,7 @@ func (g *Gateway) handleToolCalls(ctx context.Context, req openai.ChatCompletion
 			"injected", len(injectedCalls), "client", len(clientCalls))
 
 		callInfos := toolCallsToInfos(injectedCalls)
-		results, err := Execute(ctx, callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		results, err := toolexec.Execute(ctx, callInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Failed to execute tools", "error", err)
 			break
@@ -414,7 +418,7 @@ func (g *Gateway) processStreamToolCalls(w http.ResponseWriter, r *http.Request,
 		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
 		slog.Debug("Stream: executing injected tool calls", "iteration", i+1, "tool_calls", len(injectedInfos))
 
-		results, err := Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		results, err := toolexec.Execute(r.Context(), injectedInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
 		if err != nil {
 			slog.Error("Stream: failed to execute tools", "error", err)
 			if _, writeErr := w.Write(convertStreamIfNeeded(provCfg.Protocol, rawBody)); writeErr != nil {

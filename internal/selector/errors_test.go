@@ -1,4 +1,4 @@
-package gateway
+package selector
 
 import (
 	"context"
@@ -31,8 +31,8 @@ func TestIsRetryableError_UpstreamRetryable(t *testing.T) {
 		{404, true},
 		{403, true},
 		{400, true},
-		{401, false}, // auth error, not retryable
-		{422, false}, // unprocessable entity, not retryable
+		{401, false},
+		{422, false},
 	}
 	for _, c := range cases {
 		err := &UpstreamError{Code: c.code}
@@ -44,13 +44,11 @@ func TestIsRetryableError_UpstreamRetryable(t *testing.T) {
 }
 
 func TestIsRetryableError_NetworkError(t *testing.T) {
-	// net.OpError is retryable
 	opErr := &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("connection refused")}
 	if !IsRetryableError(opErr) {
 		t.Error("IsRetryableError(net.OpError) = false, want true")
 	}
 
-	// DNS error is retryable
 	dnsErr := &net.DNSError{Err: "no such host", Name: "example.com"}
 	if !IsRetryableError(dnsErr) {
 		t.Error("IsRetryableError(net.DNSError) = false, want true")
@@ -58,14 +56,12 @@ func TestIsRetryableError_NetworkError(t *testing.T) {
 }
 
 func TestIsRetryableError_UnknownError(t *testing.T) {
-	// Generic errors are not retryable
 	if IsRetryableError(fmt.Errorf("some random error")) {
 		t.Error("IsRetryableError(generic error) = true, want false")
 	}
 }
 
 func TestIsRetryableError_UpstreamHTMLBody(t *testing.T) {
-	// HTML body on 4xx is retryable (proxy error)
 	err := &UpstreamError{Code: 422, Body: "<html><body>Bad Gateway</body></html>"}
 	if !IsRetryableError(err) {
 		t.Error("IsRetryableError(HTML body 422) = false, want true")
@@ -155,5 +151,52 @@ func TestIsRetryableError_NonRetryable4xx(t *testing.T) {
 		if IsRetryableError(err) {
 			t.Errorf("IsRetryableError(&UpstreamError{Code: %d}) = true, want false", c.code)
 		}
+	}
+}
+
+func TestIsRetryableError_NewAPIError(t *testing.T) {
+	err := &UpstreamError{
+		Code: 200,
+		Body: `{"type":"error","error":{"type":"new_api_error","message":"model overloaded"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(new_api_error) = false, want true")
+	}
+}
+
+func TestParseErrorBody_Anthropic(t *testing.T) {
+	body := `{"type":"error","error":{"type":"new_api_error","message":"model overloaded"}}`
+	errType, errMsg := ParseErrorBody(body)
+	if errType != "new_api_error" {
+		t.Errorf("ParseErrorBody type = %q, want new_api_error", errType)
+	}
+	if errMsg != "model overloaded" {
+		t.Errorf("ParseErrorBody message = %q, want model overloaded", errMsg)
+	}
+}
+
+func TestParseErrorBody_OpenAI(t *testing.T) {
+	body := `{"error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`
+	errType, errMsg := ParseErrorBody(body)
+	if errType != "rate_limit_error" {
+		t.Errorf("ParseErrorBody type = %q, want rate_limit_error", errType)
+	}
+	if errMsg != "Rate limit exceeded" {
+		t.Errorf("ParseErrorBody message = %q, want 'Rate limit exceeded'", errMsg)
+	}
+}
+
+func TestParseErrorBody_NoError(t *testing.T) {
+	body := `{"id":"chatcmpl-123","choices":[],"model":"gpt-4"}`
+	errType, errMsg := ParseErrorBody(body)
+	if errType != "" || errMsg != "" {
+		t.Errorf("ParseErrorBody = (%q, %q), want empty strings", errType, errMsg)
+	}
+}
+
+func TestParseErrorBody_EmptyBody(t *testing.T) {
+	errType, errMsg := ParseErrorBody("")
+	if errType != "" || errMsg != "" {
+		t.Errorf("ParseErrorBody = (%q, %q), want empty strings", errType, errMsg)
 	}
 }

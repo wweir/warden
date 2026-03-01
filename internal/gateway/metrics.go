@@ -15,13 +15,13 @@ import (
 )
 
 var (
-	// requestCounter counts total requests by route, provider, and status.
+	// requestCounter counts total requests by route, provider, model, endpoint, and status.
 	requestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "warden_requests_total",
 			Help: "Total number of requests processed",
 		},
-		[]string{"route", "provider", "status"},
+		[]string{"route", "provider", "model", "endpoint", "status"},
 	)
 
 	// requestDuration tracks request latency distribution.
@@ -31,7 +31,7 @@ var (
 			Help:    "Request latency in milliseconds",
 			Buckets: []float64{50, 100, 250, 500, 1000, 2500, 5000, 10000},
 		},
-		[]string{"route", "provider"},
+		[]string{"route", "provider", "model", "endpoint"},
 	)
 
 	// providerHealth tracks provider consecutive failures.
@@ -123,13 +123,13 @@ func (g *Gateway) MetricsHandler() http.Handler {
 }
 
 // recordRequestMetrics records request metrics.
-func (g *Gateway) recordRequestMetrics(route, provider string, success bool, duration time.Duration) {
+func (g *Gateway) recordRequestMetrics(route, provider, model, endpoint string, success bool, duration time.Duration) {
 	status := "success"
 	if !success {
 		status = "failure"
 	}
-	requestCounter.WithLabelValues(route, provider, status).Inc()
-	requestDuration.WithLabelValues(route, provider).Observe(float64(duration.Milliseconds()))
+	requestCounter.WithLabelValues(route, provider, model, endpoint, status).Inc()
+	requestDuration.WithLabelValues(route, provider, model, endpoint).Observe(float64(duration.Milliseconds()))
 }
 
 // updateProviderMetrics updates provider health metrics.
@@ -249,9 +249,11 @@ func (g *Gateway) promMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Read route/provider from headers set by business handlers
+		// Read route/provider/model/endpoint from headers set by business handlers
 		route := wrapped.Header().Get("X-Route")
 		provider := wrapped.Header().Get("X-Provider")
+		model := wrapped.Header().Get("X-Model")
+		endpoint := wrapped.Header().Get("X-Endpoint")
 		if route == "" {
 			return
 		}
@@ -259,7 +261,7 @@ func (g *Gateway) promMiddleware(next http.Handler) http.Handler {
 		duration := time.Since(start)
 		success := wrapped.StatusCode() < 500
 
-		g.recordRequestMetrics(route, provider, success, duration)
+		g.recordRequestMetrics(route, provider, model, endpoint, success, duration)
 	})
 }
 

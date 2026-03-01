@@ -15,6 +15,7 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
@@ -26,7 +27,8 @@ type Gateway struct {
 	cfg         *config.ConfigStruct
 	configPath  string
 	configHash  string
-	selector    *Selector
+	selector    *sel.Selector
+
 	mcpClients  map[string]*mcp.Client
 	logger      reqlog.Logger
 	broadcaster *reqlog.Broadcaster
@@ -66,7 +68,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		cfg:         cfg,
 		configPath:  configPath,
 		configHash:  configHash,
-		selector:    NewSelector(cfg),
+		selector:    sel.NewSelector(cfg),
 		mcpClients:  mcpClients,
 		broadcaster: reqlog.NewBroadcaster(),
 		ctx:         ctx,
@@ -167,10 +169,25 @@ func (g *Gateway) recordAndBroadcast(r reqlog.Record) {
 
 // --- proxy ---
 
+// isInferenceEndpoint checks if the path is an inference endpoint that should trigger failover.
+// Only chat/completions, responses, and anthropic messages endpoints are considered inference endpoints.
+func isInferenceEndpoint(path string) bool {
+	// OpenAI: /chat/completions, /responses
+	// Anthropic: /messages (but not /messages/count_tokens or other sub-endpoints)
+	if strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses") {
+		return true
+	}
+	if path == "/messages" || strings.HasSuffix(path, "/messages") {
+		return true
+	}
+	return false
+}
+
 // handleProxy transparently forwards non-chat/responses requests.
 func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
-	// Set route header for metrics middleware
+	// Set headers for metrics middleware
 	w.Header().Set("X-Route", route.Prefix)
+	w.Header().Set("X-Endpoint", strings.TrimPrefix(r.URL.Path, "/"))
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
@@ -185,7 +202,9 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 	// extract model from request body for provider selection (best-effort; non-JSON bodies are fine)
 	model := gjson.GetBytes(reqBody, "model").String()
+	w.Header().Set("X-Model", model)
 
+	var excluded []string
 	authRetried := map[string]bool{}
 	provCfg, err := g.selector.Select(g.cfg, route, model)
 	if err != nil {
@@ -195,6 +214,8 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 	// Set provider header for metrics middleware
 	w.Header().Set("X-Provider", provCfg.Name)
+
+	allowFailover := isInferenceEndpoint(r.URL.Path)
 
 	for {
 		logRequest(r, provCfg.Name, model)
@@ -214,28 +235,49 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		}
 		proxyReq.Header = r.Header.Clone()
 		proxyReq.Header.Del("Accept-Encoding")
-		setAuthHeaders(proxyReq.Header, provCfg)
+		sel.SetAuthHeaders(proxyReq.Header, provCfg)
 
 		upstreamStart := time.Now()
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
+		latency := time.Since(upstreamStart)
 		if err != nil {
-			// Network errors indicate the provider is unreachable; record for health tracking.
-			g.selector.RecordOutcome(provCfg.Name, err, time.Since(upstreamStart))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			g.selector.RecordOutcome(provCfg.Name, err, latency)
+			// Only failover for inference endpoints
+			if allowFailover {
+				if next := g.tryFailover(err, provCfg.Name, &excluded, route, model); next != nil {
+					provCfg = next
+					continue
+				}
+			}
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		// check for upstream errors (non-200 or error in 200 body)
+		var upErr *sel.UpstreamError
 		if resp.StatusCode != http.StatusOK {
-			upErr := &UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
-			// Non-inference endpoints (e.g. count_tokens, embeddings) may return errors
-			// that are unrelated to the provider's ability to serve inference requests.
-			// Do not record HTTP errors here to avoid triggering false failover.
+			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+		} else if errType, _ := sel.ParseErrorBody(string(respBody)); errType != "" && sel.IsRetryableByBody(string(respBody)) {
+			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+		}
+
+		if upErr != nil {
+			g.selector.RecordOutcome(provCfg.Name, upErr, latency)
 			if tryAuthRetry(upErr, provCfg, authRetried) {
 				continue
 			}
+			// Only failover for inference endpoints
+			if allowFailover {
+				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, model); next != nil {
+					provCfg = next
+					continue
+				}
+			}
+		} else {
+			g.selector.RecordOutcome(provCfg.Name, nil, latency)
 		}
 
 		maps.Copy(w.Header(), resp.Header)
@@ -253,7 +295,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			g.RecordTokenMetrics(provCfg.Name, model, usage, durationMs)
 		}
 
-		g.recordAndBroadcast(reqlog.Record{
+		rec := reqlog.Record{
 			Timestamp:   startTime,
 			RequestID:   reqID,
 			Route:       route.Prefix,
@@ -265,7 +307,11 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			Fingerprint: reqlog.BuildFingerprint(reqBody),
 			Request:     reqBody,
 			Response:    logResp,
-		})
+		}
+		if upErr != nil {
+			rec.Error = upErr.Error()
+		}
+		g.recordAndBroadcast(rec)
 		return
 	}
 }
@@ -329,8 +375,7 @@ func (g *Gateway) collectTools(_ context.Context, route *config.RouteConfig) ([]
 
 // handleModels returns an aggregated list of models from all providers in the route.
 func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request, route *config.RouteConfig) {
-	// Set route header for metrics middleware
-	w.Header().Set("X-Route", route.Prefix)
+	// Don't set metrics headers - this is a metadata endpoint, not a business request
 
 	models := g.selector.Models(g.cfg, route)
 	if models == nil {
