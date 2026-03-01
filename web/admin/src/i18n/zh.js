@@ -47,6 +47,7 @@ export default {
     failureLabel: '失败',
     latency: '延迟',
     topRoutes: '热门路由',
+    topModels: '热门模型',
     tokens: 'Tokens',
     prompt: '输入',
     completion: '输出',
@@ -69,6 +70,9 @@ export default {
     providers: '供应商',
     tools: '工具',
     noMatch: '没有匹配 "{query}" 的路由',
+    activeProviders: '活跃供应商',
+    topModels: '热门模型',
+    topEndpoints: '热门路径',
   },
   providers: {
     title: '供应商',

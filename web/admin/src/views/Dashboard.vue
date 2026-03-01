@@ -33,14 +33,7 @@
             <span :class="successRate >= 99 ? 'text-success' : successRate >= 90 ? 'text-warning' : 'text-error'">
               {{ successRate.toFixed(1) }}% {{ $t('dashboard.success') }}
             </span>
-          </div>
-        </div>
-
-        <div class="stat-card" v-if="providerStats.failoverCount > 0 || providerStats.preStreamErrors > 0 || providerStats.inStreamErrors > 0">
-          <div class="stat-value text-warning">{{ fmtNum(providerStats.failoverCount + providerStats.preStreamErrors + providerStats.inStreamErrors) }}</div>
-          <div class="stat-label">{{ $t('dashboard.errorEvents') }}</div>
-          <div class="stat-sub">
-            <template v-if="providerStats.failoverCount > 0"><span class="text-warning">{{ providerStats.failoverCount }} {{ $t('dashboard.failover', providerStats.failoverCount) }}</span></template>
+            <template v-if="providerStats.failoverCount > 0"> · <span class="text-warning">{{ providerStats.failoverCount }} {{ $t('dashboard.failover', providerStats.failoverCount) }}</span></template>
             <template v-if="providerStats.preStreamErrors > 0"> · <span class="text-error">{{ providerStats.preStreamErrors }} {{ $t('dashboard.preStream') }}</span></template>
             <template v-if="providerStats.inStreamErrors > 0"> · <span class="text-error">{{ providerStats.inStreamErrors }} {{ $t('dashboard.inStream') }}</span></template>
           </div>
@@ -100,12 +93,28 @@
             <span class="metric-count">{{ topRoutes.length }}</span>
           </div>
           <div class="top-routes">
-            <div v-for="r in topRoutes" :key="r.route" class="route-mini">
-              <div class="route-mini-name">{{ r.route }}</div>
+            <div v-for="r in topRoutes" :key="r.key" class="route-mini">
+              <div class="route-mini-name">{{ r.route }}<span class="route-mini-provider"> · {{ r.provider }}</span></div>
               <div class="route-mini-bar"><div class="route-mini-fill" :style="{ width: r.percent + '%' }"></div></div>
               <div class="route-mini-count">{{ fmtNum(r.count) }}</div>
             </div>
             <div v-if="topRoutes.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
+          </div>
+        </div>
+
+        <!-- Top Models -->
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">{{ $t('dashboard.topModels') }}</span>
+            <span class="metric-count">{{ topModels.length }}</span>
+          </div>
+          <div class="top-routes">
+            <div v-for="m in topModels" :key="m.key" class="route-mini">
+              <div class="route-mini-name">{{ m.model }}<span class="route-mini-provider"> · {{ m.provider }}</span></div>
+              <div class="route-mini-bar"><div class="route-mini-fill" :style="{ width: m.percent + '%' }"></div></div>
+              <div class="route-mini-count">{{ fmtNum(m.count) }}</div>
+            </div>
+            <div v-if="topModels.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
           </div>
         </div>
 
@@ -338,26 +347,50 @@ const avgLatency = computed(() => {
 const topRoutes = computed(() => {
   if (!metricsData.value?.requests_total?.length) return []
 
-  // Aggregate by route
-  const routeCounts = {}
+  // Aggregate by route+provider
+  const counts = {}
   for (const item of metricsData.value.requests_total) {
-    if (!routeCounts[item.route]) routeCounts[item.route] = 0
-    routeCounts[item.route] += item.value
+    const key = `${item.route}\0${item.provider}`
+    if (!counts[key]) counts[key] = { route: item.route, provider: item.provider, count: 0 }
+    counts[key].count += item.value
   }
 
-  // Convert to array and sort
-  const routes = Object.entries(routeCounts)
-    .map(([route, count]) => ({ route, count }))
-    .sort((a, b) => b.count - a.count)
+  const routes = Object.values(counts)
+    .sort((a, b) => b.count - a.count || `${a.route}\0${a.provider}`.localeCompare(`${b.route}\0${b.provider}`))
     .slice(0, 5)
 
-  // Calculate percentages
   const maxCount = routes[0]?.count || 1
   for (const r of routes) {
+    r.key = `${r.route}\0${r.provider}`
     r.percent = (r.count / maxCount) * 100
   }
 
   return routes
+})
+
+const topModels = computed(() => {
+  if (!metricsData.value?.requests_total?.length) return []
+
+  // Aggregate by model+provider from requests_total
+  const counts = {}
+  for (const item of metricsData.value.requests_total) {
+    const model = item.model || 'unknown'
+    const key = `${model}\0${item.provider}`
+    if (!counts[key]) counts[key] = { model, provider: item.provider, count: 0 }
+    counts[key].count += item.value
+  }
+
+  const models = Object.values(counts)
+    .sort((a, b) => b.count - a.count || `${a.model}\0${a.provider}`.localeCompare(`${b.model}\0${b.provider}`))
+    .slice(0, 5)
+
+  const maxCount = models[0]?.count || 1
+  for (const m of models) {
+    m.key = `${m.model}\0${m.provider}`
+    m.percent = (m.count / maxCount) * 100
+  }
+
+  return models
 })
 
 // Token metrics computed properties
@@ -557,7 +590,7 @@ a.stat-card:hover {
 /* Unified Metrics Section */
 .metrics-section {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
   margin-top: 16px;
 }
@@ -679,6 +712,7 @@ a.stat-card:hover {
   transition: width 0.5s ease;
 }
 .route-mini-count { color: var(--c-text-3); text-align: right; }
+.route-mini-provider { color: var(--c-text-3); font-size: 11px; }
 .empty-mini { text-align: center; padding: 16px; color: var(--c-text-3); font-size: 12px; }
 
 /* Token inline */
@@ -699,7 +733,7 @@ a.stat-card:hover {
 .rate-value { color: var(--c-text-3); font-family: monospace; }
 
 @media (max-width: 1024px) {
-  .metrics-section { grid-template-columns: repeat(2, 1fr); }
+  .metrics-section { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 480px) {
   .metrics-section { grid-template-columns: 1fr; }

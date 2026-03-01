@@ -47,6 +47,7 @@ export default {
     failureLabel: 'Failure',
     latency: 'Latency',
     topRoutes: 'Top Routes',
+    topModels: 'Top Models',
     tokens: 'Tokens',
     prompt: 'Prompt',
     completion: 'Completion',
@@ -69,6 +70,9 @@ export default {
     providers: 'Providers',
     tools: 'Tools',
     noMatch: 'No routes match "{query}"',
+    activeProviders: 'Active Providers',
+    topModels: 'Top Models',
+    topEndpoints: 'Top Endpoints',
   },
   providers: {
     title: 'Providers',
