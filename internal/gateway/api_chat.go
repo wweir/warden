@@ -463,7 +463,7 @@ func (g *Gateway) forwardNonStreamRequest(_ context.Context, provCfg *config.Pro
 		return resp, nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	body, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
+	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
 	if err != nil {
 		return resp, nil, err
 	}
@@ -491,5 +491,6 @@ func sendUpstreamChatRaw(provCfg *config.ProviderConfig, req openai.ChatCompleti
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	return sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
+	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
+	return body, err
 }
