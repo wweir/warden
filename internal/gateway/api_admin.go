@@ -21,8 +21,8 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
-	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/reqlog"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/web"
 	"gopkg.in/yaml.v3"
 )
@@ -48,7 +48,7 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 		if brErr == nil {
 			w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(name)))
 			w.Header().Set("Vary", "Accept-Encoding")
-			if strings.Contains(r.Header.Get("Accept-Encoding"), "br") {
+			if selectAcceptedEncoding(r.Header.Get("Accept-Encoding"), []string{"br"}) == "br" {
 				w.Header().Set("Content-Encoding", "br")
 				w.Write(brData)
 				return
@@ -497,14 +497,14 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":           name,
-		"url":            provCfg.URL,
-		"protocol":       provCfg.Protocol,
-		"timeout":        provCfg.Timeout,
-		"has_api_key":    provCfg.APIKey.Value() != "",
-		"model_aliases":  provCfg.ModelAliases,
-		"models":         models,
-		"status":         status,
+		"name":          name,
+		"url":           provCfg.URL,
+		"protocol":      provCfg.Protocol,
+		"timeout":       provCfg.Timeout,
+		"has_api_key":   provCfg.APIKey.Value() != "",
+		"model_aliases": provCfg.ModelAliases,
+		"models":        models,
+		"status":        status,
 	})
 }
 

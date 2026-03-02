@@ -15,19 +15,19 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
-	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // Gateway is the core AI Gateway component.
 type Gateway struct {
-	cfg         *config.ConfigStruct
-	configPath  string
-	configHash  string
-	selector    *sel.Selector
+	cfg        *config.ConfigStruct
+	configPath string
+	configHash string
+	selector   *sel.Selector
 
 	mcpClients  map[string]*mcp.Client
 	logger      reqlog.Logger
@@ -234,7 +234,11 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			return
 		}
 		proxyReq.Header = r.Header.Clone()
-		proxyReq.Header.Del("Accept-Encoding")
+		if ae := negotiateProxyAcceptEncoding(r.Header.Get("Accept-Encoding"), allowFailover); ae != "" {
+			proxyReq.Header.Set("Accept-Encoding", ae)
+		} else {
+			proxyReq.Header.Del("Accept-Encoding")
+		}
 		sel.SetAuthHeaders(proxyReq.Header, provCfg)
 
 		upstreamStart := time.Now()
@@ -258,13 +262,21 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		contentEncoding := normalizeContentEncoding(resp.Header.Get("Content-Encoding"))
+		inspectableBody := isInspectableResponseBody(contentEncoding)
+		errBody := string(respBody)
+		if !inspectableBody {
+			errBody = compressedBodyPlaceholder(contentEncoding, len(respBody))
+		}
 
 		// check for upstream errors (non-200 or error in 200 body)
 		var upErr *sel.UpstreamError
 		if resp.StatusCode != http.StatusOK {
-			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
-		} else if errType, _ := sel.ParseErrorBody(string(respBody)); errType != "" && sel.IsRetryableByBody(string(respBody)) {
-			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: errBody}
+		} else if inspectableBody {
+			if errType, _ := sel.ParseErrorBody(string(respBody)); errType != "" && sel.IsRetryableByBody(string(respBody)) {
+				upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+			}
 		}
 
 		if upErr != nil {
@@ -293,10 +305,13 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		}
 
 		durationMs := time.Since(startTime).Milliseconds()
-		logResp := assembleProxyResponse(provCfg.Protocol, respBody)
+		logResp := []byte(errBody)
+		if inspectableBody {
+			logResp = assembleProxyResponse(provCfg.Protocol, respBody)
+		}
 
 		// Extract token usage for metrics (only for LLM responses)
-		if resp.StatusCode == http.StatusOK && len(logResp) > 0 {
+		if resp.StatusCode == http.StatusOK && inspectableBody && len(logResp) > 0 {
 			usage := ExtractTokenUsage(logResp)
 			g.RecordTokenMetrics(provCfg.Name, model, usage, durationMs)
 		}

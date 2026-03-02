@@ -155,7 +155,7 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 - `NewGateway()` 初始化时启动所有 MCP 客户端，创建 Selector，注册路由，组装中间件链
 - `selectProvider()` 委托到 `selector.Select`，支持 providers order + model match + 失败抑制
 - `recordOutcome()` 辅助函数，用于调用后结果记录
-- `handleProxy()` 对非 chat/responses 请求透明转发：clone headers + 注入认证 + pipe body。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
+- `handleProxy()` 对非 chat/responses 请求透明转发：clone headers + 注入认证 + pipe body。该路径会基于客户端 `Accept-Encoding` 协商上游压缩（推理端点优先 `zstd`，其次 `br/gzip`），并在上游返回压缩响应时跳过 body 级错误解析与 token 统计，避免把二进制压缩体当作 JSON 解析。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
 - `Close()` 优雅关闭所有 MCP 客户端
 
 **删除的旧实现：** 不再使用 `checkProvider()` 进行 HTTP HEAD 健康检查（过于频繁且浪费），改为被动健康感知。
@@ -789,6 +789,7 @@ type Step struct {
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
 - 配置更新：写入前检查文件 hash 防止并发冲突
+- 静态资源压缩：优先读取 `*.br` 预压缩文件，并按 `Accept-Encoding` 严格协商；不支持 `br` 的客户端回退为服务端即时解压后返回
 
 **实时日志广播器**（`internal/reqlog/broadcast.go`）：
 
