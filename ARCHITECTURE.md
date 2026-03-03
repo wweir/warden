@@ -89,7 +89,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 2. **手动抑制**：管理员可通过 Admin API 或管理面板手动抑制某个 provider，被手动抑制的 provider 会被完全跳过，不参与选择。手动抑制是运行时生效的，重启后重置。
 
-3. **全部被抑制时的兜底**：如果所有 provider 都被抑制（`suppressUntil > now`），则返回抑制期最早结束的那个，以保证服务可用。注意：手动抑制的 provider 不参与此兜底逻辑。
+3. **全部被抑制时的兜底**：如果所有 provider 都被抑制（`suppressUntil > now`），则返回抑制期最早结束的那个，以保证服务可用。注意：手动抑制的 provider 不参与此兜底逻辑；若候选集中只剩手动抑制 provider，则直接返回 `ErrProviderNotFound`，Failover 会停止而不会切回手动抑制节点。
 
 #### 失败抑制机制
 
@@ -819,7 +819,7 @@ type Step struct {
 - McpToolDetail：工具详情（名称、描述、input schema）、enabled/disabled toggle 开关（运行时生效）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
 - ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply）
 - Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
-- Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停
+- Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停；会话分组采用“指纹优先 + 回退哈希”策略：优先按 `model + sys_hash + FSM 严格前缀` 连续性聚合，无指纹时回退到“用户消息 hash + 10 分钟时间窗”启发式；前端在 `Logs.vue` 内对 request 解析、preview、user-hash、fingerprint、timestamp 使用 per-log WeakMap 缓存，并按 `(model, sys_hash)` 与 `lastUserHash` 建立候选链索引，减少重复解析与全量回扫开销。
 
 ## 实现顺序
 
