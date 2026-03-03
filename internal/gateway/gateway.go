@@ -231,17 +231,12 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			targetURL += "?" + r.URL.RawQuery
 		}
 
-		proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(provReqBody))
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(provReqBody))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		proxyReq.Header = r.Header.Clone()
-		if ae := negotiateProxyAcceptEncoding(r.Header.Get("Accept-Encoding"), allowFailover); ae != "" {
-			proxyReq.Header.Set("Accept-Encoding", ae)
-		} else {
-			proxyReq.Header.Del("Accept-Encoding")
-		}
+		proxyReq.Header = buildProxyRequestHeaders(r, allowFailover)
 		sel.SetAuthHeaders(proxyReq.Header, provCfg)
 
 		upstreamStart := time.Now()
