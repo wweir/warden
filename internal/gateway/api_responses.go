@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,8 @@ import (
 func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses", "route", route.Prefix) }()
+
+	r = r.WithContext(withClientRequest(r.Context(), r))
 
 	// Set headers for metrics middleware
 	w.Header().Set("X-Route", route.Prefix)
@@ -109,7 +112,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			provReqBody := prepareRawBody(rawReqBody, provCfg, model)
 			endpoint := protocolEndpoint(provCfg.Protocol, true)
 
-			respBody, latency, err := sendRequest(provCfg, endpoint, provReqBody, stream)
+			respBody, latency, err := sendRequest(r.Context(), provCfg, endpoint, provReqBody, stream)
 			if err != nil {
 				g.selector.RecordOutcome(provCfg.Name, err, latency)
 				if tryAuthRetry(err, provCfg, authRetried) {
@@ -164,7 +167,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		for {
 			logRequest(r, provCfg.Name, origModel)
 
-			firstResp, latency, firstErr := sendResponsesRawRequest(provCfg, req)
+			firstResp, latency, firstErr := sendResponsesRawRequest(r.Context(), provCfg, req)
 			if firstErr != nil {
 				g.selector.RecordOutcomeWithSource(provCfg.Name, firstErr, latency, "pre_stream")
 				g.RecordStreamErrorMetric(provCfg.Name, "pre_stream")
@@ -205,7 +208,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	for {
 		logRequest(r, provCfg.Name, origModel)
 
-		resp, respBody, latency, err := g.forwardResponsesRequest(provCfg, req)
+		resp, respBody, latency, err := g.forwardResponsesRequest(r.Context(), provCfg, req)
 		if err != nil {
 			g.selector.RecordOutcome(provCfg.Name, err, latency)
 			if tryAuthRetry(err, provCfg, authRetried) {
@@ -283,7 +286,7 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 
 		// mixed tool call: interrupt and let client handle its tools
 		if len(clientCalls) > 0 {
-			newResp, llmRespBody, _, err := g.forwardResponsesRequest(provCfg, req)
+			newResp, llmRespBody, _, err := g.forwardResponsesRequest(r.Context(), provCfg, req)
 			if err != nil {
 				slog.Error("Responses: failed to forward after mixed tool execution", "error", err)
 				steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
@@ -294,7 +297,7 @@ func (g *Gateway) handleResponsesToolCalls(r *http.Request, provCfg *config.Prov
 			break
 		}
 
-		newResp, llmRespBody, _, err := g.forwardResponsesRequest(provCfg, req)
+		newResp, llmRespBody, _, err := g.forwardResponsesRequest(r.Context(), provCfg, req)
 		if err != nil {
 			slog.Error("Responses: failed to forward after tool execution", "error", err, "iteration", i+1)
 			steps = append(steps, buildStep(i+1, allInfos, results, llmReqBody, nil))
@@ -333,7 +336,7 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 	for i := range maxToolCallIterations {
 		if i > 0 {
 			var err error
-			rawBody, _, err = sendResponsesRawRequest(provCfg, req)
+			rawBody, _, err = sendResponsesRawRequest(r.Context(), provCfg, req)
 			if err != nil {
 				return nil, steps, err
 			}
@@ -389,12 +392,12 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 		removePreviousResponseID(&req)
 
 		if len(clientInfos) > 0 {
-			respBody, err := g.pipeResponsesStream(w, provCfg, req)
+			respBody, err := g.pipeResponsesStream(r.Context(), w, provCfg, req)
 			return respBody, steps, err
 		}
 	}
 
-	respBody, err := g.pipeResponsesStream(w, provCfg, req)
+	respBody, err := g.pipeResponsesStream(r.Context(), w, provCfg, req)
 	return respBody, steps, err
 }
 
@@ -402,7 +405,7 @@ func (g *Gateway) processResponsesStreamToolCalls(w http.ResponseWriter, r *http
 
 // forwardResponsesRequest sends a non-streaming Responses API request upstream.
 // Returns parsed response, raw body bytes, and first-token latency for passthrough optimization.
-func (g *Gateway) forwardResponsesRequest(provCfg *config.ProviderConfig, req openai.ResponsesRequest) (openai.ResponsesResponse, []byte, time.Duration, error) {
+func (g *Gateway) forwardResponsesRequest(ctx context.Context, provCfg *config.ProviderConfig, req openai.ResponsesRequest) (openai.ResponsesResponse, []byte, time.Duration, error) {
 	var resp openai.ResponsesResponse
 
 	reqBody, err := json.Marshal(req)
@@ -410,7 +413,7 @@ func (g *Gateway) forwardResponsesRequest(provCfg *config.ProviderConfig, req op
 		return resp, nil, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
-	body, latency, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody, false)
+	body, latency, err := sendRequest(ctx, provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody, false)
 	if err != nil {
 		return resp, nil, latency, err
 	}
@@ -422,20 +425,20 @@ func (g *Gateway) forwardResponsesRequest(provCfg *config.ProviderConfig, req op
 	return resp, body, latency, nil
 }
 
-func sendResponsesRawRequest(provCfg *config.ProviderConfig, req openai.ResponsesRequest) ([]byte, time.Duration, error) {
+func sendResponsesRawRequest(ctx context.Context, provCfg *config.ProviderConfig, req openai.ResponsesRequest) ([]byte, time.Duration, error) {
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal request: %w", err)
 	}
-	return sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody, true)
+	return sendRequest(ctx, provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody, true)
 }
 
-func (g *Gateway) pipeResponsesStream(w http.ResponseWriter, provCfg *config.ProviderConfig, req openai.ResponsesRequest) ([]byte, error) {
+func (g *Gateway) pipeResponsesStream(ctx context.Context, w http.ResponseWriter, provCfg *config.ProviderConfig, req openai.ResponsesRequest) ([]byte, error) {
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	return pipeRawStream(w, provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
+	return pipeRawStream(ctx, w, provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
 }
 
 // --- responses helpers ---

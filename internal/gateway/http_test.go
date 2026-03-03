@@ -1,0 +1,107 @@
+package gateway
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/sower-proxy/deferlog/v2"
+	"github.com/wweir/warden/config"
+)
+
+func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
+	t.Parallel()
+
+	const (
+		wantUserAgent   = "curl/8.7.1"
+		wantTraceID     = "trace-123"
+		wantForwardedIP = "10.10.1.23"
+	)
+	var gotHeaders http.Header
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   deferlog.Secret("provider-token"),
+	}
+
+	clientReq := httptest.NewRequest(http.MethodPost, "http://gateway.local/openai/chat/completions", nil)
+	clientReq.Header.Set("User-Agent", wantUserAgent)
+	clientReq.Header.Set("X-Trace-Id", wantTraceID)
+	clientReq.Header.Set("Authorization", "Bearer client-token")
+	clientReq.Header.Set("Cookie", "sid=abc")
+	clientReq.Header.Set("Forwarded", "for=1.2.3.4;proto=https")
+	clientReq.Header.Set("X-Forwarded-For", "1.2.3.4")
+	clientReq.Header.Set("Accept-Encoding", "zstd, br, gzip")
+	clientReq.RemoteAddr = wantForwardedIP + ":53001"
+	clientReq.Host = "gateway.local:8080"
+
+	ctx := withClientRequest(context.Background(), clientReq)
+
+	_, _, err := sendRequest(ctx, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	if err != nil {
+		t.Fatalf("sendRequest() error = %v", err)
+	}
+
+	if gotHeaders.Get("User-Agent") != wantUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", gotHeaders.Get("User-Agent"), wantUserAgent)
+	}
+	if gotHeaders.Get("X-Trace-Id") != wantTraceID {
+		t.Fatalf("X-Trace-Id = %q, want %q", gotHeaders.Get("X-Trace-Id"), wantTraceID)
+	}
+	if gotHeaders.Get("Authorization") != "Bearer provider-token" {
+		t.Fatalf("Authorization = %q", gotHeaders.Get("Authorization"))
+	}
+	if gotHeaders.Get("X-Forwarded-For") != wantForwardedIP {
+		t.Fatalf("X-Forwarded-For = %q, want %q", gotHeaders.Get("X-Forwarded-For"), wantForwardedIP)
+	}
+	if gotHeaders.Get("X-Forwarded-Host") != "gateway.local:8080" {
+		t.Fatalf("X-Forwarded-Host = %q", gotHeaders.Get("X-Forwarded-Host"))
+	}
+	if gotHeaders.Get("Cookie") != "" {
+		t.Fatalf("Cookie should be removed, got %q", gotHeaders.Get("Cookie"))
+	}
+	if gotHeaders.Get("Forwarded") != "" {
+		t.Fatalf("Forwarded should be removed, got %q", gotHeaders.Get("Forwarded"))
+	}
+	if strings.Contains(gotHeaders.Get("Accept-Encoding"), "zstd") || strings.Contains(gotHeaders.Get("Accept-Encoding"), "br") {
+		t.Fatalf("Accept-Encoding should not forward zstd/br, got %q", gotHeaders.Get("Accept-Encoding"))
+	}
+}
+
+func TestSendRequestWithoutClientRequestContext(t *testing.T) {
+	t.Parallel()
+
+	var gotAuthorization string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   deferlog.Secret("provider-token"),
+	}
+
+	_, _, err := sendRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	if err != nil {
+		t.Fatalf("sendRequest() error = %v", err)
+	}
+
+	if gotAuthorization != "Bearer provider-token" {
+		t.Fatalf("Authorization = %q", gotAuthorization)
+	}
+}

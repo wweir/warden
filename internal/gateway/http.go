@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,10 +26,21 @@ const firstTokenTimeout = 30 * time.Second
 // along with the first-token latency (time from request start to receiving response headers).
 // For streaming requests, a fixed 30s first-token timeout is used; for non-streaming, the provider's
 // configured timeout applies.
-func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte, isStreaming bool) ([]byte, time.Duration, error) {
-	httpReq, err := http.NewRequest(http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
+func sendRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint string, body []byte, isStreaming bool) ([]byte, time.Duration, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+
+	if clientReq, ok := clientRequestFromContext(ctx); ok {
+		httpReq.Header = buildForwardedRequestHeaders(clientReq)
+		// This path parses upstream payloads as JSON/SSE.
+		// Keep net/http default gzip handling instead of forwarding client compression preferences.
+		httpReq.Header.Del("Accept-Encoding")
 	}
 
 	selector.SetAuthHeaders(httpReq.Header, provCfg)
@@ -98,8 +110,8 @@ func sendRequest(provCfg *config.ProviderConfig, endpoint string, body []byte, i
 
 // pipeRawStream sends a raw request body upstream and returns the response bytes
 // after writing them to the client. Uses streaming timeout (30s first-token).
-func pipeRawStream(w http.ResponseWriter, provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
-	rawBody, _, err := sendRequest(provCfg, endpoint, body, true)
+func pipeRawStream(ctx context.Context, w http.ResponseWriter, provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
+	rawBody, _, err := sendRequest(ctx, provCfg, endpoint, body, true)
 	// Always write the response body to the client if it exists
 	if rawBody != nil {
 		clientBody := rawBody
