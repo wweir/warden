@@ -255,6 +255,15 @@
               <label>timeout</label>
               <input v-model="cfg.timeout" class="form-input" placeholder="60s" />
 
+              <!-- chat_to_responses: only for openai protocol -->
+              <template v-if="cfg.protocol === 'openai'">
+                <label>chat_to_responses</label>
+                <div class="form-hint-row">
+                  <input type="checkbox" v-model="cfg.chat_to_responses" class="form-checkbox" />
+                  <span class="hint">{{ $t('config.chatToResponsesHint') }}</span>
+                </div>
+              </template>
+
               <!-- headers: for openai/anthropic/ollama only -->
               <template v-if="!['qwen','copilot'].includes(cfg.protocol || 'openai')">
                 <label>headers</label>
@@ -821,6 +830,19 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
   font-family: var(--font-mono);
   font-size: 12px;
   box-sizing: border-box;
+}
+
+.form-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.form-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 @media (max-width: 768px) {

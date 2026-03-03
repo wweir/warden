@@ -60,6 +60,14 @@ export function healthCheck(name) {
   })
 }
 
+export function setProviderSuppress(name, suppress) {
+  return apiJSON('/_admin/api/providers/suppress', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, suppress }),
+  })
+}
+
 export function fetchProviderDetail(name) {
   return apiJSON(`/_admin/api/providers/detail?name=${encodeURIComponent(name)}`)
 }
@@ -111,10 +119,14 @@ export async function fetchRouteModels(prefix) {
   }
 }
 
-export function sendRouteRequest(prefix, endpoint, body) {
+export function sendRouteRequest(prefix, endpoint, body, provider = '') {
+  const headers = { 'Content-Type': 'application/json' }
+  if (provider) {
+    headers['X-Provider'] = provider
+  }
   return fetch(`${prefix}/${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   })
 }

@@ -32,7 +32,8 @@
             <span v-if="p.pre_stream_errors > 0" class="stat-badge error">{{ $t('providers.preStreamErrors', { n: p.pre_stream_errors }) }}</span>
             <span v-if="p.in_stream_errors > 0" class="stat-badge error">{{ $t('providers.inStreamErrors', { n: p.in_stream_errors }) }}</span>
           </div>
-          <div v-if="p.suppressed" class="text-error">{{ $t('common.suppressed') }} {{ $t('providers.suppressedUntil', { time: formatTime(p.suppress_until) }) }}</div>
+          <div v-if="p.manual_suppressed" class="text-error">{{ $t('providers.manuallySuppressed') }}</div>
+          <div v-else-if="p.suppressed" class="text-error">{{ $t('common.suppressed') }} {{ $t('providers.suppressedUntil', { time: formatTime(p.suppress_until) }) }}</div>
           <div class="card-actions">
             <button class="btn btn-secondary btn-sm" @click.stop="ping(p.name)">
               {{ pinging[p.name] ? '...' : $t('providers.ping') }}
@@ -42,6 +43,16 @@
                 ? pingResults[p.name].latency_ms + 'ms'
                 : pingResults[p.name].error }}
             </span>
+            <button
+              v-if="!p.manual_suppressed"
+              class="btn btn-error btn-sm"
+              @click.stop="suppressProvider(p.name)"
+            >{{ $t('providers.suppress') }}</button>
+            <button
+              v-else
+              class="btn btn-success btn-sm"
+              @click.stop="unsuppressProvider(p.name)"
+            >{{ $t('providers.unsuppress') }}</button>
           </div>
         </StatusCard>
       </div>
@@ -53,7 +64,7 @@
 <script setup>
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import StatusCard from '../components/StatusCard.vue'
-import { createStatusStream, healthCheck } from '../api.js'
+import { createStatusStream, healthCheck, setProviderSuppress } from '../api.js'
 import { fmtNum } from '../utils.js'
 
 const status = ref(null)
@@ -64,7 +75,7 @@ const pingResults = reactive({})
 let statusStop = null
 
 function providerStatus(p) {
-  if (p.suppressed) return 'error'
+  if (p.manual_suppressed || p.suppressed) return 'error'
   if (p.consecutive_failures > 0) return 'warn'
   return 'ok'
 }
@@ -99,6 +110,22 @@ async function ping(name) {
     pingResults[name] = { status: 'error', error: e.message }
   } finally {
     pinging[name] = false
+  }
+}
+
+async function suppressProvider(name) {
+  try {
+    await setProviderSuppress(name, true)
+  } catch (e) {
+    console.error('Failed to suppress provider:', e)
+  }
+}
+
+async function unsuppressProvider(name) {
+  try {
+    await setProviderSuppress(name, false)
+  } catch (e) {
+    console.error('Failed to unsuppress provider:', e)
   }
 }
 

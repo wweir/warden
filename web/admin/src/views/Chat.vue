@@ -25,12 +25,19 @@
 
     <!-- Main chat area -->
     <div class="chat-main">
-      <!-- Top bar: route & model selector -->
+      <!-- Top bar: route, provider & model selector -->
       <div class="chat-topbar">
         <div class="topbar-group">
           <label>{{ $t('chat.route') }}</label>
           <select class="form-input topbar-select" v-model="currentRoute" @change="onRouteChange">
             <option v-for="r in routes" :key="r" :value="r">{{ r }}</option>
+          </select>
+        </div>
+        <div class="topbar-group">
+          <label>{{ $t('chat.provider') }}</label>
+          <select class="form-input topbar-select" v-model="currentProvider" @change="updateConvMeta">
+            <option value="">{{ $t('chat.autoSelect') }}</option>
+            <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
           </select>
         </div>
         <div class="topbar-group">
@@ -123,8 +130,11 @@ const sidebarOpen = ref(false)
 const conversations = ref([])
 const currentId = ref(null)
 const routes = ref([])
+const routeProviders = ref({}) // route prefix -> provider names
+const providers = ref([])
 const models = ref([])
 const currentRoute = ref('')
+const currentProvider = ref('')
 const modelQuery = ref('')
 const messagesRef = ref(null)
 const inputRef = ref(null)
@@ -184,6 +194,7 @@ function newConversation() {
     id: genId(),
     title: '',
     route: currentRoute.value,
+    provider: currentProvider.value,
     model: modelQuery.value,
     messages: [],
     createdAt: new Date().toISOString(),
@@ -198,6 +209,7 @@ function switchTo(id) {
   const c = currentConv()
   if (c) {
     currentRoute.value = c.route || currentRoute.value
+    currentProvider.value = c.provider || ''
     modelQuery.value = c.model || modelQuery.value
     onRouteChange()
   }
@@ -216,6 +228,7 @@ function updateConvMeta() {
   const c = currentConv()
   if (!c) return
   c.route = currentRoute.value
+  c.provider = currentProvider.value
   c.model = modelQuery.value
   if (!c.title && c.messages.length > 0) {
     const first = getTextContent(c.messages[0])
@@ -229,12 +242,31 @@ async function loadRoutes() {
   try {
     const status = await fetchStatus()
     routes.value = (status.routes || []).map(r => r.prefix)
+    // build route -> providers mapping
+    const providerMap = {}
+    for (const r of status.routes || []) {
+      providerMap[r.prefix] = r.providers || []
+    }
+    routeProviders.value = providerMap
     if (routes.value.length > 0 && !currentRoute.value) {
       currentRoute.value = routes.value[0]
     }
+    updateProviders()
     await loadModels()
   } catch (e) {
     error.value = t('chat.loadRoutesFailed', { error: e.message })
+  }
+}
+
+function updateProviders() {
+  if (!currentRoute.value) {
+    providers.value = []
+    return
+  }
+  providers.value = routeProviders.value[currentRoute.value] || []
+  // reset provider selection if current provider not in new route
+  if (currentProvider.value && !providers.value.includes(currentProvider.value)) {
+    currentProvider.value = ''
   }
 }
 
@@ -248,6 +280,7 @@ async function loadModels() {
 }
 
 async function onRouteChange() {
+  updateProviders()
   await loadModels()
   if (models.value.length > 0 && !models.value.includes(modelQuery.value)) {
     modelQuery.value = ''
@@ -348,7 +381,7 @@ async function sendMessage() {
   }
 
   try {
-    const res = await sendRouteRequest(currentRoute.value, 'chat/completions', body)
+    const res = await sendRouteRequest(currentRoute.value, 'chat/completions', body, currentProvider.value)
     if (!res.ok) {
       const errText = await res.text()
       error.value = `Error ${res.status}: ${errText}`

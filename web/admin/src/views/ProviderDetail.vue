@@ -15,6 +15,10 @@
           <tr><td>{{ $t('providerDetail.name') }}</td><td>{{ detail.name }}</td></tr>
           <tr><td>{{ $t('providerDetail.url') }}</td><td><code>{{ detail.url }}</code></td></tr>
           <tr><td>{{ $t('providerDetail.protocol') }}</td><td>{{ detail.protocol }}</td></tr>
+          <tr v-if="detail.protocol === 'openai'">
+            <td>chat_to_responses</td>
+            <td>{{ detail.chat_to_responses ? $t('common.on') : $t('common.off') }}</td>
+          </tr>
           <tr><td>{{ $t('providerDetail.timeout') }}</td><td>{{ detail.timeout || $t('providerDetail.defaultTimeout') }}</td></tr>
           <tr><td>{{ $t('providerDetail.apiKey') }}</td><td>{{ detail.has_api_key ? $t('common.configured') : $t('common.notSet') }}</td></tr>
         </table>
@@ -24,6 +28,10 @@
         <h3>{{ $t('providerDetail.runtimeStatus') }}</h3>
         <table class="info-table">
           <tr><td>{{ $t('providerDetail.consecutiveFailures') }}</td><td>{{ detail.status.consecutive_failures }}</td></tr>
+          <tr>
+            <td>{{ $t('providerDetail.manuallySuppressed') }}</td>
+            <td>{{ detail.status.manual_suppressed ? $t('providerDetail.yes') : $t('providerDetail.no') }}</td>
+          </tr>
           <tr><td>{{ $t('providerDetail.suppressed') }}</td><td>{{ detail.status.suppressed ? $t('providerDetail.yes') : $t('providerDetail.no') }}</td></tr>
           <tr v-if="detail.status.suppressed"><td>{{ $t('providerDetail.suppressedUntil') }}</td><td>{{ formatTime(detail.status.suppress_until) }}</td></tr>
           <tr><td>{{ $t('providerDetail.totalRequests') }}</td><td>{{ detail.status.total_requests }}</td></tr>
@@ -63,6 +71,16 @@
         <button @click="runHealthCheck" class="btn btn-primary" :disabled="checking">
           {{ checking ? $t('providerDetail.checking') : $t('providerDetail.healthCheck') }}
         </button>
+        <button
+          v-if="detail.status && !detail.status.manual_suppressed"
+          @click="suppressProvider"
+          class="btn btn-error"
+        >{{ $t('providerDetail.suppressBtn') }}</button>
+        <button
+          v-else-if="detail.status"
+          @click="unsuppressProvider"
+          class="btn btn-success"
+        >{{ $t('providerDetail.unsuppressBtn') }}</button>
         <span v-if="healthResult" class="health-result" :class="healthResult.status === 'ok' ? 'text-success' : 'text-error'" style="font-size:13px">
           {{ healthResult.status === 'ok'
             ? t('providerDetail.healthOk', { latency: healthResult.latency_ms, count: healthResult.model_count })
@@ -76,7 +94,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { fetchProviderDetail, healthCheck } from '../api.js'
+import { fetchProviderDetail, healthCheck, setProviderSuppress } from '../api.js'
 
 const { t } = useI18n()
 
@@ -120,6 +138,24 @@ async function runHealthCheck() {
     healthResult.value = { status: 'error', error: e.message }
   } finally {
     checking.value = false
+  }
+}
+
+async function suppressProvider() {
+  try {
+    await setProviderSuppress(props.name, true)
+    await load()
+  } catch (e) {
+    console.error('Failed to suppress provider:', e)
+  }
+}
+
+async function unsuppressProvider() {
+  try {
+    await setProviderSuppress(props.name, false)
+    await load()
+  } catch (e) {
+    console.error('Failed to unsuppress provider:', e)
   }
 }
 
