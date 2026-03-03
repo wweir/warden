@@ -122,7 +122,11 @@ curl http://localhost:8080/openai/models
 
 MCP 工具对客户端完全透明 — Warden 自动注入工具定义、拦截工具调用、执行后将结果回传 LLM 继续生成。客户端只看到最终回复（或仅看到客户端自己定义的工具调用）。
 
+所有上游转发请求（包括 `chat/completions`、`responses`、透明代理）统一采用 header 安全转发策略：复制请求头后清洗 hop-by-hop/客户端认证头，重建 `X-Forwarded-*`，最后注入 provider 认证头。
+
 Anthropic 原生 `/messages` 端点也可通过路由前缀访问，但走透明代理路径，**不支持 MCP 工具注入和 System Prompt 注入**：
+
+透明代理会先复制客户端请求头，再清洗 hop-by-hop/客户端认证头并重建 `X-Forwarded-*`，最后注入 provider 认证头。
 
 ```bash
 # Anthropic native Messages API（透明代理）

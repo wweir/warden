@@ -158,7 +158,7 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 - `NewGateway()` 初始化时启动所有 MCP 客户端，创建 Selector，注册路由，组装中间件链
 - `selectProvider()` 委托到 `selector.Select`，支持 providers order + model match + 失败抑制
 - `recordOutcome()` 辅助函数，用于调用后结果记录
-- `handleProxy()` 对非 chat/responses 请求透明转发：clone headers + 注入认证 + pipe body。该路径会基于客户端 `Accept-Encoding` 协商上游压缩（推理端点优先 `zstd`，其次 `br/gzip`），并在上游返回压缩响应时跳过 body 级错误解析与 token 统计，避免把二进制压缩体当作 JSON 解析。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
+- `handleProxy()` 对非 chat/responses 请求透明转发：先 clone 请求头，再清洗 hop-by-hop/客户端认证/伪造转发头，随后重建 `X-Forwarded-*` 并覆盖 provider 认证头后转发。该路径会基于客户端 `Accept-Encoding` 协商上游压缩（推理端点优先 `zstd`，其次 `br/gzip`），并在上游返回压缩响应时跳过 body 级错误解析与 token 统计，避免把二进制压缩体当作 JSON 解析。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
 - `Close()` 优雅关闭所有 MCP 客户端
 
 **删除的旧实现：** 不再使用 `checkProvider()` 进行 HTTP HEAD 健康检查（过于频繁且浪费），改为被动健康感知。
@@ -178,8 +178,8 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 职责：封装所有与上游 LLM API 的 HTTP 通信。
 
 - `setAuthHeaders(h, provCfg)` — 根据协议注入认证头（OpenAI: Bearer, Anthropic: x-api-key）
-- `sendRequest(provCfg, endpoint, body)` — 发送 POST 请求，返回 raw response body + 首-token 延迟
-- `pipeRawStream(w, provCfg, endpoint, body)` — 发送请求并直接 pipe 响应到客户端
+- `sendRequest(ctx, provCfg, endpoint, body)` — 发送 POST 请求，返回 raw response body + 首-token 延迟；当上下文携带原始客户端请求时复用统一 header 逻辑（复制+清洗+重建 `X-Forwarded-*` + 认证覆盖）后转发到上游
+- `pipeRawStream(ctx, w, provCfg, endpoint, body)` — 发送请求并直接 pipe 响应到客户端
 - 所有上游 HTTP 请求通过 `ProviderConfig.HTTPClient()` 创建客户端，自动配置代理和超时
 
 **超时策略**：使用 `Transport.ResponseHeaderTimeout`（首-token 超时）而非 `http.Client.Timeout`（全请求超时）。这确保 streaming 响应不会因总时间长而被强制终止，同时仍能在上游无响应时及时失败。延迟统计记录从请求发出到收到响应头的时间（首-token 延迟），而非包含 body 读取的总时间。
@@ -312,6 +312,7 @@ Responses API 字段众多且持续扩展，网关必须严格遵守透传原则
 
 - Provider 选择与 Failover
 - 认证重试（401 时重新加载凭据）
+- 请求头安全转发（清洗 hop-by-hop/客户端认证头，重建 `X-Forwarded-*`，再注入 provider 认证）
 - 请求日志与 Token 指标
 - 流式响应的 SSE 日志组装（`anthropic.AssembleStream`）
 
