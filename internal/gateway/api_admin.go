@@ -875,8 +875,10 @@ func (g *Gateway) collectMetricsData() map[string]any {
 	}
 
 	type tokenRateStat struct {
+		Route    string  `json:"route"`
 		Provider string  `json:"provider"`
 		Model    string  `json:"model"`
+		Endpoint string  `json:"endpoint"`
 		Type     string  `json:"type"`
 		Value    float64 `json:"value"`
 	}
@@ -885,10 +887,14 @@ func (g *Gateway) collectMetricsData() map[string]any {
 		rs := tokenRateStat{Value: met.GetGauge().GetValue()}
 		for _, l := range met.GetLabel() {
 			switch l.GetName() {
+			case "route":
+				rs.Route = l.GetValue()
 			case "provider":
 				rs.Provider = l.GetValue()
 			case "model":
 				rs.Model = l.GetValue()
+			case "endpoint":
+				rs.Endpoint = l.GetValue()
 			case "type":
 				rs.Type = l.GetValue()
 			}
@@ -896,10 +902,63 @@ func (g *Gateway) collectMetricsData() map[string]any {
 		rates = append(rates, rs)
 	}
 
+	type quantileStat struct {
+		Route    string  `json:"route"`
+		Provider string  `json:"provider"`
+		Model    string  `json:"model"`
+		Endpoint string  `json:"endpoint"`
+		Value    float64 `json:"value"`
+		Count    uint64  `json:"count"`
+	}
+
+	var ttftP95 []quantileStat
+	for _, met := range collectMetrics(streamTTFT) {
+		entry := quantileStat{
+			Value: histogramQuantile(0.95, met.GetHistogram().GetBucket()),
+			Count: met.GetHistogram().GetSampleCount(),
+		}
+		for _, l := range met.GetLabel() {
+			switch l.GetName() {
+			case "route":
+				entry.Route = l.GetValue()
+			case "provider":
+				entry.Provider = l.GetValue()
+			case "model":
+				entry.Model = l.GetValue()
+			case "endpoint":
+				entry.Endpoint = l.GetValue()
+			}
+		}
+		ttftP95 = append(ttftP95, entry)
+	}
+
+	var throughputP99 []quantileStat
+	for _, met := range collectMetrics(completionThroughput) {
+		entry := quantileStat{
+			Value: histogramQuantile(0.99, met.GetHistogram().GetBucket()),
+			Count: met.GetHistogram().GetSampleCount(),
+		}
+		for _, l := range met.GetLabel() {
+			switch l.GetName() {
+			case "route":
+				entry.Route = l.GetValue()
+			case "provider":
+				entry.Provider = l.GetValue()
+			case "model":
+				entry.Model = l.GetValue()
+			case "endpoint":
+				entry.Endpoint = l.GetValue()
+			}
+		}
+		throughputP99 = append(throughputP99, entry)
+	}
+
 	return map[string]any{
-		"requests_total":   requests,
-		"request_duration": durations,
-		"tokens_total":     tokens,
-		"token_rate":       rates,
+		"requests_total":        requests,
+		"request_duration":      durations,
+		"tokens_total":          tokens,
+		"token_rate":            rates,
+		"stream_ttft_p95_ms":    ttftP95,
+		"throughput_p99_tokens": throughputP99,
 	}
 }

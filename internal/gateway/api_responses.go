@@ -86,12 +86,12 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				if assembled, err := json.Marshal(cr); err == nil {
 					rec.Response = assembled
 					usage := ExtractTokenUsage(assembled)
-					g.RecordTokenMetrics(provCfg.Name, model, usage, rec.DurationMs)
+					g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "responses", usage, rec.DurationMs)
 				}
 			}
 		} else if len(respBody) > 0 && errMsg == "" {
 			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(provCfg.Name, model, usage, rec.DurationMs)
+			g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "responses", usage, rec.DurationMs)
 		}
 		g.recordAndBroadcast(rec)
 	}
@@ -124,6 +124,9 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				return
 			}
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			if stream {
+				g.RecordTTFTMetric(route.Prefix, provCfg.Name, model, "responses", latency)
+			}
 
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -178,6 +181,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				return
 			}
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			g.RecordTTFTMetric(route.Prefix, provCfg.Name, origModel, "responses", latency)
 
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")

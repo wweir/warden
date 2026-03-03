@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -67,7 +68,27 @@ var (
 			Name: "warden_token_rate",
 			Help: "Tokens per second for the last request by provider and model",
 		},
-		[]string{"provider", "model", "type"}, // type: prompt, completion
+		[]string{"route", "provider", "model", "endpoint", "type"}, // type: prompt, completion
+	)
+
+	// streamTTFT tracks time-to-first-token distribution for streaming requests.
+	streamTTFT = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warden_stream_ttft_ms",
+			Help:    "Streaming time-to-first-token in milliseconds",
+			Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000},
+		},
+		[]string{"route", "provider", "model", "endpoint"},
+	)
+
+	// completionThroughput tracks completion token throughput distribution.
+	completionThroughput = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warden_completion_throughput_tps",
+			Help:    "Completion token throughput in tokens per second",
+			Buckets: []float64{1, 2, 5, 10, 20, 40, 80, 160, 320, 640, 1280},
+		},
+		[]string{"route", "provider", "model", "endpoint"},
 	)
 
 	// providerFailovers counts failover events per provider.
@@ -112,6 +133,7 @@ func init() {
 		requestCounter, requestDuration,
 		providerHealth, providerSuppressed,
 		tokenCounter, tokenRate,
+		streamTTFT, completionThroughput,
 		providerFailovers, providerStreamErrors,
 		providerSuccessRate, providerAvgLatency,
 	)
@@ -172,18 +194,30 @@ type TokenUsage struct {
 
 // RecordTokenMetrics records token usage metrics for a request.
 // durationMs is the request duration in milliseconds, used to calculate token/s rate.
-func (g *Gateway) RecordTokenMetrics(provider, model string, usage TokenUsage, durationMs int64) {
+func (g *Gateway) RecordTokenMetrics(route, provider, model, endpoint string, usage TokenUsage, durationMs int64) {
 	recordTokenType := func(count int64, typ string) {
 		if count <= 0 {
 			return
 		}
 		tokenCounter.WithLabelValues(provider, model, typ).Add(float64(count))
 		if durationMs > 0 {
-			tokenRate.WithLabelValues(provider, model, typ).Set(float64(count) / (float64(durationMs) / 1000.0))
+			tokenRate.WithLabelValues(route, provider, model, endpoint, typ).Set(float64(count) / (float64(durationMs) / 1000.0))
 		}
 	}
 	recordTokenType(usage.PromptTokens, "prompt")
 	recordTokenType(usage.CompletionTokens, "completion")
+	if usage.CompletionTokens > 0 && durationMs > 0 {
+		completionThroughput.WithLabelValues(route, provider, model, endpoint).
+			Observe(float64(usage.CompletionTokens) / (float64(durationMs) / 1000.0))
+	}
+}
+
+// RecordTTFTMetric records streaming time-to-first-token in milliseconds.
+func (g *Gateway) RecordTTFTMetric(route, provider, model, endpoint string, ttft time.Duration) {
+	if ttft <= 0 {
+		return
+	}
+	streamTTFT.WithLabelValues(route, provider, model, endpoint).Observe(float64(ttft.Milliseconds()))
 }
 
 // PromMiddleware is the middleware that records Prometheus metrics.
@@ -195,6 +229,7 @@ type PromMiddleware struct {
 func (m *PromMiddleware) Process(next http.Handler) http.Handler {
 	return m.gateway.promMiddleware(next)
 }
+
 type promResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -233,6 +268,46 @@ func collectMetrics(c prometheus.Collector) []*dto.Metric {
 		}
 	}
 	return result
+}
+
+func histogramQuantile(quantile float64, buckets []*dto.Bucket) float64 {
+	if quantile <= 0 || len(buckets) == 0 {
+		return 0
+	}
+	total := float64(buckets[len(buckets)-1].GetCumulativeCount())
+	if total <= 0 {
+		return 0
+	}
+	rank := quantile * total
+	prevUpper := 0.0
+	prevCount := 0.0
+	for _, b := range buckets {
+		upper := b.GetUpperBound()
+		cum := float64(b.GetCumulativeCount())
+		if cum >= rank {
+			bucketCount := cum - prevCount
+			if bucketCount <= 0 {
+				if math.IsInf(upper, 1) {
+					return prevUpper
+				}
+				return upper
+			}
+			pos := (rank - prevCount) / bucketCount
+			if pos < 0 {
+				pos = 0
+			}
+			if pos > 1 {
+				pos = 1
+			}
+			if math.IsInf(upper, 1) {
+				return prevUpper
+			}
+			return prevUpper + (upper-prevUpper)*pos
+		}
+		prevUpper = upper
+		prevCount = cum
+	}
+	return prevUpper
 }
 
 // promMiddleware records metrics for each request.

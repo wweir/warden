@@ -32,7 +32,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离（泛型实现）、过滤
 │   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 滑动窗口统计 + 状态暴露
 │   │   ├── middleware.go        # HTTP 中间件：日志、panic 恢复、CORS
-│   │   ├── metrics.go           # Prometheus 指标：requests_total、request_duration_ms、provider_health、provider_suppressed、tokens_total、token_rate（按 provider/model 统计 token/s）
+│   │   ├── metrics.go           # Prometheus 指标：requests_total、request_duration_ms、stream_ttft_ms、completion_throughput_tps、provider_health、provider_suppressed、tokens_total、token_rate（按 route/provider/model/endpoint 维度统计，可用于 P95 TTFT / P99 Throughput）
 │   │   └── errors.go            # 错误类型：UpstreamError、ErrProviderNotFound
 │   ├── reqlog/
 │   │   ├── reqlog.go            # Logger 接口、Record/Step 类型定义、BuildFingerprint、内部 JSON 提取函数（gjson）
@@ -806,7 +806,7 @@ type Step struct {
 **前端**（`web/admin/`）：
 
 - Vue 3 + Vite，纯 CSS（无 UI 框架），构建产物 embed 到 Go 二进制
-- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；Tokens 卡片展示 prompt/completion 总量，provider 速率列表按 provider 聚合并仅统计 completion（模型输出）token/s；每 5s 轮询
+- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；监控卡片优先展示客户端代理运营指标（请求用量、token 用量、输出速率、失败率、failover/stream error 压力、路由错误热点），并保留 TTFT/throughput 慢组合用于性能定位；用量概览与错误压力使用前端折线图，基于 Prometheus 累计计数器按 5s 采样计算增量速率，保留最近 72 个点（约 6 分钟），计数器回退时自动重置历史；通过 `/_admin/api/metrics/stream` 实时刷新
 - ProviderDetail：Provider 基本信息、运行时状态、模型别名、可用模型列表、Health Check 按钮
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）

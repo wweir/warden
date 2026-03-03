@@ -202,6 +202,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 	// extract model from request body for provider selection (best-effort; non-JSON bodies are fine)
 	model := gjson.GetBytes(reqBody, "model").String()
+	stream := gjson.GetBytes(reqBody, "stream").Bool()
 	w.Header().Set("X-Model", model)
 
 	var excluded []string
@@ -296,6 +297,11 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			}
 		} else {
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			if stream {
+				endpoint := strings.TrimPrefix(r.URL.Path, route.Prefix)
+				endpoint = strings.TrimPrefix(endpoint, "/")
+				g.RecordTTFTMetric(route.Prefix, provCfg.Name, model, endpoint, latency)
+			}
 		}
 
 		maps.Copy(w.Header(), resp.Header)
@@ -313,7 +319,9 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		// Extract token usage for metrics (only for LLM responses)
 		if resp.StatusCode == http.StatusOK && inspectableBody && len(logResp) > 0 {
 			usage := ExtractTokenUsage(logResp)
-			g.RecordTokenMetrics(provCfg.Name, model, usage, durationMs)
+			endpoint := strings.TrimPrefix(r.URL.Path, route.Prefix)
+			endpoint = strings.TrimPrefix(endpoint, "/")
+			g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, endpoint, usage, durationMs)
 		}
 
 		rec := reqlog.Record{

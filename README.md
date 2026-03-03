@@ -12,10 +12,10 @@ Warden 是一个轻量级 AI Gateway，提供统一的 OpenAI 兼容接口，将
 - **模型发现** — 自动查询上游 `/models` 端点，聚合多 Provider 模型列表，按模型名智能路由
 - **System Prompt 注入** — 按路由和模型精确匹配，自动注入自定义 system 提示词
 - **请求日志** — 支持文件和 HTTP 双后端，记录完整请求/响应和工具调用步骤，HTTP 后端支持 Go 模板渲染
-- **Web 管理面板** — 内置 Web UI，实时监控 Provider 状态、查看请求日志流、在线编辑配置、MCP 工具调试
+- **Web 管理面板** — 内置 Web UI，实时监控 Provider 状态、查看请求日志流、在线编辑配置、MCP 工具调试；监控卡片优先展示用量/速率/出错与退化压力，支持 5s 采样的用量/错误折线趋势，并提供 P95 TTFT、P99 Throughput 组合热点定位性能问题
 - **SSH 远程 MCP** — MCP Server 可通过 SSH 在远程主机执行，自动继承 `~/.ssh/config`
 - **请求补丁** — Provider 级别的 JSON Patch (RFC 6902)，可在转发前修改请求体
-- **Prometheus 指标** — 请求计数、延迟、Token 用量、Provider 健康状态等
+- **Prometheus 指标** — 请求计数、延迟、TTFT、Throughput、Token 用量、Provider 健康状态（支持 route/provider/model 维度）
 - **同时支持 Chat Completions 和 Responses API**
 - **流式响应支持** — 包括流式场景下的工具调用拦截
 

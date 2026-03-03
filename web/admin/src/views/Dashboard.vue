@@ -42,104 +42,105 @@
 
       <!-- Unified Metrics Section -->
       <div v-if="metricsData" class="metrics-section">
-        <!-- Request Status -->
         <div class="metric-card">
           <div class="metric-header">
-            <span class="metric-title">{{ $t('dashboard.successRate') }}</span>
-            <span class="metric-badge" :class="requestSuccessPercent >= 99 ? 'good' : requestSuccessPercent >= 90 ? 'warn' : 'bad'">
-              {{ requestSuccessPercent.toFixed(0) }}%
-            </span>
+            <span class="metric-title">{{ $t('dashboard.usage') }}</span>
+            <span class="metric-count">{{ $t('dashboard.trendWindow') }}</span>
           </div>
-          <div class="donut-mini">
-            <svg viewBox="0 0 36 36">
-              <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--c-border)" stroke-width="3"/>
-              <circle
-                v-if="requestStatusTotal > 0"
-                cx="18" cy="18" r="15.9" fill="none"
-                stroke="var(--c-success, #10b981)"
-                stroke-width="3"
-                stroke-linecap="round"
-                :stroke-dasharray="`${requestSuccessPercent} ${100 - requestSuccessPercent}`"
-                transform="rotate(-90 18 18)"
-              />
+          <div class="trend-chart">
+            <svg viewBox="0 0 280 96" preserveAspectRatio="none">
+              <path class="trend-grid" d="M0 80 H280" />
+              <path v-if="usageHistory.length > 1" class="trend-line usage-main" :d="sparklinePath(usageHistory, 'reqPerMin', 280, 96)" />
+              <path v-if="usageHistory.length > 1" class="trend-line usage-sub" :d="sparklinePath(usageHistory, 'tokPerMin', 280, 96)" />
             </svg>
+            <div v-if="usageHistory.length <= 1" class="trend-empty">{{ $t('common.noData') }}</div>
           </div>
           <div class="metric-stats">
-            <div class="stat-row"><span class="dot success"></span>{{ $t('dashboard.successLabel') }}: {{ fmtNum(requestStatus.success) }}</div>
-            <div class="stat-row"><span class="dot error"></span>{{ $t('dashboard.failureLabel') }}: {{ fmtNum(requestStatus.failure) }}</div>
+            <div class="stat-row"><span class="trend-dot usage-main"></span>{{ $t('dashboard.requestsPerMin') }}: {{ usageLatest.reqPerMin.toFixed(1) }}</div>
+            <div class="stat-row"><span class="trend-dot usage-sub"></span>{{ $t('dashboard.tokensPerMin') }}: {{ fmtNum(Math.round(usageLatest.tokPerMin)) }}</div>
+            <div class="stat-row">{{ $t('routes.requests') }}: {{ fmtNum(requestStatusTotal) }}</div>
+            <div class="stat-row">{{ $t('dashboard.completionShare') }}: {{ tokenStats.completionShare.toFixed(1) }}%</div>
           </div>
         </div>
 
-        <!-- Latency -->
         <div class="metric-card">
           <div class="metric-header">
-            <span class="metric-title">{{ $t('dashboard.latency') }}</span>
-            <span class="metric-value">{{ avgLatency }}ms</span>
-          </div>
-          <div class="latency-bars">
-            <div v-for="b in latencyBucketsCompact" :key="b.le" class="latency-bar">
-              <div class="latency-bar-fill" :style="{ height: b.percent + '%' }"></div>
-            </div>
-          </div>
-          <div class="latency-labels">
-            <span v-for="b in latencyBucketsCompact" :key="b.le">{{ b.le }}ms</span>
-          </div>
-        </div>
-
-        <!-- Top Routes -->
-        <div class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">{{ $t('dashboard.topRoutes') }}</span>
-            <span class="metric-count">{{ topRoutes.length }}</span>
+            <span class="metric-title">{{ $t('dashboard.outputRate') }}</span>
+            <span class="metric-count">{{ tokenStats.rates.length }}</span>
           </div>
           <div class="top-routes">
-            <div v-for="r in topRoutes" :key="r.key" class="route-mini">
-              <div class="route-mini-name">{{ r.route }}<span class="route-mini-provider"> · {{ r.provider }}</span></div>
+            <div v-for="r in tokenStats.rates.slice(0, 5)" :key="r.key" class="route-mini">
+              <div class="route-mini-name">{{ r.provider }}<span class="route-mini-provider"> · {{ r.model }}</span></div>
               <div class="route-mini-bar"><div class="route-mini-fill" :style="{ width: r.percent + '%' }"></div></div>
-              <div class="route-mini-count">{{ fmtNum(r.count) }}</div>
+              <div class="route-mini-count">{{ formatTPS(r.completionRate) }}</div>
             </div>
-            <div v-if="topRoutes.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
+            <div v-if="tokenStats.rates.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
           </div>
         </div>
 
-        <!-- Top Models -->
         <div class="metric-card">
           <div class="metric-header">
-            <span class="metric-title">{{ $t('dashboard.topModels') }}</span>
-            <span class="metric-count">{{ topModels.length }}</span>
+            <span class="metric-title">{{ $t('dashboard.errors') }}</span>
+            <span class="metric-count">{{ $t('dashboard.trendWindow') }}</span>
+          </div>
+          <div class="trend-chart">
+            <svg viewBox="0 0 280 96" preserveAspectRatio="none">
+              <path class="trend-grid" d="M0 80 H280" />
+              <path v-if="errorHistory.length > 1" class="trend-line error-main" :d="sparklinePath(errorHistory, 'errorRate', 280, 96)" />
+              <path v-if="errorHistory.length > 1" class="trend-line error-sub" :d="sparklinePath(errorHistory, 'streamErrPer1k', 280, 96)" />
+            </svg>
+            <div v-if="errorHistory.length <= 1" class="trend-empty">{{ $t('common.noData') }}</div>
+          </div>
+          <div class="metric-stats">
+            <div class="stat-row"><span class="trend-dot error-main"></span>{{ $t('dashboard.errorRate') }}: {{ errorLatest.errorRate.toFixed(2) }}%</div>
+            <div class="stat-row"><span class="trend-dot error-sub"></span>{{ $t('dashboard.streamErrorsPer1k') }}: {{ errorLatest.streamErrPer1k.toFixed(2) }}</div>
+            <div class="stat-row">{{ $t('dashboard.failoverPer1k') }}: {{ errorLatest.failoverPer1k.toFixed(2) }}</div>
+            <div class="stat-row">{{ $t('dashboard.failureLabel') }}: {{ fmtNum(requestStatus.failure) }}</div>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">{{ $t('dashboard.routeRisk') }}</span>
+            <span class="metric-count">{{ riskyRoutesByTraffic.length }}</span>
           </div>
           <div class="top-routes">
-            <div v-for="m in topModels" :key="m.key" class="route-mini">
-              <div class="route-mini-name">{{ m.model }}<span class="route-mini-provider"> · {{ m.provider }}</span></div>
-              <div class="route-mini-bar"><div class="route-mini-fill" :style="{ width: m.percent + '%' }"></div></div>
-              <div class="route-mini-count">{{ fmtNum(m.count) }}</div>
+            <div v-for="item in riskyRoutesByTraffic" :key="item.route" class="route-mini">
+              <div class="route-mini-name">{{ item.route }}<span class="route-mini-provider"> · {{ fmtNum(item.total) }} {{ $t('routes.requests') }}</span></div>
+              <div class="route-mini-bar"><div class="route-mini-fill bad" :style="{ width: item.failureRate + '%' }"></div></div>
+              <div class="route-mini-count">{{ item.failureRate.toFixed(1) }}%</div>
             </div>
-            <div v-if="topModels.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
+            <div v-if="riskyRoutesByTraffic.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
           </div>
         </div>
 
-        <!-- Tokens -->
         <div class="metric-card">
           <div class="metric-header">
-            <span class="metric-title">{{ $t('dashboard.tokens') }}</span>
+            <span class="metric-title">{{ $t('dashboard.ttftP95') }}</span>
+            <span class="metric-count">{{ streamTTFTLeaders.length }}</span>
           </div>
-          <div class="token-rate-hint">{{ $t('dashboard.outputRateHint') }}</div>
-          <div class="token-inline">
-            <div class="token-item">
-              <span class="token-num">{{ fmtNum(tokenStats.promptTotal) }}</span>
-              <span class="token-lbl">{{ $t('dashboard.prompt') }}</span>
+          <div class="top-routes">
+            <div v-for="item in streamTTFTLeaders" :key="item.key" class="route-mini">
+              <div class="route-mini-name">{{ item.route }}<span class="route-mini-provider"> · {{ item.provider }} · {{ item.model }}</span></div>
+              <div class="route-mini-bar"><div class="route-mini-fill warn" :style="{ width: item.percent + '%' }"></div></div>
+              <div class="route-mini-count">{{ formatMs(item.value) }}</div>
             </div>
-            <div class="token-divider-v"></div>
-            <div class="token-item">
-              <span class="token-num">{{ fmtNum(tokenStats.completionTotal) }}</span>
-              <span class="token-lbl">{{ $t('dashboard.completion') }}</span>
-            </div>
+            <div v-if="streamTTFTLeaders.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
           </div>
-          <div v-if="tokenStats.rates.length" class="token-rates-mini">
-            <div v-for="r in tokenStats.rates.slice(0, 3)" :key="r.provider" class="rate-mini">
-              <span class="rate-provider">{{ r.provider }}</span>
-              <span class="rate-value">{{ r.completionRate.toFixed(1) }}/s</span>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-title">{{ $t('dashboard.throughputP99') }}</span>
+            <span class="metric-count">{{ throughputLaggers.length }}</span>
+          </div>
+          <div class="top-routes">
+            <div v-for="item in throughputLaggers" :key="item.key" class="route-mini">
+              <div class="route-mini-name">{{ item.route }}<span class="route-mini-provider"> · {{ item.provider }} · {{ item.model }}</span></div>
+              <div class="route-mini-bar"><div class="route-mini-fill bad" :style="{ width: item.percent + '%' }"></div></div>
+              <div class="route-mini-count">{{ formatTPS(item.value) }}</div>
             </div>
+            <div v-if="throughputLaggers.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
           </div>
         </div>
       </div>
@@ -208,8 +209,14 @@ const status = ref(null)
 const metricsData = ref(null)
 const error = ref('')
 const expandedAlerts = ref({}) // track expanded state by alert key
+const usageHistory = ref([])
+const errorHistory = ref([])
+const metricsBaseline = ref(null)
 let statusStop = null
 let metricsStop = null
+
+const metricSampleIntervalMs = 5000
+const metricHistoryLimit = 72
 
 const providerStats = computed(() => {
   const providers = status.value?.providers ?? []
@@ -286,147 +293,209 @@ const requestStatus = computed(() => {
 
 const requestStatusTotal = computed(() => requestStatus.value.success + requestStatus.value.failure)
 
-const requestSuccessPercent = computed(() => {
-  const total = requestStatusTotal.value
-  return total > 0 ? (requestStatus.value.success / total) * 100 : 0
-})
-
-const latencyBuckets = computed(() => {
-  if (!metricsData.value?.request_duration?.length) return []
-
-  const buckets = {}
-  for (const item of metricsData.value.request_duration) {
-    const le = parseFloat(item.le)
-    if (!buckets[le]) buckets[le] = 0
-    buckets[le] += item.value
-  }
-
-  const sortedBuckets = Object.keys(buckets)
-    .map(k => parseFloat(k))
-    .sort((a, b) => a - b)
-
-  let prevCount = 0
-  const result = []
-  let maxCount = 0
-
-  for (const le of sortedBuckets) {
-    const count = buckets[le] - prevCount
-    if (count > maxCount) maxCount = count
-    result.push({ le: Math.round(le), count })
-    prevCount = buckets[le]
-  }
-
-  for (const bucket of result) {
-    bucket.percent = maxCount > 0 ? (bucket.count / maxCount) * 100 : 0
-  }
-
-  return result.filter(b => b.count > 0).slice(0, 6)
-})
-
-// Compact latency buckets for inline display
-const latencyBucketsCompact = computed(() => {
-  const buckets = latencyBuckets.value.slice(0, 4)
-  const max = buckets.reduce((m, b) => Math.max(m, b.count), 0)
-  return buckets.map(b => ({ ...b, percent: max > 0 ? (b.count / max) * 100 : 0 }))
-})
-
-// Average latency estimate (using histogram median approximation)
-const avgLatency = computed(() => {
-  const buckets = latencyBuckets.value
-  if (!buckets.length) return 0
-  const total = buckets.reduce((s, b) => s + b.count, 0)
-  if (total === 0) return 0
-  const mid = total / 2
-  let sum = 0
-  for (const b of buckets) {
-    sum += b.count
-    if (sum >= mid) return b.le
-  }
-  return buckets[buckets.length - 1]?.le ?? 0
-})
-
-const topRoutes = computed(() => {
-  if (!metricsData.value?.requests_total?.length) return []
-
-  // Aggregate by route+provider
-  const counts = {}
-  for (const item of metricsData.value.requests_total) {
-    const key = `${item.route}\0${item.provider}`
-    if (!counts[key]) counts[key] = { route: item.route, provider: item.provider, count: 0 }
-    counts[key].count += item.value
-  }
-
-  const routes = Object.values(counts)
-    .sort((a, b) => b.count - a.count || `${a.route}\0${a.provider}`.localeCompare(`${b.route}\0${b.provider}`))
-    .slice(0, 5)
-
-  const maxCount = routes[0]?.count || 1
-  for (const r of routes) {
-    r.key = `${r.route}\0${r.provider}`
-    r.percent = (r.count / maxCount) * 100
-  }
-
-  return routes
-})
-
-const topModels = computed(() => {
-  if (!metricsData.value?.requests_total?.length) return []
-
-  // Aggregate by model+provider from requests_total
-  const counts = {}
-  for (const item of metricsData.value.requests_total) {
-    const model = item.model || 'unknown'
-    const key = `${model}\0${item.provider}`
-    if (!counts[key]) counts[key] = { model, provider: item.provider, count: 0 }
-    counts[key].count += item.value
-  }
-
-  const models = Object.values(counts)
-    .sort((a, b) => b.count - a.count || `${a.model}\0${a.provider}`.localeCompare(`${b.model}\0${b.provider}`))
-    .slice(0, 5)
-
-  const maxCount = models[0]?.count || 1
-  for (const m of models) {
-    m.key = `${m.model}\0${m.provider}`
-    m.percent = (m.count / maxCount) * 100
-  }
-
-  return models
-})
-
-// Token metrics computed properties
 const tokenStats = computed(() => {
-  const stats = { promptTotal: 0, completionTotal: 0, rates: [] }
-  if (!metricsData.value?.tokens_total) return stats
+  const stats = { promptTotal: 0, completionTotal: 0, completionShare: 0, rates: [] }
+  for (const item of metricsData.value?.tokens_total ?? []) {
+    if (item.type === "prompt") stats.promptTotal += item.value
+    if (item.type === "completion") stats.completionTotal += item.value
+  }
 
-  for (const item of metricsData.value.tokens_total) {
-    if (item.type === 'prompt') {
-      stats.promptTotal += item.value
-    } else if (item.type === 'completion') {
-      stats.completionTotal += item.value
+  const total = stats.promptTotal + stats.completionTotal
+  stats.completionShare = total > 0 ? (stats.completionTotal / total) * 100 : 0
+
+  const rateMap = {}
+  for (const item of metricsData.value?.token_rate ?? []) {
+    if (item.type !== "completion") continue
+    const key = `${item.provider || "unknown"}\0${item.model || "unknown"}`
+    const value = Number(item.value || 0)
+    if (!rateMap[key] || value > rateMap[key].completionRate) {
+      rateMap[key] = {
+        key,
+        provider: item.provider || "unknown",
+        model: item.model || "unknown",
+        completionRate: value,
+      }
     }
   }
 
-  // Group output token rates by provider
-  if (metricsData.value?.token_rate) {
-    const rateMap = {}
-    for (const item of metricsData.value.token_rate) {
-      const key = item.provider || 'unknown'
-      if (!rateMap[key]) {
-        rateMap[key] = { provider: key, completionRate: 0 }
-      }
-      if (item.type === 'completion') {
-        rateMap[key].completionRate += item.value
-      }
-    }
-    stats.rates = Object.values(rateMap)
-      .filter(r => r.completionRate > 0)
-      .sort((a, b) => b.completionRate - a.completionRate)
-      .slice(0, 5)
-  }
-
+  const rates = Object.values(rateMap).filter((item) => item.completionRate > 0)
+    .sort((a, b) => b.completionRate - a.completionRate)
+    .slice(0, 5)
+  const maxRate = rates[0]?.completionRate || 1
+  stats.rates = rates.map((item) => ({ ...item, percent: (item.completionRate / maxRate) * 100 }))
   return stats
 })
+
+const usageLatest = computed(() => usageHistory.value[usageHistory.value.length - 1] ?? { reqPerMin: 0, tokPerMin: 0 })
+const errorLatest = computed(() => errorHistory.value[errorHistory.value.length - 1] ?? { errorRate: 0, streamErrPer1k: 0, failoverPer1k: 0 })
+
+const streamTTFTLeaders = computed(() => {
+  let list = (metricsData.value?.stream_ttft_p95_ms ?? [])
+    .filter((item) => item.count > 0)
+    .map((item) => ({
+      key: `${item.route}\0${item.provider}\0${item.model}\0${item.endpoint}`,
+      route: item.route,
+      provider: item.provider,
+      model: item.model || "unknown",
+      value: Number(item.value || 0),
+      count: Number(item.count || 0),
+    }))
+
+  const stable = list.filter((item) => item.count >= 5)
+  if (stable.length > 0) list = stable
+
+  list = list
+    .sort((a, b) => b.value - a.value || b.count - a.count)
+    .slice(0, 5)
+
+  const max = list[0]?.value || 1
+  return list.map((item) => ({ ...item, percent: (item.value / max) * 100 }))
+})
+
+const throughputLaggers = computed(() => {
+  let list = (metricsData.value?.throughput_p99_tokens ?? [])
+    .filter((item) => item.count > 0 && Number(item.value || 0) > 0)
+    .map((item) => ({
+      key: `${item.route}\0${item.provider}\0${item.model}\0${item.endpoint}`,
+      route: item.route,
+      provider: item.provider,
+      model: item.model || "unknown",
+      value: Number(item.value || 0),
+      count: Number(item.count || 0),
+    }))
+
+  const stable = list.filter((item) => item.count >= 5)
+  if (stable.length > 0) list = stable
+
+  list = list
+    .sort((a, b) => a.value - b.value || b.count - a.count)
+    .slice(0, 5)
+
+  const max = Math.max(...list.map((item) => item.value), 1)
+  return list.map((item) => ({ ...item, percent: (item.value / max) * 100 }))
+})
+
+const riskyRoutesByTraffic = computed(() => {
+  const agg = {}
+  for (const item of metricsData.value?.requests_total ?? []) {
+    if (!agg[item.route]) agg[item.route] = { route: item.route, success: 0, failure: 0 }
+    if (item.status === "failure") agg[item.route].failure += item.value
+    else agg[item.route].success += item.value
+  }
+
+  let list = Object.values(agg).map((item) => {
+    const total = item.success + item.failure
+    return {
+      route: item.route,
+      total,
+      failure: item.failure,
+      failureRate: total > 0 ? (item.failure / total) * 100 : 0,
+    }
+  }).filter((item) => item.failure > 0)
+
+  const stable = list.filter((item) => item.total >= 20)
+  if (stable.length > 0) list = stable
+
+  return list
+    .sort((a, b) => b.failure - a.failure || b.failureRate - a.failureRate)
+    .slice(0, 5)
+})
+
+function formatMs(value) {
+  if (!value || value < 0) return "-"
+  return `${Math.round(value)}ms`
+}
+
+function formatTPS(value) {
+  if (!value || value < 0) return "-"
+  return `${value.toFixed(1)}/s`
+}
+
+function sparklinePath(points, key, width = 280, height = 96) {
+  if (!Array.isArray(points) || points.length < 2) return ""
+  const values = points.map((p) => Number(p[key] || 0))
+  let min = Math.min(...values)
+  let max = Math.max(...values)
+  if (max === min) {
+    max += 1
+    min -= 1
+  }
+  const pad = 8
+  return points.map((point, idx) => {
+    const x = pad + idx * ((width - pad * 2) / (points.length - 1))
+    const y = height - pad - ((Number(point[key] || 0) - min) / (max - min)) * (height - pad * 2)
+    return `${idx === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`
+  }).join(" ")
+}
+
+function collectCounters(metricsSnapshot) {
+  let requests = 0
+  let failures = 0
+  for (const item of metricsSnapshot?.requests_total ?? []) {
+    requests += Number(item.value || 0)
+    if (item.status === "failure") failures += Number(item.value || 0)
+  }
+
+  let tokens = 0
+  for (const item of metricsSnapshot?.tokens_total ?? []) {
+    tokens += Number(item.value || 0)
+  }
+
+  const providers = status.value?.providers ?? []
+  let failovers = 0
+  let streamErrors = 0
+  for (const p of providers) {
+    failovers += Number(p.failover_count || 0)
+    streamErrors += Number(p.pre_stream_errors || 0) + Number(p.in_stream_errors || 0)
+  }
+
+  return { ts: Date.now(), requests, failures, tokens, failovers, streamErrors }
+}
+
+function pushHistory(listRef, point) {
+  listRef.value.push(point)
+  if (listRef.value.length > metricHistoryLimit) {
+    listRef.value.splice(0, listRef.value.length - metricHistoryLimit)
+  }
+}
+
+function updateMetricTrends(metricsSnapshot) {
+  const current = collectCounters(metricsSnapshot)
+  if (!metricsBaseline.value) {
+    metricsBaseline.value = current
+    return
+  }
+
+  const elapsedMs = current.ts - metricsBaseline.value.ts
+  if (elapsedMs < metricSampleIntervalMs) {
+    return
+  }
+
+  const deltaRequests = current.requests - metricsBaseline.value.requests
+  const deltaFailures = current.failures - metricsBaseline.value.failures
+  const deltaTokens = current.tokens - metricsBaseline.value.tokens
+  const deltaFailovers = current.failovers - metricsBaseline.value.failovers
+  const deltaStreamErrors = current.streamErrors - metricsBaseline.value.streamErrors
+
+  if (deltaRequests < 0 || deltaFailures < 0 || deltaTokens < 0 || deltaFailovers < 0 || deltaStreamErrors < 0) {
+    metricsBaseline.value = current
+    usageHistory.value = []
+    errorHistory.value = []
+    return
+  }
+
+  const perMinute = 60000 / elapsedMs
+  const reqPerMin = deltaRequests * perMinute
+  const tokPerMin = deltaTokens * perMinute
+
+  const errorRate = deltaRequests > 0 ? (deltaFailures / deltaRequests) * 100 : 0
+  const failoverPer1k = deltaRequests > 0 ? (deltaFailovers / deltaRequests) * 1000 : 0
+  const streamErrPer1k = deltaRequests > 0 ? (deltaStreamErrors / deltaRequests) * 1000 : 0
+
+  pushHistory(usageHistory, { ts: current.ts, reqPerMin, tokPerMin })
+  pushHistory(errorHistory, { ts: current.ts, errorRate, failoverPer1k, streamErrPer1k })
+  metricsBaseline.value = current
+}
 
 onMounted(() => {
   statusStop = createStatusStream().start(
@@ -434,7 +503,10 @@ onMounted(() => {
     (e) => { error.value = e.message }
   )
   metricsStop = createMetricsStream().start(
-    (data) => { metricsData.value = data },
+    (data) => {
+      metricsData.value = data
+      updateMetricTrends(data)
+    },
     () => { /* ignore errors */ }
   )
 })
@@ -589,7 +661,7 @@ a.stat-card:hover {
 /* Unified Metrics Section */
 .metrics-section {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-top: 16px;
 }
@@ -631,56 +703,59 @@ a.stat-card:hover {
   font-size: 12px;
   color: var(--c-text-3);
 }
-
-/* Mini donut */
-.donut-mini {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 8px;
+.trend-chart {
+  height: 96px;
+  margin-bottom: 8px;
+  border: 1px solid var(--c-border-light);
+  border-radius: 6px;
+  background: #fbfdff;
+  overflow: hidden;
+  position: relative;
 }
-.donut-mini svg {
+.trend-chart svg {
   width: 100%;
   height: 100%;
-  stroke-dashoffset: 0;
-  pathLength: 100;
 }
+.trend-grid {
+  fill: none;
+  stroke: var(--c-border);
+  stroke-width: 1;
+}
+.trend-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.trend-line.usage-main { stroke: #2563eb; }
+.trend-line.usage-sub { stroke: #0ea5e9; }
+.trend-line.error-main { stroke: #dc2626; }
+.trend-line.error-sub { stroke: #f59e0b; }
+.trend-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-text-3);
+  font-size: 12px;
+}
+.trend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.trend-dot.usage-main { background: #2563eb; }
+.trend-dot.usage-sub { background: #0ea5e9; }
+.trend-dot.error-main { background: #dc2626; }
+.trend-dot.error-sub { background: #f59e0b; }
 
-/* Metric stats */
 .metric-stats { font-size: 12px; color: var(--c-text-2); }
 .stat-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot.success { background: var(--c-success, #10b981); }
 .dot.error { background: var(--c-danger); }
-
-/* Latency bars */
-.latency-bars {
-  display: flex;
-  gap: 4px;
-  align-items: flex-end;
-  height: 48px;
-  margin-bottom: 4px;
-}
-.latency-bar {
-  flex: 1;
-  background: var(--c-border-light, var(--c-border));
-  border-radius: 2px;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-}
-.latency-bar-fill {
-  width: 100%;
-  background: linear-gradient(0deg, var(--c-primary, #3b82f6), var(--c-primary-light, #60a5fa));
-  border-radius: 2px;
-  transition: height 0.5s ease;
-}
-.latency-labels {
-  display: flex;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--c-text-3);
-}
-.latency-labels span { flex: 1; text-align: center; }
 
 /* Top routes mini */
 .top-routes { display: flex; flex-direction: column; gap: 6px; }
@@ -710,30 +785,21 @@ a.stat-card:hover {
   border-radius: 2px;
   transition: width 0.5s ease;
 }
+.route-mini-fill.warn {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+.route-mini-fill.bad {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
 .route-mini-count { color: var(--c-text-3); text-align: right; }
 .route-mini-provider { color: var(--c-text-3); font-size: 11px; }
 .empty-mini { text-align: center; padding: 16px; color: var(--c-text-3); font-size: 12px; }
-
-/* Token inline */
-.token-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
-  padding: 8px 0;
-}
-.token-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.token-num { font-size: 20px; font-weight: 700; color: var(--c-text); }
-.token-lbl { font-size: 11px; color: var(--c-text-3); text-transform: uppercase; }
-.token-rate-hint { font-size: 11px; color: var(--c-text-3); margin: -2px 0 2px; }
-.token-divider-v { width: 1px; height: 36px; background: var(--c-border); }
-.token-rates-mini { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid var(--c-border-light, var(--c-border)); padding-top: 8px; }
 .rate-mini { display: flex; justify-content: space-between; font-size: 11px; }
 .rate-provider { color: var(--c-text-2); font-weight: 500; }
 .rate-value { color: var(--c-text-3); font-family: monospace; }
 
 @media (max-width: 1024px) {
-  .metrics-section { grid-template-columns: repeat(3, 1fr); }
+  .metrics-section { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 480px) {
   .metrics-section { grid-template-columns: 1fr; }

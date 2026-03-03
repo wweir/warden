@@ -93,12 +93,12 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				rec.Response = assembled
 				// Extract token usage from assembled response for metrics
 				usage := ExtractTokenUsage(assembled)
-				g.RecordTokenMetrics(selectedProvider.Name, model, usage, rec.DurationMs)
+				g.RecordTokenMetrics(route.Prefix, selectedProvider.Name, model, "chat/completions", usage, rec.DurationMs)
 			}
 		} else if len(respBody) > 0 && errMsg == "" {
 			// Extract token usage from non-stream response
 			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(selectedProvider.Name, model, usage, rec.DurationMs)
+			g.RecordTokenMetrics(route.Prefix, selectedProvider.Name, model, "chat/completions", usage, rec.DurationMs)
 		}
 		g.recordAndBroadcast(rec)
 	}
@@ -131,6 +131,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				return
 			}
 			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
+			if stream {
+				g.RecordTTFTMetric(route.Prefix, selectedProvider.Name, model, "chat/completions", latency)
+			}
 
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -192,6 +195,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				return
 			}
 			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
+			g.RecordTTFTMetric(route.Prefix, selectedProvider.Name, origModel, "chat/completions", latency)
 
 			// first request succeeded, write SSE response to client
 			w.Header().Set("Content-Type", "text/event-stream")

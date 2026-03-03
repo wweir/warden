@@ -13,33 +13,43 @@
     <!-- Stats row -->
     <div v-if="metricsData" class="route-stats">
       <div class="route-stat-card">
-        <div class="route-stat-title">{{ $t('routes.activeProviders') }}</div>
+        <div class="route-stat-title">{{ $t('routes.topTraffic') }}</div>
         <div class="route-stat-list">
-          <div v-for="p in activeProviderRoutes" :key="p.key" class="stat-row-item">
-            <span class="stat-name">{{ p.provider }}<span class="stat-sub-label"> · {{ p.route }}</span></span>
-            <span class="stat-count">{{ fmtNum(p.count) }}</span>
+          <div v-for="item in topTrafficRoutes" :key="item.route" class="stat-row-item">
+            <span class="stat-name">{{ item.route }}</span>
+            <span class="stat-count">{{ fmtNum(item.requests) }}</span>
           </div>
-          <span v-if="activeProviderRoutes.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
+          <span v-if="topTrafficRoutes.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
         </div>
       </div>
       <div class="route-stat-card">
-        <div class="route-stat-title">{{ $t('routes.topModels') }}</div>
+        <div class="route-stat-title">{{ $t('routes.topFailures') }}</div>
         <div class="route-stat-list">
-          <div v-for="m in topModels" :key="m.key" class="stat-row-item">
-            <span class="stat-name">{{ m.model }}<span class="stat-sub-label"> · {{ m.provider }}</span></span>
-            <span class="stat-count">{{ fmtNum(m.count) }}</span>
+          <div v-for="item in topFailureRoutes" :key="item.route" class="stat-row-item">
+            <span class="stat-name">{{ item.route }}<span class="stat-sub-label"> · {{ item.successRate.toFixed(1) }}%</span></span>
+            <span class="stat-count">{{ fmtNum(item.failure) }}</span>
           </div>
-          <span v-if="topModels.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
+          <span v-if="topFailureRoutes.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
         </div>
       </div>
       <div class="route-stat-card">
-        <div class="route-stat-title">{{ $t('routes.topEndpoints') }}</div>
+        <div class="route-stat-title">{{ $t('routes.lowestSuccess') }}</div>
         <div class="route-stat-list">
-          <div v-for="e in topEndpoints" :key="e.key" class="stat-row-item">
-            <span class="stat-name"><code>{{ e.endpoint }}</code><span class="stat-sub-label"> · {{ e.route }}</span></span>
-            <span class="stat-count">{{ fmtNum(e.count) }}</span>
+          <div v-for="item in lowSuccessRoutes" :key="item.route" class="stat-row-item">
+            <span class="stat-name">{{ item.route }}<span class="stat-sub-label"> · {{ fmtNum(item.failure) }} {{ $t('routes.failures') }}</span></span>
+            <span class="stat-count">{{ item.successRate.toFixed(1) }}%</span>
           </div>
-          <span v-if="topEndpoints.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
+          <span v-if="lowSuccessRoutes.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
+        </div>
+      </div>
+      <div class="route-stat-card">
+        <div class="route-stat-title">{{ $t('routes.highestOutputRate') }}</div>
+        <div class="route-stat-list">
+          <div v-for="item in highOutputRateRoutes" :key="item.route" class="stat-row-item">
+            <span class="stat-name">{{ item.route }}</span>
+            <span class="stat-count">{{ formatTPS(item.outputRate) }}</span>
+          </div>
+          <span v-if="highOutputRateRoutes.length === 0" class="stat-empty">{{ $t('common.noData') }}</span>
         </div>
       </div>
     </div>
@@ -47,10 +57,19 @@
     <div v-if="status" class="panel" style="padding:18px">
       <table class="data-table">
         <thead>
-          <tr><th>{{ $t('routes.prefix') }}</th><th>{{ $t('routes.providers') }}</th><th>{{ $t('routes.tools') }}</th></tr>
+          <tr>
+            <th>{{ $t('routes.prefix') }}</th>
+            <th>{{ $t('routes.providers') }}</th>
+            <th>{{ $t('routes.tools') }}</th>
+            <th>{{ $t('routes.requests') }}</th>
+            <th>{{ $t('routes.failures') }}</th>
+            <th>{{ $t('routes.successRate') }}</th>
+            <th>{{ $t('routes.outputRate') }}</th>
+            <th>{{ $t('routes.latencyP95') }}</th>
+          </tr>
         </thead>
         <tbody>
-          <tr v-for="r in filtered" :key="r.prefix">
+          <tr v-for="r in filteredRoutes" :key="r.prefix">
             <td><router-link :to="'/routes' + r.prefix" class="resource-link"><code>{{ r.prefix }}</code></router-link></td>
             <td>
               <template v-for="(p, i) in (r.providers || [])" :key="p">
@@ -65,9 +84,14 @@
                 <router-link :to="'/mcp/' + encodeURIComponent(t)" class="resource-link">{{ t }}</router-link>
               </template>
             </td>
+            <td class="metric-cell">{{ fmtNum(r.requests) }}</td>
+            <td class="metric-cell">{{ fmtNum(r.failures) }}</td>
+            <td class="metric-cell" :class="r.successRate >= 99 ? 'text-success' : r.successRate >= 95 ? 'text-warning' : 'text-error'">{{ r.successRate > 0 ? r.successRate.toFixed(1) + '%' : '-' }}</td>
+            <td class="metric-cell">{{ formatTPS(r.outputRate) }}</td>
+            <td class="metric-cell">{{ formatMs(r.latencyP95) }}</td>
           </tr>
-          <tr v-if="filtered.length === 0">
-            <td colspan="3" class="empty" style="padding:16px 0">{{ $t('routes.noMatch', { query: search }) }}</td>
+          <tr v-if="filteredRoutes.length === 0">
+            <td colspan="8" class="empty" style="padding:16px 0">{{ $t('routes.noMatch', { query: search }) }}</td>
           </tr>
         </tbody>
       </table>
@@ -98,53 +122,210 @@ const filtered = computed(() => {
   )
 })
 
-// Active provider+route combinations by request count
-const activeProviderRoutes = computed(() => {
-  if (!metricsData.value?.requests_total?.length) return []
-  const counts = {}
-  for (const item of metricsData.value.requests_total) {
-    if (!item.provider || !item.route) continue
-    const key = `${item.provider}\0${item.route}`
-    if (!counts[key]) counts[key] = { provider: item.provider, route: item.route, count: 0 }
-    counts[key].count += item.value
+function quantileFromHistogramBuckets(buckets, quantile) {
+  const levels = Object.keys(buckets).map(Number).filter(Number.isFinite).sort((a, b) => a - b)
+  if (!levels.length) return { value: 0, count: 0 }
+  const total = buckets[levels[levels.length - 1]]
+  if (!total) return { value: 0, count: 0 }
+  const rank = total * quantile
+  let prevLe = 0
+  let prevCount = 0
+  for (const le of levels) {
+    const cum = buckets[le]
+    if (cum >= rank) {
+      const bucketCount = cum - prevCount
+      if (bucketCount <= 0) return { value: le, count: total }
+      const ratio = Math.max(0, Math.min(1, (rank - prevCount) / bucketCount))
+      return { value: prevLe + (le - prevLe) * ratio, count: total }
+    }
+    prevLe = le
+    prevCount = cum
   }
-  return Object.values(counts)
-    .sort((a, b) => b.count - a.count || `${a.provider}\0${a.route}`.localeCompare(`${b.provider}\0${b.route}`))
-    .slice(0, 5)
-    .map(p => ({ ...p, key: `${p.provider}\0${p.route}` }))
+  return { value: levels[levels.length - 1], count: total }
+}
+
+const routeMetrics = computed(() => {
+  const map = {}
+  for (const row of metricsData.value?.requests_total ?? []) {
+    if (!map[row.route]) {
+      map[row.route] = {
+        route: row.route,
+        success: 0,
+        failure: 0,
+        requests: 0,
+        latencyP95: 0,
+        ttftWeighted: 0,
+        ttftSamples: 0,
+        throughputWeighted: 0,
+        throughputSamples: 0,
+        outputRate: 0,
+      }
+    }
+    if (row.status === "failure") map[row.route].failure += row.value
+    else map[row.route].success += row.value
+  }
+
+  const durationBuckets = {}
+  for (const row of metricsData.value?.request_duration ?? []) {
+    if (!durationBuckets[row.route]) durationBuckets[row.route] = {}
+    const le = Number(row.le)
+    if (!Number.isFinite(le)) continue
+    durationBuckets[row.route][le] = (durationBuckets[row.route][le] ?? 0) + Number(row.value || 0)
+  }
+
+  for (const route of Object.keys(durationBuckets)) {
+    if (!map[route]) {
+      map[route] = {
+        route,
+        success: 0,
+        failure: 0,
+        requests: 0,
+        latencyP95: 0,
+        ttftWeighted: 0,
+        ttftSamples: 0,
+        throughputWeighted: 0,
+        throughputSamples: 0,
+        outputRate: 0,
+      }
+    }
+    const q = quantileFromHistogramBuckets(durationBuckets[route], 0.95)
+    map[route].latencyP95 = q.value
+  }
+
+  for (const row of metricsData.value?.stream_ttft_p95_ms ?? []) {
+    if (!map[row.route]) {
+      map[row.route] = {
+        route: row.route,
+        success: 0,
+        failure: 0,
+        requests: 0,
+        latencyP95: 0,
+        ttftWeighted: 0,
+        ttftSamples: 0,
+        throughputWeighted: 0,
+        throughputSamples: 0,
+        outputRate: 0,
+      }
+    }
+    const count = Number(row.count || 0)
+    map[row.route].ttftWeighted += Number(row.value || 0) * count
+    map[row.route].ttftSamples += count
+  }
+
+  for (const row of metricsData.value?.throughput_p99_tokens ?? []) {
+    if (!map[row.route]) {
+      map[row.route] = {
+        route: row.route,
+        success: 0,
+        failure: 0,
+        requests: 0,
+        latencyP95: 0,
+        ttftWeighted: 0,
+        ttftSamples: 0,
+        throughputWeighted: 0,
+        throughputSamples: 0,
+        outputRate: 0,
+      }
+    }
+    const count = Number(row.count || 0)
+    map[row.route].throughputWeighted += Number(row.value || 0) * count
+    map[row.route].throughputSamples += count
+  }
+
+  for (const row of metricsData.value?.token_rate ?? []) {
+    if (row.type !== "completion") continue
+    if (!row.route) continue
+    if (!map[row.route]) {
+      map[row.route] = {
+        route: row.route,
+        success: 0,
+        failure: 0,
+        requests: 0,
+        latencyP95: 0,
+        ttftWeighted: 0,
+        ttftSamples: 0,
+        throughputWeighted: 0,
+        throughputSamples: 0,
+        outputRate: 0,
+      }
+    }
+    map[row.route].outputRate = Math.max(map[row.route].outputRate, Number(row.value || 0))
+  }
+
+  return Object.values(map).map((item) => {
+    const requests = item.success + item.failure
+    return {
+      route: item.route,
+      requests,
+      successRate: requests > 0 ? (item.success / requests) * 100 : 0,
+      latencyP95: item.latencyP95,
+      ttftP95: item.ttftSamples > 0 ? item.ttftWeighted / item.ttftSamples : 0,
+      throughputP99: item.throughputSamples > 0 ? item.throughputWeighted / item.throughputSamples : 0,
+      outputRate: item.outputRate || 0,
+      failure: item.failure,
+      total: requests,
+    }
+  })
 })
 
-// Top models by request count (model+provider)
-const topModels = computed(() => {
-  if (!metricsData.value?.requests_total?.length) return []
-  const counts = {}
-  for (const item of metricsData.value.requests_total) {
-    const model = item.model || 'unknown'
-    const key = `${model}\0${item.provider}`
-    if (!counts[key]) counts[key] = { model, provider: item.provider, count: 0 }
-    counts[key].count += item.value
-  }
-  return Object.values(counts)
-    .sort((a, b) => b.count - a.count || `${a.model}\0${a.provider}`.localeCompare(`${b.model}\0${b.provider}`))
-    .slice(0, 5)
-    .map(m => ({ ...m, key: `${m.model}\0${m.provider}` }))
+const routeMetricMap = computed(() => {
+  const map = {}
+  for (const item of routeMetrics.value) map[item.route] = item
+  return map
 })
 
-// Top endpoints by request count (endpoint+route)
-const topEndpoints = computed(() => {
-  if (!metricsData.value?.requests_total?.length) return []
-  const counts = {}
-  for (const item of metricsData.value.requests_total) {
-    if (!item.endpoint) continue
-    const key = `${item.endpoint}\0${item.route}`
-    if (!counts[key]) counts[key] = { endpoint: item.endpoint, route: item.route, count: 0 }
-    counts[key].count += item.value
-  }
-  return Object.values(counts)
-    .sort((a, b) => b.count - a.count || `${a.endpoint}\0${a.route}`.localeCompare(`${b.endpoint}\0${b.route}`))
-    .slice(0, 5)
-    .map(e => ({ ...e, key: `${e.endpoint}\0${e.route}` }))
+const filteredRoutes = computed(() => {
+  return filtered.value.map((route) => {
+    const metric = routeMetricMap.value[route.prefix] || {}
+    return {
+      ...route,
+      requests: metric.requests || 0,
+      failures: metric.failure || 0,
+      successRate: metric.successRate || 0,
+      outputRate: metric.outputRate || 0,
+      latencyP95: metric.latencyP95 || 0,
+      ttftP95: metric.ttftP95 || 0,
+      throughputP99: metric.throughputP99 || 0,
+    }
+  }).sort((a, b) => b.requests - a.requests || a.prefix.localeCompare(b.prefix))
 })
+
+const topTrafficRoutes = computed(() => {
+  return routeMetrics.value
+    .filter((item) => item.requests > 0)
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 5)
+})
+
+const topFailureRoutes = computed(() => {
+  return routeMetrics.value
+    .filter((item) => item.failure > 0)
+    .sort((a, b) => b.failure - a.failure || a.successRate - b.successRate)
+    .slice(0, 5)
+})
+
+const lowSuccessRoutes = computed(() => {
+  let list = routeMetrics.value.filter((item) => item.total >= 20 && item.failure > 0)
+  if (!list.length) list = routeMetrics.value.filter((item) => item.failure > 0)
+  return list.sort((a, b) => a.successRate - b.successRate || b.failure - a.failure).slice(0, 5)
+})
+
+const highOutputRateRoutes = computed(() => {
+  return routeMetrics.value
+    .filter((item) => item.outputRate > 0)
+    .sort((a, b) => b.outputRate - a.outputRate)
+    .slice(0, 5)
+})
+
+function formatMs(value) {
+  if (!value || value < 0) return "-"
+  return `${Math.round(value)}ms`
+}
+
+function formatTPS(value) {
+  if (!value || value < 0) return "-"
+  return `${value.toFixed(1)}/s`
+}
 
 onMounted(() => {
   statusStop = createStatusStream().start(
@@ -181,7 +362,7 @@ onUnmounted(() => {
 
 .route-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -234,6 +415,11 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--c-text-3);
 }
+.metric-cell {
+  color: var(--c-text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 
 @media (max-width: 768px) {
   .page-header {
@@ -244,6 +430,12 @@ onUnmounted(() => {
   .search-input {
     max-width: 100%;
   }
+  .route-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
   .route-stats {
     grid-template-columns: 1fr;
   }
