@@ -149,20 +149,28 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 		}
 	}
 
-	if len(candidates) > 0 {
-		earliest := candidates[0]
-		for _, c := range candidates[1:] {
+	autoSuppressed := make([]candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.state.manualSuppress {
+			continue
+		}
+		autoSuppressed = append(autoSuppressed, c)
+	}
+
+	if len(autoSuppressed) > 0 {
+		earliest := autoSuppressed[0]
+		for _, c := range autoSuppressed[1:] {
 			if c.state.suppressUntil.Before(earliest.state.suppressUntil) {
 				earliest = c
 			}
 		}
-		suppressedInfo := make([]any, 0, len(candidates)*4+2)
+		suppressedInfo := make([]any, 0, len(autoSuppressed)*4+2)
 		suppressedInfo = append(suppressedInfo, "selected", earliest.name, "suppress_until", earliest.state.suppressUntil)
-		for _, c := range candidates {
+		for _, c := range autoSuppressed {
 			suppressedInfo = append(suppressedInfo, c.name+"_failures", c.state.consecutiveFailures,
 				c.name+"_suppress_until", c.state.suppressUntil)
 		}
-		slog.Warn("All providers suppressed, selecting earliest expiring", suppressedInfo...)
+		slog.Warn("All auto-suppressed providers unavailable, selecting earliest expiring", suppressedInfo...)
 		return earliest.provCfg, nil
 	}
 

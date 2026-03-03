@@ -209,6 +209,61 @@ func TestSelector_AllSuppressed(t *testing.T) {
 	}
 }
 
+func TestSelector_ManualSuppress_SelectSkipsProvider(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary":   {Name: "primary", URL: "http://primary.example.com", Protocol: "openai"},
+			"secondary": {Name: "secondary", URL: "http://secondary.example.com", Protocol: "openai"},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/test": {Prefix: "/test", Providers: []string{"primary", "secondary"}},
+		},
+	}
+	route := cfg.Route["/test"]
+
+	s := NewSelector(cfg)
+	if ok := s.SetManualSuppress("primary", true); !ok {
+		t.Fatal("SetManualSuppress(primary, true) = false, want true")
+	}
+
+	bu, err := s.Select(cfg, route, "")
+	if err != nil {
+		t.Fatalf("Select() = _, %v", err)
+	}
+	if bu.Name != "secondary" {
+		t.Errorf("Select() with primary manually suppressed: want secondary, got %s", bu.Name)
+	}
+}
+
+func TestSelector_ManualSuppress_NoFallbackToManualProvider(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary":   {Name: "primary", URL: "http://primary.example.com", Protocol: "openai"},
+			"secondary": {Name: "secondary", URL: "http://secondary.example.com", Protocol: "openai"},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/test": {Prefix: "/test", Providers: []string{"primary", "secondary"}},
+		},
+	}
+	route := cfg.Route["/test"]
+
+	s := NewSelector(cfg)
+	if ok := s.SetManualSuppress("primary", true); !ok {
+		t.Fatal("SetManualSuppress(primary, true) = false, want true")
+	}
+	s.mu.Lock()
+	s.states["secondary"].suppressUntil = time.Now().Add(60 * time.Second)
+	s.mu.Unlock()
+
+	_, err := s.Select(cfg, route, "", "secondary")
+	if err == nil {
+		t.Fatal("Select() = nil error, want ErrProviderNotFound")
+	}
+	if err != ErrProviderNotFound {
+		t.Fatalf("Select() error = %v, want %v", err, ErrProviderNotFound)
+	}
+}
+
 func TestSelector_ModelFilter(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
