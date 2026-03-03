@@ -1,0 +1,52 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="stripe" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+      <rect width="14" height="14" fill="#ECF4EF"/>
+      <rect width="6" height="14" fill="#DCEBDF"/>
+    </pattern>
+  </defs>
+
+  <rect x="18" y="18" width="220" height="220" rx="44" fill="url(#stripe)"/>
+
+  <g opacity="0.6" stroke="#FF6A3D" stroke-linecap="round">
+    <path d="M30 166L70 148" stroke-width="6"/>
+    <path d="M34 184L79 163" stroke-width="5"/>
+    <path d="M40 202L86 181" stroke-width="4"/>
+  </g>
+
+  <g transform="translate(10 6) scale(0.88)">
+    <path d="M34 182L47 124L59 111L66 90L84 80L98 92L90 108L108 141L95 194L70 208L51 200L39 212L27 205L29 194L21 185Z" fill="#17324A"/>
+    <path d="M59 111L66 90L84 80L98 92L90 108L73 112Z" fill="#2B5673"/>
+    <circle cx="82" cy="96" r="6" fill="#7EF7C4"/>
+    <path d="M100 124L117 112L126 124L106 139Z" fill="#1F445F"/>
+  </g>
+
+  <path d="M116 116C134 114 149 119 162 128" stroke="#B6CBD7" stroke-width="5" stroke-linecap="round"/>
+  <path d="M111 123C129 124 145 130 159 140" stroke="#8EA7B7" stroke-width="3" stroke-linecap="round" stroke-dasharray="5 6"/>
+
+  <path d="M153 126L168 110L184 115L189 130L176 145L159 142" stroke="#13A676" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g transform="translate(114 109) scale(1.6)" fill="#2ED79D" stroke="#0E7B5A" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M2 17L10 9L19 7L27 11L35 10L40 14L36 18L25 19L21 23H15L16 19L10 20L8 24H3L5 19L1 18Z"/>
+    <path d="M34 12L40 14"/>
+    <circle cx="31" cy="12" r="1.4" fill="#0E7B5A" stroke="none"/>
+  </g>
+
+  <g transform="translate(146 121) scale(1.46)" fill="#55E2B3" stroke="#148763" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M2 16L9 9L18 7L26 11L33 10L38 14L34 18L24 19L20 23H14L15 19L9 20L7 24H2L4 19L0 18Z"/>
+    <path d="M32 12L38 14"/>
+  </g>
+
+  <g transform="translate(178 133) scale(1.32)" fill="#78ECC4" stroke="#20916E" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M2 16L9 9L18 7L26 11L33 10L38 14L34 18L24 19L20 23H14L15 19L9 20L7 24H2L4 19L0 18Z"/>
+    <path d="M32 12L38 14"/>
+  </g>
+
+  <g stroke="#FF6A3D" stroke-width="3" stroke-linecap="round" opacity="0.7">
+    <path d="M124 116L132 118"/>
+    <path d="M127 126L135 129"/>
+    <path d="M130 136L138 139"/>
+  </g>
+
+  <rect x="18" y="18" width="220" height="220" rx="44" stroke="#C2DACE" stroke-width="2"/>
+</svg>

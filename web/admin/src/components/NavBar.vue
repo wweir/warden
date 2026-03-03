@@ -2,7 +2,9 @@
   <nav class="navbar">
     <div class="navbar-inner">
       <router-link to="/" class="brand">
-        <span class="brand-icon">W</span>
+        <span class="brand-icon">
+          <img :src="brandIcon" alt="Warden icon" class="brand-icon-img">
+        </span>
         <span class="brand-text">Warden</span>
       </router-link>
       <button class="menu-toggle" @click="menuOpen = !menuOpen" aria-label="Toggle menu">
@@ -29,6 +31,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import brandIcon from '../assets/thresh-horses-icon.svg'
 
 const { locale } = useI18n()
 const menuOpen = ref(false)
@@ -91,14 +94,17 @@ function toggleLocale() {
 .brand-icon {
   width: 28px;
   height: 28px;
-  background: var(--c-primary);
   border-radius: 6px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 800;
-  font-size: 15px;
-  color: #fff;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
+.brand-icon-img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .brand-text {
   font-weight: 700;

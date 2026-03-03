@@ -806,6 +806,7 @@ type Step struct {
 **前端**（`web/admin/`）：
 
 - Vue 3 + Vite，纯 CSS（无 UI 框架），构建产物 embed 到 Go 二进制
+- 导航栏品牌图标使用 `web/admin/src/assets/thresh-horses-icon.svg`（主题意向：链钩牵引马群前冲）；浏览器 favicon 使用 `web/admin/public/favicon.svg` 并在构建时压缩为 brotli 资源
 - Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；监控卡片优先展示客户端代理运营指标（请求用量、token 用量、输出速率、失败率、failover/stream error 压力、路由错误热点），并保留 TTFT/throughput 慢组合用于性能定位；用量概览与错误压力使用前端折线图，基于 Prometheus 累计计数器按 5s 采样计算增量速率，保留最近 72 个点（约 6 分钟），计数器回退时自动重置历史；通过 `/_admin/api/metrics/stream` 实时刷新
 - ProviderDetail：Provider 基本信息、运行时状态、模型别名、可用模型列表、Health Check 按钮
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
