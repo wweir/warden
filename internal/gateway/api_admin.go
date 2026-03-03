@@ -89,6 +89,9 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("GET /api/providers/detail", func(w http.ResponseWriter, r *http.Request) {
 		g.handleProviderDetail(w, r, nil)
 	})
+	mux.HandleFunc("POST /api/providers/suppress", func(w http.ResponseWriter, r *http.Request) {
+		g.handleProviderSuppress(w, r, nil)
+	})
 	mux.HandleFunc("POST /api/config/validate", func(w http.ResponseWriter, r *http.Request) {
 		g.handleConfigValidate(w, r, nil)
 	})
@@ -497,14 +500,48 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":          name,
-		"url":           provCfg.URL,
-		"protocol":      provCfg.Protocol,
-		"timeout":       provCfg.Timeout,
-		"has_api_key":   provCfg.APIKey.Value() != "",
-		"model_aliases": provCfg.ModelAliases,
-		"models":        models,
-		"status":        status,
+		"name":               name,
+		"url":                provCfg.URL,
+		"protocol":           provCfg.Protocol,
+		"timeout":            provCfg.Timeout,
+		"has_api_key":        provCfg.APIKey.Value() != "",
+		"chat_to_responses":  provCfg.ChatToResponses,
+		"model_aliases":      provCfg.ModelAliases,
+		"models":             models,
+		"status":             status,
+	})
+}
+
+// handleProviderSuppress sets or clears manual suppression for a provider.
+func (g *Gateway) handleProviderSuppress(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	var body struct {
+		Name     string `json:"name"`
+		Suppress bool   `json:"suppress"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if body.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := g.cfg.Provider[body.Name]; !exists {
+		http.Error(w, "unknown provider: "+body.Name, http.StatusNotFound)
+		return
+	}
+
+	if !g.selector.SetManualSuppress(body.Name, body.Suppress) {
+		http.Error(w, "failed to update provider", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"name":             body.Name,
+		"manual_suppressed": body.Suppress,
 	})
 }
 

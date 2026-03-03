@@ -12,6 +12,7 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/internal/toolexec"
@@ -48,6 +49,9 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	}
 	w.Header().Set("X-Model", model)
 
+	// check for explicit provider selection via header
+	explicitProvider := r.Header.Get("X-Provider")
+
 	// collect enabled MCP tools
 	availableTools, injectedTools := g.collectTools(r.Context(), route)
 
@@ -59,14 +63,31 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	// select provider with failover on retryable errors
 	var excluded []string
 	authRetried := map[string]bool{}
-	selectedProvider, err := g.selector.Select(g.cfg, route, model)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	var selectedProvider *config.ProviderConfig
+	allowFailover := explicitProvider == "" // disable failover when provider is explicitly specified
+
+	if explicitProvider != "" {
+		selectedProvider, err = g.selector.SelectByName(g.cfg, route, explicitProvider)
+		if err != nil {
+			http.Error(w, "provider "+explicitProvider+" not found in route", http.StatusBadRequest)
+			return
+		}
+	} else {
+		selectedProvider, err = g.selector.Select(g.cfg, route, model)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Set provider header for metrics middleware
 	w.Header().Set("X-Provider", selectedProvider.Name)
+
+	// chat_to_responses mode: route Chat request to upstream /responses endpoint
+	if selectedProvider.ChatToResponses && selectedProvider.Protocol == "openai" {
+		g.handleChatViaResponses(w, r, route, rawReqBody, model, stream, selectedProvider, availableTools, startTime, reqID, allowFailover, excluded, authRetried)
+		return
+	}
 
 	// helper to record a log entry
 	var steps []reqlog.Step
@@ -122,9 +143,11 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				if tryAuthRetry(err, selectedProvider, authRetried) {
 					continue
 				}
-				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, model); next != nil {
-					selectedProvider = next
-					continue
+				if allowFailover {
+					if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, model); next != nil {
+						selectedProvider = next
+						continue
+					}
 				}
 				logRecord(nil, err.Error())
 				http.Error(w, err.Error(), http.StatusBadGateway)
@@ -185,10 +208,12 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				if tryAuthRetry(err, selectedProvider, authRetried) {
 					continue
 				}
-				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
-					selectedProvider = next
-					req.Model = selectedProvider.ResolveModel(origModel)
-					continue
+				if allowFailover {
+					if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
+						selectedProvider = next
+						req.Model = selectedProvider.ResolveModel(origModel)
+						continue
+					}
 				}
 				logRecord(nil, err.Error())
 				http.Error(w, err.Error(), http.StatusBadGateway)
@@ -238,10 +263,12 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			if tryAuthRetry(err, selectedProvider, authRetried) {
 				continue
 			}
-			if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
-				selectedProvider = next
-				req.Model = selectedProvider.ResolveModel(origModel)
-				continue
+			if allowFailover {
+				if next := g.tryFailover(err, selectedProvider.Name, &excluded, route, origModel); next != nil {
+					selectedProvider = next
+					req.Model = selectedProvider.ResolveModel(origModel)
+					continue
+				}
 			}
 			logRecord(nil, err.Error())
 			http.Error(w, err.Error(), http.StatusBadGateway)
@@ -497,4 +524,311 @@ func sendUpstreamChatRaw(provCfg *config.ProviderConfig, req openai.ChatCompleti
 	}
 	body, _, err := sendRequest(provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody, true)
 	return body, err
+}
+
+// handleChatViaResponses handles Chat Completions requests by converting to/from Responses API format.
+// This is used when chat_to_responses is enabled for a provider.
+func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
+	rawReqBody []byte, model string, stream bool, provCfg *config.ProviderConfig,
+	availableTools []mcp.Tool, startTime time.Time, reqID string, allowFailover bool,
+	excluded []string, authRetried map[string]bool,
+) {
+	var err error
+	defer func() { deferlog.DebugError(err, "handle chat via responses", "route", route.Prefix) }()
+
+	// helper to record a log entry
+	var steps []reqlog.Step
+	logRecord := func(respBody []byte, errMsg string) {
+		rec := reqlog.Record{
+			Timestamp:   startTime,
+			RequestID:   reqID,
+			Route:       route.Prefix,
+			Endpoint:    "chat/completions",
+			Model:       model,
+			Stream:      stream,
+			Provider:    provCfg.Name,
+			UserAgent:   r.UserAgent(),
+			DurationMs:  time.Since(startTime).Milliseconds(),
+			Error:       errMsg,
+			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
+			Request:     rawReqBody,
+			Response:    respBody,
+			Steps:       steps,
+		}
+		// assemble streaming chunks for logging
+		if stream && len(respBody) > 0 && errMsg == "" {
+			// Convert Responses SSE to Chat SSE for logging assembly
+			chatSSE := openai.ResponsesSSEToChatSSE(respBody)
+			if assembled, err := openai.AssembleChatStream(chatSSE); err == nil {
+				rec.Response = assembled
+				usage := ExtractTokenUsage(assembled)
+				g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "chat/completions", usage, rec.DurationMs)
+			}
+		} else if len(respBody) > 0 && errMsg == "" {
+			usage := ExtractTokenUsage(respBody)
+			g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "chat/completions", usage, rec.DurationMs)
+		}
+		g.recordAndBroadcast(rec)
+	}
+
+	// Parse the Chat request
+	var chatReq openai.ChatCompletionRequest
+	if err = json.Unmarshal(rawReqBody, &chatReq); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Convert to Responses API request
+	respReq, err := openai.ChatRequestToResponsesRequest(chatReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("convert to responses: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Inject MCP tools if configured
+	injectedTools := openai.InjectResponsesTools(&respReq, mcpToolsToToolDefs(availableTools))
+
+	// Resolve model alias
+	origModel := respReq.Model
+	respReq.Model = provCfg.ResolveModel(respReq.Model)
+
+	// Streaming path
+	if stream {
+		for {
+			logRequest(r, provCfg.Name, origModel)
+
+			respReq.Stream = true
+			reqBody, err := json.Marshal(respReq)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			rawResp, latency, err := sendRequest(provCfg, "/responses", reqBody, true)
+			if err != nil {
+				g.selector.RecordOutcomeWithSource(provCfg.Name, err, latency, "pre_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "pre_stream")
+				if tryAuthRetry(err, provCfg, authRetried) {
+					continue
+				}
+				if allowFailover {
+					if next := g.tryFailover(err, provCfg.Name, &excluded, route, origModel); next != nil {
+						provCfg = next
+						respReq.Model = provCfg.ResolveModel(origModel)
+						continue
+					}
+				}
+				logRecord(nil, err.Error())
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			g.RecordTTFTMetric(route.Prefix, provCfg.Name, origModel, "chat/completions", latency)
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+
+			// If no injected tools, convert and return
+			if len(injectedTools) == 0 {
+				chatSSE := openai.ResponsesSSEToChatSSE(rawResp)
+				if _, writeErr := w.Write(chatSSE); writeErr != nil {
+					slog.Warn("Failed to write stream response", "error", writeErr)
+				}
+				w.(http.Flusher).Flush()
+				logRecord(rawResp, "")
+				return
+			}
+
+			// With tools: process stream for tool call interception
+			respBody, streamSteps, streamErr := g.processResponsesStreamToolCallsConverted(w, r, provCfg, respReq, injectedTools, rawResp)
+			steps = append(steps, streamSteps...)
+			if streamErr != nil {
+				g.selector.RecordOutcomeWithSource(provCfg.Name, streamErr, time.Since(startTime), "in_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "in_stream")
+				logRecord(respBody, streamErr.Error())
+			} else {
+				logRecord(respBody, "")
+			}
+			return
+		}
+	}
+
+	// Non-streaming path
+	for {
+		logRequest(r, provCfg.Name, origModel)
+
+		reqBody, err := json.Marshal(respReq)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		rawResp, latency, err := sendRequest(provCfg, "/responses", reqBody, false)
+		if err != nil {
+			g.selector.RecordOutcome(provCfg.Name, err, latency)
+			if tryAuthRetry(err, provCfg, authRetried) {
+				continue
+			}
+			if allowFailover {
+				if next := g.tryFailover(err, provCfg.Name, &excluded, route, origModel); next != nil {
+					provCfg = next
+					respReq.Model = provCfg.ResolveModel(origModel)
+					continue
+				}
+			}
+			logRecord(nil, err.Error())
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		g.selector.RecordOutcome(provCfg.Name, nil, latency)
+
+		// Parse Responses API response
+		var respResp openai.ResponsesResponse
+		if err = json.Unmarshal(rawResp, &respResp); err != nil {
+			http.Error(w, fmt.Sprintf("parse response: %v", err), http.StatusBadGateway)
+			return
+		}
+
+		// Check for injected function calls
+		if !hasInjectedFunctionCalls(respResp.Output, injectedTools) {
+			// No injected tool calls: convert and return
+			chatResp, err := openai.ResponsesResponseToChatResponse(respResp, model)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("convert response: %v", err), http.StatusInternalServerError)
+				return
+			}
+			// Execute hooks for any client tool calls
+			if funcCalls, _ := extractFunctionCalls(respResp.Output); len(funcCalls) > 0 {
+				allInfos := funcCallsToInfos(funcCalls)
+				if _, err := toolexec.Execute(r.Context(), allInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr); err != nil {
+					slog.Error("ChatToResponses: failed to run tool hooks", "error", err)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			respBody, _ := json.Marshal(chatResp)
+			w.Write(respBody)
+			logRecord(rawResp, "")
+			return
+		}
+
+		// Process tool calls
+		respResp, toolSteps := g.handleResponsesToolCalls(r, provCfg, respReq, respResp, injectedTools)
+		steps = append(steps, toolSteps...)
+
+		// Convert back to Chat format
+		chatResp, err := openai.ResponsesResponseToChatResponse(respResp, model)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("convert response: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		respBody, _ := json.Marshal(chatResp)
+		w.Write(respBody)
+		logRecord(rawResp, "")
+		return
+	}
+}
+
+// processResponsesStreamToolCallsConverted handles streaming tool call interception for chat_to_responses mode.
+// Returns the raw Responses API SSE body, accumulated steps, and any error.
+func (g *Gateway) processResponsesStreamToolCallsConverted(w http.ResponseWriter, r *http.Request,
+	provCfg *config.ProviderConfig, req openai.ResponsesRequest, injectedTools []string, rawBody []byte,
+) ([]byte, []reqlog.Step, error) {
+	parser := newStreamParser(provCfg.Protocol, true) // Responses API parser
+	var steps []reqlog.Step
+
+	for i := range maxToolCallIterations {
+		if i > 0 {
+			var err error
+			reqBody, _ := json.Marshal(req)
+			rawBody, _, err = sendRequest(provCfg, "/responses", reqBody, true)
+			if err != nil {
+				return nil, steps, err
+			}
+		}
+
+		events := protocol.ParseEvents(rawBody)
+		sseInfos, hasInjected, err := parser.Parse(events, injectedTools)
+		if err != nil {
+			// Convert and replay filtered events
+			filteredEvents := parser.Filter(events, injectedTools)
+			replayData := protocol.ReplayEvents(filteredEvents)
+			chatSSE := openai.ResponsesSSEToChatSSE(replayData)
+			w.Write(chatSSE)
+			w.(http.Flusher).Flush()
+			return replayData, steps, nil
+		}
+
+		results, execErr := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		if execErr != nil {
+			slog.Error("ChatToResponses stream: failed to execute tools", "error", execErr)
+		}
+
+		if !hasInjected {
+			// Convert and replay filtered events
+			filteredEvents := parser.Filter(events, injectedTools)
+			replayData := protocol.ReplayEvents(filteredEvents)
+			chatSSE := openai.ResponsesSSEToChatSSE(replayData)
+			w.Write(chatSSE)
+			w.(http.Flusher).Flush()
+			return replayData, steps, nil
+		}
+
+		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
+		slog.Debug("ChatToResponses stream: executing injected tool calls", "iteration", i+1)
+		if execErr != nil {
+			// On error, convert and return the raw body
+			chatSSE := openai.ResponsesSSEToChatSSE(rawBody)
+			w.Write(chatSSE)
+			w.(http.Flusher).Flush()
+			return rawBody, steps, nil
+		}
+
+		llmReqBody, _ := json.Marshal(req)
+		steps = append(steps, buildStep(i+1, injectedInfos, results, llmReqBody, rawBody))
+
+		completedResp := openai.ExtractCompletedResponse(events)
+		if completedResp == nil {
+			chatSSE := openai.ResponsesSSEToChatSSE(rawBody)
+			w.Write(chatSSE)
+			w.(http.Flusher).Flush()
+			return rawBody, steps, nil
+		}
+
+		newInput, err := buildResponsesInput(req.Input, completedResp.Output, results)
+		if err != nil {
+			return nil, steps, err
+		}
+
+		req.Input = newInput
+		removePreviousResponseID(&req)
+
+		if len(clientInfos) > 0 {
+			// Mixed tool call: pipe final stream with conversion
+			reqBody, _ := json.Marshal(req)
+			rawResp, err := g.pipeResponsesStreamConverted(w, provCfg, reqBody)
+			return rawResp, steps, err
+		}
+	}
+
+	// Max iterations reached
+	reqBody, _ := json.Marshal(req)
+	rawResp, err := g.pipeResponsesStreamConverted(w, provCfg, reqBody)
+	return rawResp, steps, err
+}
+
+// pipeResponsesStreamConverted sends a Responses API streaming request and converts the output to Chat SSE.
+func (g *Gateway) pipeResponsesStreamConverted(w http.ResponseWriter, provCfg *config.ProviderConfig, reqBody []byte) ([]byte, error) {
+	// Use sendRequest directly to get raw body, then convert before writing
+	rawResp, _, err := sendRequest(provCfg, "/responses", reqBody, true)
+	if rawResp != nil {
+		chatSSE := openai.ResponsesSSEToChatSSE(rawResp)
+		if _, writeErr := w.Write(chatSSE); writeErr != nil {
+			slog.Warn("Failed to write converted stream response", "error", writeErr)
+		}
+		w.(http.Flusher).Flush()
+	}
+	return rawResp, err
 }

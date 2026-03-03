@@ -40,6 +40,7 @@ type SuppressReason struct {
 type providerState struct {
 	consecutiveFailures int
 	suppressUntil       time.Time
+	manualSuppress      bool // manually suppressed by admin
 	availableModels     map[string]bool
 	rawModels           []json.RawMessage
 
@@ -140,6 +141,9 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 	}
 
 	for _, c := range candidates {
+		if c.state.manualSuppress {
+			continue // skip manually suppressed providers
+		}
 		if now.After(c.state.suppressUntil) {
 			return c.provCfg, nil
 		}
@@ -162,6 +166,19 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 		return earliest.provCfg, nil
 	}
 
+	return nil, ErrProviderNotFound
+}
+
+// SelectByName returns a specific provider by name if it exists in the route.
+// Returns ErrProviderNotFound if the provider is not in the route's provider list.
+func (s *Selector) SelectByName(cfg *config.ConfigStruct, route *config.RouteConfig, providerName string) (*config.ProviderConfig, error) {
+	for _, provName := range route.Providers {
+		if provName == providerName {
+			if provCfg, exists := cfg.Provider[provName]; exists {
+				return provCfg, nil
+			}
+		}
+	}
 	return nil, ErrProviderNotFound
 }
 
@@ -251,9 +268,12 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 }
 
 // RefreshModels queries GET /models for all providers in parallel.
+// When a provider has static models configured, they are set immediately as a
+// baseline, and a remote fetch is still attempted to discover additional models.
 func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 	var wg sync.WaitGroup
 	for name, provCfg := range cfg.Provider {
+		// Pre-populate configured models so they are available immediately.
 		if len(provCfg.Models) > 0 {
 			models := make(map[string]bool, len(provCfg.Models))
 			rawModels := make([]json.RawMessage, 0, len(provCfg.Models))
@@ -270,29 +290,46 @@ func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 			}
 			s.mu.Unlock()
 			slog.Info("Models loaded from config", "provider", name, "count", len(models))
-			continue
 		}
 
 		wg.Add(1)
 		go func(name string, provCfg *config.ProviderConfig) {
 			defer wg.Done()
 
-			models, rawModels, err := FetchModels(provCfg)
+			fetched, fetchedRaw, err := FetchModels(provCfg)
 			if err != nil {
-				slog.Warn("Models discovery failed, model filter disabled for this provider; set 'models' in config to suppress",
-					"provider", name, "error", err)
+				if len(provCfg.Models) == 0 {
+					slog.Warn("Models discovery failed, model filter disabled for this provider; set 'models' in config to suppress",
+						"provider", name, "error", err)
+				} else {
+					slog.Warn("Models discovery failed, using configured models only",
+						"provider", name, "error", err)
+				}
 				return
 			}
 
 			s.mu.Lock()
 			if st, ok := s.states[name]; ok {
-				st.availableModels = models
-				st.rawModels = rawModels
+				if len(provCfg.Models) > 0 {
+					// Merge fetched models into the configured baseline.
+					for id := range fetched {
+						if !st.availableModels[id] {
+							st.availableModels[id] = true
+							st.rawModels = append(st.rawModels, mustMarshal(map[string]string{
+								"id": id, "object": "model", "owned_by": name,
+							}))
+						}
+					}
+					slog.Info("Models merged from config and upstream",
+						"provider", name, "count", len(st.availableModels))
+				} else {
+					st.availableModels = fetched
+					st.rawModels = fetchedRaw
+					slog.Info("Models discovered from upstream",
+						"provider", name, "count", len(fetched))
+				}
 			}
 			s.mu.Unlock()
-
-			slog.Info("Models discovered from upstream",
-				"provider", name, "count", len(models))
 		}(name, provCfg)
 	}
 	wg.Wait()
@@ -364,6 +401,7 @@ type ProviderStatus struct {
 	ConsecutiveFailures int              `json:"consecutive_failures"`
 	SuppressUntil       time.Time        `json:"suppress_until,omitzero"`
 	Suppressed          bool             `json:"suppressed"`
+	ManualSuppressed    bool             `json:"manual_suppressed"`
 	SuppressReasons     []SuppressReason `json:"suppress_reasons,omitempty"`
 	ModelCount          int              `json:"model_count"`
 	TotalRequests       int64            `json:"total_requests"`
@@ -397,6 +435,7 @@ func (s *providerState) buildStatus(name string) ProviderStatus {
 		ConsecutiveFailures: s.consecutiveFailures,
 		SuppressUntil:       s.suppressUntil,
 		Suppressed:          now.Before(s.suppressUntil),
+		ManualSuppressed:    s.manualSuppress,
 		SuppressReasons:     s.recentSuppressReasons(),
 		TotalRequests:       int64(total),
 		SuccessCount:        int64(success),
@@ -460,6 +499,25 @@ func (s *Selector) ProviderModels(name string) []json.RawMessage {
 		return nil
 	}
 	return st.rawModels
+}
+
+// SetManualSuppress sets or clears manual suppression for a provider.
+// Returns true if the provider exists, false otherwise.
+func (s *Selector) SetManualSuppress(name string, suppress bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, exists := s.states[name]
+	if !exists {
+		return false
+	}
+	st.manualSuppress = suppress
+	if suppress {
+		slog.Info("Provider manually suppressed", "name", name)
+	} else {
+		slog.Info("Provider manual suppression cleared", "name", name)
+	}
+	return true
 }
 
 // SetAuthHeaders injects authentication headers based on protocol type.

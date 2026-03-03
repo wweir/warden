@@ -61,6 +61,9 @@ provider:
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"                        # non-streaming first-token timeout
+    # chat_to_responses: true              # route chat/completions to upstream /responses endpoint
+                                           # enables Responses API features (web search, file search, etc.)
+                                           # requires protocol: "openai"
 
   anthropic:
     url: "https://api.anthropic.com/v1"

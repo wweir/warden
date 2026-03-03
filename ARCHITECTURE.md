@@ -50,6 +50,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── openai/
 │   │   │   ├── types.go         # OpenAI Chat Completions API 请求/响应类型定义
 │   │   │   ├── responses.go     # OpenAI Responses API 请求/响应类型定义
+│   │   │   ├── convert.go       # Chat↔Responses 协议转换器（chat_to_responses 模式）
 │   │   │   ├── stream.go        # OpenAI SSE 流式解析器（Chat + Responses）
 │   │   │   ├── inject.go        # 工具注入（Chat Completions + Responses API）
 │   │   │   └── prompt.go        # 系统提示词注入（Chat Completions + Responses API）
@@ -78,7 +79,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
+主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`，响应转回 Chat 格式返回客户端，从而利用 Responses API 的高级功能（web search、file search 等）。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
 
 ### provider 多选策略 (internal/gateway/selector.go)
 
@@ -86,7 +87,9 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 1. **配置顺序**（主要选择逻辑）：按 `RouteConfig.Providers` 的顺序遍历所有 provider（第一个 = 最高优先级）。当请求指定了 model 时，通过 `availableModels`（来自 `GET /models`）过滤不支持该 model 的 provider。跳过被抑制的 provider。
 
-2. **全部被抑制时的兜底**：如果所有 provider 都被抑制（`suppressUntil > now`），则返回抑制期最早结束的那个，以保证服务可用。
+2. **手动抑制**：管理员可通过 Admin API 或管理面板手动抑制某个 provider，被手动抑制的 provider 会被完全跳过，不参与选择。手动抑制是运行时生效的，重启后重置。
+
+3. **全部被抑制时的兜底**：如果所有 provider 都被抑制（`suppressUntil > now`），则返回抑制期最早结束的那个，以保证服务可用。注意：手动抑制的 provider 不参与此兜底逻辑。
 
 #### 失败抑制机制
 
@@ -106,7 +109,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 #### 模型发现 (Model Discovery)
 
-启动时，Selector 通过 `RefreshModels()` 并行查询每个 provider 的 `GET /models` 端点，获取其实际可用的模型列表，存储在 `providerState.availableModels` 中。
+服务启动时，Gateway 异步调用 `RefreshModels()`，Selector 并行查询每个 provider 的 `GET /models` 端点，获取其实际可用的模型列表，存储在 `providerState.availableModels` 中。若 provider 配置了 `models` 字段，这些模型会先作为基线立即生效，随后仍然尝试远程发现；远程请求成功后，发现的模型与配置的模型合并（去重）；远程请求失败时仅保留配置的模型。模型发现异步执行，不阻塞服务启动；拉取失败仅记录日志，不影响服务运行。
 
 在候选构建阶段，如果请求指定了 model 且 provider 的 `availableModels` 不为 nil，则只保留包含该 model（或定义了该 model 别名）的 provider 作为候选。这确保了当一个 route 配置了多个不同 provider（如 openai + anthropic）时，请求会被路由到实际支持该模型的 provider。
 
@@ -780,6 +783,7 @@ type Step struct {
 | POST | `/_admin/api/restart`                   | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启）             |
 | POST | `/_admin/api/providers/health`          | Provider 探活（调用 fetchModels 测试连通性）                      |
 | GET  | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表）                           |
+| POST | `/_admin/api/providers/suppress`        | 手动抑制/解除抑制 Provider（运行时生效）                          |
 | POST | `/_admin/api/config/validate`           | 配置验证（不保存）                                                |
 | GET  | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
 | GET  | `/_admin/api/mcp/detail?name=xxx`       | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态）    |
@@ -893,3 +897,5 @@ type Step struct {
     - **流式请求**：使用固定的 30s 首-token 超时（`firstTokenTimeout`）。流式响应应该在几秒内返回首个 token，否则说明上游有问题。首 token 之后，body 读取无时间限制。
     - **非流式请求**：使用可配置的超时（`provider.timeout`，默认 120s）。非流式请求需要等待完整响应生成，推理模型可能需要较长时间。超时仅应用于等待响应头（`ResponseHeaderTimeout`），body 读取无时间限制。
     - 延迟统计记录首-token 时间，用于 provider 健康度评估和 failover 决策。
+
+18. **Chat-to-Responses 协议转换**：当 provider 配置 `chat_to_responses: true` 时，客户端仍通过 `POST /chat/completions` 发请求，但网关将请求转换为 Responses API 格式发送到上游 `/responses`，并将响应转回 Chat 格式返回客户端。转换逻辑位于 `pkg/protocol/openai/convert.go`，提供三个核心函数：`ChatRequestToResponsesRequest`（请求转换：messages→input、tools 扁平化、system→developer 角色映射）、`ResponsesResponseToChatResponse`（非流式响应转换：output items→choices、function_call→tool_calls）、`ResponsesSSEToChatSSE`（流式 SSE 转换：Responses 语义化事件→Chat delta chunks）。实现为独立的 `handleChatViaResponses` 方法，在 `handleChatCompletion` 入口处判断分流，复用 `api_responses.go` 的工具处理逻辑（`handleResponsesToolCalls`、`buildResponsesInput` 等），最小化对原有 Chat 流程的侵入。

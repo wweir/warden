@@ -75,7 +75,9 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		cancel:      cancel,
 	}
 
-	g.selector.RefreshModels(cfg)
+	// Refresh models asynchronously to avoid blocking startup.
+	// Model discovery failures are logged but don't prevent the service from starting.
+	go g.selector.RefreshModels(cfg)
 
 	g.logger = newLogger(cfg.Log)
 

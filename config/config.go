@@ -95,9 +95,10 @@ type ProviderConfig struct {
 	Timeout      string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
 	Proxy        string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers      map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models       []string          `json:"models" usage:"Supported model IDs (skips /models discovery when set)"`
+	Models       []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
 	ModelAliases map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name), alias appears in /models and is resolved before upstream request"`
-	RequestPatch []RequestPatchOp  `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
+	RequestPatch    []RequestPatchOp `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
+	ChatToResponses bool             `json:"chat_to_responses" usage:"Route chat/completions to upstream /responses for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
@@ -443,6 +444,11 @@ func (c *ConfigStruct) Validate() error {
 			if _, err := url.Parse(prov.Proxy); err != nil {
 				return NewValidationError("provider %s: invalid proxy URL %s: %v", name, prov.Proxy, err)
 			}
+		}
+
+		// validate chat_to_responses requires openai protocol
+		if prov.ChatToResponses && prov.Protocol != "openai" {
+			return NewValidationError("provider %s: chat_to_responses requires protocol 'openai', got %q", name, prov.Protocol)
 		}
 	}
 
