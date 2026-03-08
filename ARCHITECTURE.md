@@ -15,6 +15,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 ├── web/
 │   ├── embed.go                 # embed.FS 暴露前端静态文件
 │   └── admin/                   # Vue 3 + Vite 前端项目
+│       ├── README.md            # 管理前端职责、Dashboard 数据流、构建方式
 │       ├── dist/                # 构建产物（提交到 git）
 │       └── src/                 # 源码：Dashboard / Config / Logs / ProviderDetail / McpDetail / McpToolDetail / ToolHooks 页面
 ├── internal/
@@ -23,11 +24,13 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   ├── install/
 │   │   └── service.go           # systemd 服务安装/更新
 │   ├── gateway/
+│   │   ├── README.md            # Gateway/Admin API/指标流职责说明
 │   │   ├── gateway.go           # Gateway 核心：路由注册、MCP 管理、provider 选择、代理
-│   │   ├── api_admin.go         # Admin API：REST + SSE 日志流 + Basic Auth + 配置管理 + 热重载 + Provider 探活/详情
+│   │   ├── api_admin.go         # Admin API：REST + SSE 日志流/指标流 + Basic Auth + 配置管理 + 热重载 + Provider 探活/详情
 │   │   ├── api_chat.go          # Chat Completions 请求处理（透传优化 + 工具拦截）
 │   │   ├── api_responses.go     # Responses API 请求处理（透传优化 + 工具拦截）
 │   │   ├── adapter.go           # 协议适配：endpoint 路由、请求/响应序列化、流式 parser 工厂
+│   │   ├── dashboard_metrics.go # 仪表盘实时指标滚动缓存：Prometheus 累计指标 -> 时序点（含总输出速率与按 provider 分组的输出速率）
 │   │   ├── http.go              # upstream HTTP 通信：sendRequest、pipeRawStream、认证注入、模型拉取
 │   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离（泛型实现）、过滤
 │   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 滑动窗口统计 + 状态暴露
@@ -791,6 +794,7 @@ type Step struct {
 | POST | `/_admin/api/mcp/tool-call`             | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时）         |
 | POST | `/_admin/api/mcp/tool-toggle`           | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置）      |
 | GET  | `/_admin/api/logs/stream`               | SSE 实时日志推送                                                  |
+| GET  | `/_admin/api/metrics/stream`            | SSE 仪表盘指标推送（聚合快照 + 滚动时序点）                       |
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
 - 配置更新：写入前检查文件 hash 防止并发冲突
@@ -800,6 +804,7 @@ type Step struct {
 
 - `Broadcaster` — 内存广播器，环形缓冲最近 **50** 条完整 `Record`，SSE 推送完整记录，non-blocking fan-out 到所有订阅者
 - 所有请求处理通过 `Gateway.recordAndBroadcast()` 统一发布到文件日志和广播器
+- Dashboard 指标流通过 `dashboardMetricsStore` 在网关内按 **2s** 周期采样 Prometheus 累计指标与输出速率 gauge，维护最近 **180** 个点（约 6 分钟）的滚动时序；输出速率时序同时保留总 TPS 和按 provider 聚合的 TPS；同时为路由页保留按 route 聚合的请求速率、失败率、输出速率时序；当进程重启或计数器回退时清空历史并重建 baseline，避免把回退后的累计值误判为流量尖峰
 
 **Selector 监控**（`internal/gateway/selector.go`）：
 
@@ -812,7 +817,8 @@ type Step struct {
 
 - Vue 3 + Vite，纯 CSS（无 UI 框架），构建产物 embed 到 Go 二进制
 - 导航栏品牌图标使用 `web/admin/src/assets/thresh-horses-icon.svg`（主题意向：链钩牵引马群前冲）；浏览器 favicon 使用 `web/admin/public/favicon.svg` 并在构建时压缩为 brotli 资源
-- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；监控卡片优先展示客户端代理运营指标（请求用量、token 用量、输出速率、失败率、failover/stream error 压力、路由错误热点），并保留 TTFT/throughput 慢组合用于性能定位；用量概览与错误压力使用前端折线图，基于 Prometheus 累计计数器按 5s 采样计算增量速率，保留最近 72 个点（约 6 分钟），计数器回退时自动重置历史；通过 `/_admin/api/metrics/stream` 实时刷新
+- Dashboard：Provider 卡片（健康色标、请求统计、延迟、Ping 按钮），点击进入详情页；路由列表（Prefix 可点击进入 Route 详情页）、MCP 状态卡片（点击进入详情页）；监控卡片优先展示客户端代理运营指标（请求用量、token 用量、输出速率、失败率、failover/stream error 压力、路由错误热点），并保留 TTFT/throughput 慢组合用于性能定位；用量概览、输出速率与错误压力改为基于 **uPlot** 的实时折线图，前端直接消费后端下发的滚动时序点，不再本地重算 Prometheus 累计计数器增量；其中输出速率图仅保留单张折线图，并按 provider 维度展示多条曲线；三张图统一使用同一时间窗口并通过 uPlot cursor sync 同步悬浮时间轴；通过 `/_admin/api/metrics/stream` 实时刷新
+- Routes：路由列表上方展示基于同一 SSE 指标流的 route 维度多折线图，请求速率、失败率、输出速率都使用后端直接下发的滚动时序点，按最近活跃 route 自动挑选展示曲线，并与 Dashboard 一样使用 uPlot 渲染
 - ProviderDetail：Provider 基本信息、运行时状态、模型别名、可用模型列表、Health Check 按钮
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
