@@ -500,15 +500,15 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":               name,
-		"url":                provCfg.URL,
-		"protocol":           provCfg.Protocol,
-		"timeout":            provCfg.Timeout,
-		"has_api_key":        provCfg.APIKey.Value() != "",
-		"chat_to_responses":  provCfg.ChatToResponses,
-		"model_aliases":      provCfg.ModelAliases,
-		"models":             models,
-		"status":             status,
+		"name":              name,
+		"url":               provCfg.URL,
+		"protocol":          provCfg.Protocol,
+		"timeout":           provCfg.Timeout,
+		"has_api_key":       provCfg.APIKey.Value() != "",
+		"chat_to_responses": provCfg.ChatToResponses,
+		"model_aliases":     provCfg.ModelAliases,
+		"models":            models,
+		"status":            status,
 	})
 }
 
@@ -540,7 +540,7 @@ func (g *Gateway) handleProviderSuppress(w http.ResponseWriter, r *http.Request,
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":             body.Name,
+		"name":              body.Name,
 		"manual_suppressed": body.Suppress,
 	})
 }
@@ -810,16 +810,22 @@ func (g *Gateway) handleMetricsStream(w http.ResponseWriter, r *http.Request, _ 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	writeMetrics := func() {
+		data := g.collectMetricsData()
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", jsonData)
+		flusher.Flush()
+	}
+
+	writeMetrics()
+
 	for {
 		select {
 		case <-ticker.C:
-			data := g.collectMetricsData()
-			jsonData, err := json.Marshal(data)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
-			flusher.Flush()
+			writeMetrics()
 		case <-r.Context().Done():
 			return
 		}
@@ -997,5 +1003,82 @@ func (g *Gateway) collectMetricsData() map[string]any {
 		"token_rate":            rates,
 		"stream_ttft_p95_ms":    ttftP95,
 		"throughput_p99_tokens": throughputP99,
+		"realtime":              g.dashboardStore.Snapshot(),
 	}
+}
+
+func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
+	sample := dashboardCounterSample{
+		Timestamp:    time.Now(),
+		OutputByProv: make(map[string]float64),
+		RouteReqs:    make(map[string]float64),
+		RouteFails:   make(map[string]float64),
+		RouteOutput:  make(map[string]float64),
+	}
+
+	for _, met := range collectMetrics(requestCounter) {
+		value := met.GetCounter().GetValue()
+		sample.Requests += value
+		route := ""
+		failed := false
+		for _, label := range met.GetLabel() {
+			if label.GetName() == "route" {
+				route = label.GetValue()
+				continue
+			}
+			if label.GetName() == "status" && label.GetValue() == "failure" {
+				sample.Failures += value
+				failed = true
+			}
+		}
+		if route != "" {
+			sample.RouteReqs[route] += value
+			if failed {
+				sample.RouteFails[route] += value
+			}
+		}
+	}
+
+	for _, met := range collectMetrics(tokenCounter) {
+		sample.Tokens += met.GetCounter().GetValue()
+	}
+
+	for _, met := range collectMetrics(tokenRate) {
+		isCompletion := false
+		provider := ""
+		route := ""
+		for _, label := range met.GetLabel() {
+			if label.GetName() == "type" && label.GetValue() == "completion" {
+				isCompletion = true
+				continue
+			}
+			if label.GetName() == "provider" {
+				provider = label.GetValue()
+				continue
+			}
+			if label.GetName() == "route" {
+				route = label.GetValue()
+			}
+		}
+		if isCompletion {
+			value := met.GetGauge().GetValue()
+			sample.OutputRate += value
+			if provider != "" {
+				sample.OutputByProv[provider] += value
+			}
+			if route != "" {
+				sample.RouteOutput[route] += value
+			}
+		}
+	}
+
+	for _, met := range collectMetrics(providerFailovers) {
+		sample.Failovers += met.GetCounter().GetValue()
+	}
+
+	for _, met := range collectMetrics(providerStreamErrors) {
+		sample.StreamErrors += met.GetCounter().GetValue()
+	}
+
+	return sample
 }

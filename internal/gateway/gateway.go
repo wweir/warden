@@ -29,13 +29,14 @@ type Gateway struct {
 	configHash string
 	selector   *sel.Selector
 
-	mcpClients  map[string]*mcp.Client
-	logger      reqlog.Logger
-	broadcaster *reqlog.Broadcaster
-	handler     http.Handler
-	reloadFn    func() error
-	ctx         context.Context
-	cancel      context.CancelFunc
+	mcpClients     map[string]*mcp.Client
+	logger         reqlog.Logger
+	broadcaster    *reqlog.Broadcaster
+	dashboardStore *dashboardMetricsStore
+	handler        http.Handler
+	reloadFn       func() error
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 // SetReloadFn sets the function called to hot-reload the gateway.
@@ -65,19 +66,21 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	}
 
 	g := &Gateway{
-		cfg:         cfg,
-		configPath:  configPath,
-		configHash:  configHash,
-		selector:    sel.NewSelector(cfg),
-		mcpClients:  mcpClients,
-		broadcaster: reqlog.NewBroadcaster(),
-		ctx:         ctx,
-		cancel:      cancel,
+		cfg:            cfg,
+		configPath:     configPath,
+		configHash:     configHash,
+		selector:       sel.NewSelector(cfg),
+		mcpClients:     mcpClients,
+		broadcaster:    reqlog.NewBroadcaster(),
+		dashboardStore: newDashboardMetricsStore(2*time.Second, 180),
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	// Refresh models asynchronously to avoid blocking startup.
 	// Model discovery failures are logged but don't prevent the service from starting.
 	go g.selector.RefreshModels(cfg)
+	g.dashboardStore.Start(ctx, g.collectDashboardCounters)
 
 	g.logger = newLogger(cfg.Log)
 
