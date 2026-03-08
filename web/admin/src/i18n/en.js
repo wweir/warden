@@ -49,9 +49,11 @@ export default {
 		failureLabel: "Failure",
 		usage: "Usage",
 		outputRate: "Output Rate",
+		currentOutputRate: "Current Total Output Rate",
+		peakProviderRate: "Current Peak Provider Rate",
 		errors: "Error Pressure",
 		completionShare: "Completion Share",
-		trendWindow: "5s sample · 6 min",
+		trendWindow: "2s sample · 6 min",
 		requestsPerMin: "Req/min",
 		tokensPerMin: "Token/min",
 		errorRate: "Error Rate",
@@ -103,6 +105,9 @@ export default {
 		topFailures: "Top Failures",
 		lowestSuccess: "Lowest Success",
 		highestOutputRate: "Highest Output Rate",
+		trafficTrend: "Live Request Trend",
+		errorTrend: "Live Error Trend",
+		outputTrend: "Live Output Trend",
 		requests: "Requests",
 		failures: "Failures",
 		successRate: "Success Rate",
@@ -184,7 +189,8 @@ export default {
 		externalChangeError:
 			"Config file changed externally. Please reload to get the latest version.",
 		savingDisabled: "Config was not loaded from a file, saving is disabled",
-		chatToResponsesHint: "Route chat/completions to upstream /responses endpoint (enables web search, file search, etc.)",
+		chatToResponsesHint:
+			"Route chat/completions to upstream /responses endpoint (enables web search, file search, etc.)",
 	},
 	logs: {
 		title: "Request Logs",

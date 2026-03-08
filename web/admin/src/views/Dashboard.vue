@@ -45,19 +45,21 @@
         <div class="metric-card">
           <div class="metric-header">
             <span class="metric-title">{{ $t('dashboard.usage') }}</span>
-            <span class="metric-count">{{ $t('dashboard.trendWindow') }}</span>
+            <span class="metric-count">{{ realtimeUsageHistory.length }} · {{ $t('dashboard.trendWindow') }}</span>
           </div>
           <div class="trend-chart">
-            <svg viewBox="0 0 280 96" preserveAspectRatio="none">
-              <path class="trend-grid" d="M0 80 H280" />
-              <path v-if="usageHistory.length > 1" class="trend-line usage-main" :d="sparklinePath(usageHistory, 'reqPerMin', 280, 96)" />
-              <path v-if="usageHistory.length > 1" class="trend-line usage-sub" :d="sparklinePath(usageHistory, 'tokPerMin', 280, 96)" />
-            </svg>
-            <div v-if="usageHistory.length <= 1" class="trend-empty">{{ $t('common.noData') }}</div>
+            <RealtimeLineChart
+              :points="realtimeUsageHistory"
+              :series="usageChartSeries"
+              :empty-text="$t('common.noData')"
+              :group="chartGroup"
+              :time-range="chartTimeRange"
+              :y-formatter="formatRateAxis"
+            />
           </div>
           <div class="metric-stats">
-            <div class="stat-row"><span class="trend-dot usage-main"></span>{{ $t('dashboard.requestsPerMin') }}: {{ usageLatest.reqPerMin.toFixed(1) }}</div>
-            <div class="stat-row"><span class="trend-dot usage-sub"></span>{{ $t('dashboard.tokensPerMin') }}: {{ fmtNum(Math.round(usageLatest.tokPerMin)) }}</div>
+            <div class="stat-row"><span class="trend-dot usage-main"></span>{{ $t('dashboard.requestsPerMin') }}: {{ usageLatest.req_per_min.toFixed(1) }}</div>
+            <div class="stat-row"><span class="trend-dot usage-sub"></span>{{ $t('dashboard.tokensPerMin') }}: {{ fmtNum(Math.round(usageLatest.tok_per_min)) }}</div>
             <div class="stat-row">{{ $t('routes.requests') }}: {{ fmtNum(requestStatusTotal) }}</div>
             <div class="stat-row">{{ $t('dashboard.completionShare') }}: {{ tokenStats.completionShare.toFixed(1) }}%</div>
           </div>
@@ -66,35 +68,44 @@
         <div class="metric-card">
           <div class="metric-header">
             <span class="metric-title">{{ $t('dashboard.outputRate') }}</span>
-            <span class="metric-count">{{ tokenStats.rates.length }}</span>
+            <span class="metric-count">{{ realtimeOutputHistory.length }} · {{ $t('dashboard.trendWindow') }}</span>
           </div>
-          <div class="top-routes">
-            <div v-for="r in tokenStats.rates.slice(0, 5)" :key="r.key" class="route-mini">
-              <div class="route-mini-name">{{ r.provider }}<span class="route-mini-provider"> · {{ r.model }}</span></div>
-              <div class="route-mini-bar"><div class="route-mini-fill" :style="{ width: r.percent + '%' }"></div></div>
-              <div class="route-mini-count">{{ formatTPS(r.completionRate) }}</div>
-            </div>
-            <div v-if="tokenStats.rates.length === 0" class="empty-mini">{{ $t('common.noData') }}</div>
+          <div class="trend-chart">
+            <RealtimeLineChart
+              :points="outputProviderChartPoints"
+              :series="outputChartSeries"
+              :empty-text="$t('common.noData')"
+              :group="chartGroup"
+              :time-range="chartTimeRange"
+              :y-formatter="formatTPSAxis"
+            />
+          </div>
+          <div class="metric-stats">
+            <div class="stat-row"><span class="trend-dot output-main"></span>{{ $t('dashboard.currentOutputRate') }}: {{ formatTPS(outputLatest.completion_tps) }}</div>
+            <div class="stat-row" v-if="peakOutputProvider">{{ $t('dashboard.peakProviderRate') }}: {{ peakOutputProvider.provider }} · {{ formatTPS(peakOutputProvider.rate) }}</div>
+            <div class="stat-row" v-else>{{ $t('dashboard.peakProviderRate') }}: -</div>
           </div>
         </div>
 
         <div class="metric-card">
           <div class="metric-header">
             <span class="metric-title">{{ $t('dashboard.errors') }}</span>
-            <span class="metric-count">{{ $t('dashboard.trendWindow') }}</span>
+            <span class="metric-count">{{ realtimeErrorHistory.length }} · {{ $t('dashboard.trendWindow') }}</span>
           </div>
           <div class="trend-chart">
-            <svg viewBox="0 0 280 96" preserveAspectRatio="none">
-              <path class="trend-grid" d="M0 80 H280" />
-              <path v-if="errorHistory.length > 1" class="trend-line error-main" :d="sparklinePath(errorHistory, 'errorRate', 280, 96)" />
-              <path v-if="errorHistory.length > 1" class="trend-line error-sub" :d="sparklinePath(errorHistory, 'streamErrPer1k', 280, 96)" />
-            </svg>
-            <div v-if="errorHistory.length <= 1" class="trend-empty">{{ $t('common.noData') }}</div>
+            <RealtimeLineChart
+              :points="realtimeErrorHistory"
+              :series="errorChartSeries"
+              :empty-text="$t('common.noData')"
+              :group="chartGroup"
+              :time-range="chartTimeRange"
+              :y-formatter="formatRateAxis"
+            />
           </div>
           <div class="metric-stats">
-            <div class="stat-row"><span class="trend-dot error-main"></span>{{ $t('dashboard.errorRate') }}: {{ errorLatest.errorRate.toFixed(2) }}%</div>
-            <div class="stat-row"><span class="trend-dot error-sub"></span>{{ $t('dashboard.streamErrorsPer1k') }}: {{ errorLatest.streamErrPer1k.toFixed(2) }}</div>
-            <div class="stat-row">{{ $t('dashboard.failoverPer1k') }}: {{ errorLatest.failoverPer1k.toFixed(2) }}</div>
+            <div class="stat-row"><span class="trend-dot error-main"></span>{{ $t('dashboard.errorRate') }}: {{ errorLatest.error_rate.toFixed(2) }}%</div>
+            <div class="stat-row"><span class="trend-dot error-sub"></span>{{ $t('dashboard.streamErrorsPer1k') }}: {{ errorLatest.stream_err_per_1k.toFixed(2) }}</div>
+            <div class="stat-row">{{ $t('dashboard.failoverPer1k') }}: {{ errorLatest.failover_per_1k.toFixed(2) }}</div>
             <div class="stat-row">{{ $t('dashboard.failureLabel') }}: {{ fmtNum(requestStatus.failure) }}</div>
           </div>
         </div>
@@ -198,9 +209,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { createStatusStream, createMetricsStream } from '../api.js'
+import RealtimeLineChart from '../components/RealtimeLineChart.vue'
+import { createMetricsStream, createStatusStream } from '../api.js'
 import { fmtNum } from '../utils.js'
 
 const { t } = useI18n()
@@ -208,36 +220,40 @@ const { t } = useI18n()
 const status = ref(null)
 const metricsData = ref(null)
 const error = ref('')
-const expandedAlerts = ref({}) // track expanded state by alert key
-const usageHistory = ref([])
-const errorHistory = ref([])
-const metricsBaseline = ref(null)
+const expandedAlerts = ref({})
+const chartGroup = 'dashboard-time'
 let statusStop = null
 let metricsStop = null
 
-const metricSampleIntervalMs = 5000
-const metricHistoryLimit = 72
-
 const providerStats = computed(() => {
   const providers = status.value?.providers ?? []
-  let ok = 0, warn = 0, err = 0, totalRequests = 0, successCount = 0
-  let failoverCount = 0, preStreamErrors = 0, inStreamErrors = 0
-  for (const p of providers) {
-    totalRequests += p.total_requests ?? 0
-    successCount += p.success_count ?? 0
-    failoverCount += p.failover_count ?? 0
-    preStreamErrors += p.pre_stream_errors ?? 0
-    inStreamErrors += p.in_stream_errors ?? 0
-    if (p.suppressed) err++
-    else if (p.consecutive_failures > 0) warn++
+  let ok = 0
+  let warn = 0
+  let err = 0
+  let totalRequests = 0
+  let successCount = 0
+  let failoverCount = 0
+  let preStreamErrors = 0
+  let inStreamErrors = 0
+
+  for (const provider of providers) {
+    totalRequests += provider.total_requests ?? 0
+    successCount += provider.success_count ?? 0
+    failoverCount += provider.failover_count ?? 0
+    preStreamErrors += provider.pre_stream_errors ?? 0
+    inStreamErrors += provider.in_stream_errors ?? 0
+
+    if (provider.suppressed) err++
+    else if (provider.consecutive_failures > 0) warn++
     else ok++
   }
+
   return { total: providers.length, ok, warn, error: err, totalRequests, successCount, failoverCount, preStreamErrors, inStreamErrors }
 })
 
 const mcpStats = computed(() => {
   const mcp = status.value?.mcp ?? []
-  return { total: mcp.length, connected: mcp.filter(m => m.connected).length }
+  return { total: mcp.length, connected: mcp.filter((item) => item.connected).length }
 })
 
 const successRate = computed(() => {
@@ -247,44 +263,124 @@ const successRate = computed(() => {
 
 const alerts = computed(() => {
   const items = []
-  for (const p of status.value?.providers ?? []) {
-    const reasons = p.suppress_reasons ?? []
-    if (p.suppressed) {
+  for (const provider of status.value?.providers ?? []) {
+    const reasons = provider.suppress_reasons ?? []
+    if (provider.suppressed) {
       items.push({
-        key: 'p-' + p.name, level: 'error', name: p.name,
-        link: '/providers/' + p.name,
-        msg: t('dashboard.suppressedUntil', { time: new Date(p.suppress_until).toLocaleTimeString() }),
+        key: 'p-' + provider.name,
+        level: 'error',
+        name: provider.name,
+        link: '/providers/' + provider.name,
+        msg: t('dashboard.suppressedUntil', { time: new Date(provider.suppress_until).toLocaleTimeString() }),
         reasons,
       })
-    } else if (p.consecutive_failures > 0) {
+      continue
+    }
+    if (provider.consecutive_failures > 0) {
       items.push({
-        key: 'p-' + p.name, level: 'warn', name: p.name,
-        link: '/providers/' + p.name,
-        msg: t('dashboard.consecutiveFailures', { n: p.consecutive_failures }),
+        key: 'p-' + provider.name,
+        level: 'warn',
+        name: provider.name,
+        link: '/providers/' + provider.name,
+        msg: t('dashboard.consecutiveFailures', { n: provider.consecutive_failures }),
         reasons,
       })
-    } else if (reasons.length > 0) {
+      continue
+    }
+    if (reasons.length > 0) {
       items.push({
-        key: 'p-' + p.name, level: 'info', name: p.name,
-        link: '/providers/' + p.name,
+        key: 'p-' + provider.name,
+        level: 'info',
+        name: provider.name,
+        link: '/providers/' + provider.name,
         msg: t('dashboard.recentErrors', { n: reasons.length }),
         reasons,
       })
     }
   }
-  for (const m of status.value?.mcp ?? []) {
-    if (!m.connected) {
-      items.push({ key: 'm-' + m.name, level: 'error', name: m.name, link: '/mcp/' + m.name, msg: t('common.disconnected') })
+
+  for (const mcp of status.value?.mcp ?? []) {
+    if (!mcp.connected) {
+      items.push({
+        key: 'm-' + mcp.name,
+        level: 'error',
+        name: mcp.name,
+        link: '/mcp/' + mcp.name,
+        msg: t('common.disconnected'),
+      })
     }
   }
   return items
 })
 
-// Metrics computed properties
+const realtimeUsageHistory = computed(() => metricsData.value?.realtime?.usage ?? [])
+const realtimeOutputHistory = computed(() => metricsData.value?.realtime?.output ?? [])
+const realtimeErrorHistory = computed(() => metricsData.value?.realtime?.errors ?? [])
+const usageLatest = computed(() => realtimeUsageHistory.value[realtimeUsageHistory.value.length - 1] ?? { req_per_min: 0, tok_per_min: 0 })
+const outputLatest = computed(() => realtimeOutputHistory.value[realtimeOutputHistory.value.length - 1] ?? { completion_tps: 0, providers: {} })
+const errorLatest = computed(() => realtimeErrorHistory.value[realtimeErrorHistory.value.length - 1] ?? { error_rate: 0, stream_err_per_1k: 0, failover_per_1k: 0 })
+
+const chartTimeRange = computed(() => {
+  const windowSeconds = Number(metricsData.value?.realtime?.window_seconds || 0)
+  const latestTs = Math.max(
+    realtimeUsageHistory.value[realtimeUsageHistory.value.length - 1]?.ts || 0,
+    realtimeOutputHistory.value[realtimeOutputHistory.value.length - 1]?.ts || 0,
+    realtimeErrorHistory.value[realtimeErrorHistory.value.length - 1]?.ts || 0,
+  )
+  if (!latestTs || !windowSeconds) return null
+  return {
+    start: latestTs - windowSeconds * 1000,
+    end: latestTs,
+  }
+})
+
+const usageChartSeries = computed(() => ([
+  { key: 'req_per_min', name: t('dashboard.requestsPerMin'), color: '#2563eb', area: 'rgba(37,99,235,0.18)' },
+  { key: 'tok_per_min', name: t('dashboard.tokensPerMin'), color: '#0f766e', area: 'rgba(15,118,110,0.14)' },
+]))
+
+const outputProviderPalette = ['#2563eb', '#7c3aed', '#ea580c', '#0f766e', '#dc2626', '#0891b2', '#ca8a04', '#4f46e5']
+
+const outputProviderNames = computed(() => {
+  const historyNames = new Set()
+  for (const point of realtimeOutputHistory.value) {
+    for (const provider of Object.keys(point.providers ?? {})) {
+      historyNames.add(provider)
+    }
+  }
+
+  const ordered = []
+  for (const provider of status.value?.providers ?? []) {
+    if (!historyNames.has(provider.name)) continue
+    ordered.push(provider.name)
+    historyNames.delete(provider.name)
+  }
+
+  return ordered.concat(Array.from(historyNames).sort())
+})
+
+const outputProviderChartPoints = computed(() => realtimeOutputHistory.value.map((point) => {
+  const row = { ts: point.ts }
+  for (const provider of outputProviderNames.value) {
+    row[provider] = Number(point.providers?.[provider] || 0)
+  }
+  return row
+}))
+
+const outputChartSeries = computed(() => outputProviderNames.value.map((provider, index) => ({
+  key: provider,
+  name: provider,
+  color: outputProviderPalette[index % outputProviderPalette.length],
+})))
+
+const errorChartSeries = computed(() => ([
+  { key: 'error_rate', name: t('dashboard.errorRate'), color: '#dc2626', area: 'rgba(220,38,38,0.16)' },
+  { key: 'stream_err_per_1k', name: t('dashboard.streamErrorsPer1k'), color: '#d97706', area: 'rgba(217,119,6,0.14)' },
+]))
+
 const requestStatus = computed(() => {
   const totals = { success: 0, failure: 0 }
-  if (!metricsData.value?.requests_total) return totals
-  for (const item of metricsData.value.requests_total) {
+  for (const item of metricsData.value?.requests_total ?? []) {
     if (item.status === 'success') totals.success += item.value
     else totals.failure += item.value
   }
@@ -294,40 +390,30 @@ const requestStatus = computed(() => {
 const requestStatusTotal = computed(() => requestStatus.value.success + requestStatus.value.failure)
 
 const tokenStats = computed(() => {
-  const stats = { promptTotal: 0, completionTotal: 0, completionShare: 0, rates: [] }
+  const stats = { promptTotal: 0, completionTotal: 0, completionShare: 0 }
   for (const item of metricsData.value?.tokens_total ?? []) {
-    if (item.type === "prompt") stats.promptTotal += item.value
-    if (item.type === "completion") stats.completionTotal += item.value
+    if (item.type === 'prompt') stats.promptTotal += item.value
+    if (item.type === 'completion') stats.completionTotal += item.value
   }
 
   const total = stats.promptTotal + stats.completionTotal
   stats.completionShare = total > 0 ? (stats.completionTotal / total) * 100 : 0
-
-  const rateMap = {}
-  for (const item of metricsData.value?.token_rate ?? []) {
-    if (item.type !== "completion") continue
-    const key = `${item.provider || "unknown"}\0${item.model || "unknown"}`
-    const value = Number(item.value || 0)
-    if (!rateMap[key] || value > rateMap[key].completionRate) {
-      rateMap[key] = {
-        key,
-        provider: item.provider || "unknown",
-        model: item.model || "unknown",
-        completionRate: value,
-      }
-    }
-  }
-
-  const rates = Object.values(rateMap).filter((item) => item.completionRate > 0)
-    .sort((a, b) => b.completionRate - a.completionRate)
-    .slice(0, 5)
-  const maxRate = rates[0]?.completionRate || 1
-  stats.rates = rates.map((item) => ({ ...item, percent: (item.completionRate / maxRate) * 100 }))
   return stats
 })
 
-const usageLatest = computed(() => usageHistory.value[usageHistory.value.length - 1] ?? { reqPerMin: 0, tokPerMin: 0 })
-const errorLatest = computed(() => errorHistory.value[errorHistory.value.length - 1] ?? { errorRate: 0, streamErrPer1k: 0, failoverPer1k: 0 })
+const peakOutputProvider = computed(() => {
+  let provider = ''
+  let rate = 0
+
+  for (const [name, value] of Object.entries(outputLatest.value.providers ?? {})) {
+    const numeric = Number(value || 0)
+    if (numeric <= rate) continue
+    provider = name
+    rate = numeric
+  }
+
+  return provider ? { provider, rate } : null
+})
 
 const streamTTFTLeaders = computed(() => {
   let list = (metricsData.value?.stream_ttft_p95_ms ?? [])
@@ -336,7 +422,7 @@ const streamTTFTLeaders = computed(() => {
       key: `${item.route}\0${item.provider}\0${item.model}\0${item.endpoint}`,
       route: item.route,
       provider: item.provider,
-      model: item.model || "unknown",
+      model: item.model || 'unknown',
       value: Number(item.value || 0),
       count: Number(item.count || 0),
     }))
@@ -359,7 +445,7 @@ const throughputLaggers = computed(() => {
       key: `${item.route}\0${item.provider}\0${item.model}\0${item.endpoint}`,
       route: item.route,
       provider: item.provider,
-      model: item.model || "unknown",
+      model: item.model || 'unknown',
       value: Number(item.value || 0),
       count: Number(item.count || 0),
     }))
@@ -379,19 +465,21 @@ const riskyRoutesByTraffic = computed(() => {
   const agg = {}
   for (const item of metricsData.value?.requests_total ?? []) {
     if (!agg[item.route]) agg[item.route] = { route: item.route, success: 0, failure: 0 }
-    if (item.status === "failure") agg[item.route].failure += item.value
+    if (item.status === 'failure') agg[item.route].failure += item.value
     else agg[item.route].success += item.value
   }
 
-  let list = Object.values(agg).map((item) => {
-    const total = item.success + item.failure
-    return {
-      route: item.route,
-      total,
-      failure: item.failure,
-      failureRate: total > 0 ? (item.failure / total) * 100 : 0,
-    }
-  }).filter((item) => item.failure > 0)
+  let list = Object.values(agg)
+    .map((item) => {
+      const total = item.success + item.failure
+      return {
+        route: item.route,
+        total,
+        failure: item.failure,
+        failureRate: total > 0 ? (item.failure / total) * 100 : 0,
+      }
+    })
+    .filter((item) => item.failure > 0)
 
   const stable = list.filter((item) => item.total >= 20)
   if (stable.length > 0) list = stable
@@ -402,112 +490,40 @@ const riskyRoutesByTraffic = computed(() => {
 })
 
 function formatMs(value) {
-  if (!value || value < 0) return "-"
+  if (!value || value < 0) return '-'
   return `${Math.round(value)}ms`
 }
 
 function formatTPS(value) {
-  if (!value || value < 0) return "-"
+  if (!value || value < 0) return '-'
   return `${value.toFixed(1)}/s`
 }
 
-function sparklinePath(points, key, width = 280, height = 96) {
-  if (!Array.isArray(points) || points.length < 2) return ""
-  const values = points.map((p) => Number(p[key] || 0))
-  let min = Math.min(...values)
-  let max = Math.max(...values)
-  if (max === min) {
-    max += 1
-    min -= 1
-  }
-  const pad = 8
-  return points.map((point, idx) => {
-    const x = pad + idx * ((width - pad * 2) / (points.length - 1))
-    const y = height - pad - ((Number(point[key] || 0) - min) / (max - min)) * (height - pad * 2)
-    return `${idx === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`
-  }).join(" ")
+function formatTPSAxis(value) {
+  return `${Number(value || 0).toFixed(0)}/s`
 }
 
-function collectCounters(metricsSnapshot) {
-  let requests = 0
-  let failures = 0
-  for (const item of metricsSnapshot?.requests_total ?? []) {
-    requests += Number(item.value || 0)
-    if (item.status === "failure") failures += Number(item.value || 0)
-  }
-
-  let tokens = 0
-  for (const item of metricsSnapshot?.tokens_total ?? []) {
-    tokens += Number(item.value || 0)
-  }
-
-  const providers = status.value?.providers ?? []
-  let failovers = 0
-  let streamErrors = 0
-  for (const p of providers) {
-    failovers += Number(p.failover_count || 0)
-    streamErrors += Number(p.pre_stream_errors || 0) + Number(p.in_stream_errors || 0)
-  }
-
-  return { ts: Date.now(), requests, failures, tokens, failovers, streamErrors }
-}
-
-function pushHistory(listRef, point) {
-  listRef.value.push(point)
-  if (listRef.value.length > metricHistoryLimit) {
-    listRef.value.splice(0, listRef.value.length - metricHistoryLimit)
-  }
-}
-
-function updateMetricTrends(metricsSnapshot) {
-  const current = collectCounters(metricsSnapshot)
-  if (!metricsBaseline.value) {
-    metricsBaseline.value = current
-    return
-  }
-
-  const elapsedMs = current.ts - metricsBaseline.value.ts
-  if (elapsedMs < metricSampleIntervalMs) {
-    return
-  }
-
-  const deltaRequests = current.requests - metricsBaseline.value.requests
-  const deltaFailures = current.failures - metricsBaseline.value.failures
-  const deltaTokens = current.tokens - metricsBaseline.value.tokens
-  const deltaFailovers = current.failovers - metricsBaseline.value.failovers
-  const deltaStreamErrors = current.streamErrors - metricsBaseline.value.streamErrors
-
-  if (deltaRequests < 0 || deltaFailures < 0 || deltaTokens < 0 || deltaFailovers < 0 || deltaStreamErrors < 0) {
-    metricsBaseline.value = current
-    usageHistory.value = []
-    errorHistory.value = []
-    return
-  }
-
-  const perMinute = 60000 / elapsedMs
-  const reqPerMin = deltaRequests * perMinute
-  const tokPerMin = deltaTokens * perMinute
-
-  const errorRate = deltaRequests > 0 ? (deltaFailures / deltaRequests) * 100 : 0
-  const failoverPer1k = deltaRequests > 0 ? (deltaFailovers / deltaRequests) * 1000 : 0
-  const streamErrPer1k = deltaRequests > 0 ? (deltaStreamErrors / deltaRequests) * 1000 : 0
-
-  pushHistory(usageHistory, { ts: current.ts, reqPerMin, tokPerMin })
-  pushHistory(errorHistory, { ts: current.ts, errorRate, failoverPer1k, streamErrPer1k })
-  metricsBaseline.value = current
+function formatRateAxis(value) {
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
+  return value.toFixed(0)
 }
 
 onMounted(() => {
   statusStop = createStatusStream().start(
-    (data) => { status.value = data; error.value = '' },
-    (e) => { error.value = e.message }
+    (data) => {
+      status.value = data
+      error.value = ''
+    },
+    (streamError) => {
+      error.value = streamError.message
+    },
   )
+
   metricsStop = createMetricsStream().start(
     (data) => {
       metricsData.value = data
-      updateMetricTrends(data)
     },
-    () => { /* ignore errors */ }
+    () => {},
   )
 })
 
@@ -704,41 +720,13 @@ a.stat-card:hover {
   color: var(--c-text-3);
 }
 .trend-chart {
-  height: 96px;
+  height: 148px;
   margin-bottom: 8px;
   border: 1px solid var(--c-border-light);
-  border-radius: 6px;
-  background: #fbfdff;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   overflow: hidden;
   position: relative;
-}
-.trend-chart svg {
-  width: 100%;
-  height: 100%;
-}
-.trend-grid {
-  fill: none;
-  stroke: var(--c-border);
-  stroke-width: 1;
-}
-.trend-line {
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.trend-line.usage-main { stroke: #2563eb; }
-.trend-line.usage-sub { stroke: #0ea5e9; }
-.trend-line.error-main { stroke: #dc2626; }
-.trend-line.error-sub { stroke: #f59e0b; }
-.trend-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--c-text-3);
-  font-size: 12px;
 }
 .trend-dot {
   width: 8px;
@@ -747,9 +735,10 @@ a.stat-card:hover {
   flex-shrink: 0;
 }
 .trend-dot.usage-main { background: #2563eb; }
-.trend-dot.usage-sub { background: #0ea5e9; }
+.trend-dot.usage-sub { background: #0f766e; }
+.trend-dot.output-main { background: #7c3aed; }
 .trend-dot.error-main { background: #dc2626; }
-.trend-dot.error-sub { background: #f59e0b; }
+.trend-dot.error-sub { background: #d97706; }
 
 .metric-stats { font-size: 12px; color: var(--c-text-2); }
 .stat-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
