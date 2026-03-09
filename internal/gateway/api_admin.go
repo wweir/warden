@@ -80,6 +80,9 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("GET /api/logs/stream", func(w http.ResponseWriter, r *http.Request) {
 		g.handleLogStream(w, r, nil)
 	})
+	mux.HandleFunc("GET /api/tool-hooks/suggestions", func(w http.ResponseWriter, r *http.Request) {
+		g.handleToolHookSuggestions(w, r, nil)
+	})
 	mux.HandleFunc("POST /api/restart", func(w http.ResponseWriter, r *http.Request) {
 		g.handleRestart(w, r, nil)
 	})
@@ -366,6 +369,11 @@ func (g *Gateway) handleLogStream(w http.ResponseWriter, r *http.Request, _ http
 			return
 		}
 	}
+}
+
+func (g *Gateway) handleToolHookSuggestions(w http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(buildToolHookSuggestions(g.broadcaster.Recent()))
 }
 
 // writeSSE writes a single SSE event with JSON data.

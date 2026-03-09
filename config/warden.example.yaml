@@ -53,17 +53,17 @@ provider:
     url: "https://api.openai.com/v1"
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
-    timeout: "60s"                         # non-streaming first-token timeout
+    timeout: "60s" # non-streaming first-token timeout
     # proxy: "socks5://127.0.0.1:1080"      # optional HTTP/SOCKS proxy
 
   openai:
     url: "https://api.openai.com/v1"
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
-    timeout: "120s"                        # non-streaming first-token timeout
+    timeout: "120s" # non-streaming first-token timeout
     # chat_to_responses: true              # route chat/completions to upstream /responses endpoint
-                                           # enables Responses API features (web search, file search, etc.)
-                                           # requires protocol: "openai"
+    # enables Responses API features (web search, file search, etc.)
+    # requires protocol: "openai"
 
   anthropic:
     url: "https://api.anthropic.com/v1"
@@ -83,12 +83,12 @@ provider:
     url: "https://api.anthropic.com/v1"
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "180s"                        # longer timeout for slow/fallback providers
+    timeout: "180s" # longer timeout for slow/fallback providers
 
   ollama:
     url: "http://localhost:11434/v1"
     protocol: "ollama"
-    timeout: "180s"                        # local models may be slow
+    timeout: "180s" # local models may be slow
     # model_aliases: alias_name = real_name, alias appears in /models and is resolved before upstream request
     # model_aliases:
     #   gpt-4o: "llama3.3"
@@ -158,10 +158,13 @@ route:
 #       route: "/openai"
 #       model: "gpt-4o-mini"
 #       prompt: |
-#         Review tool call:
-#         tool={{.ToolName}} full={{.FullName}} mcp={{.MCPName}}
-#         args={{.Arguments}}
-#         Return JSON only: {"allow": true, "reason": "ok"} or {"allow": false, "reason": "..."}
+#         You are a security reviewer for tool calls.
+#         Return JSON only: {"allow": true/false, "reason": "short reason"}
+#         Default to allow=false if risk is unclear.
+#         Focus on command execution, secret leakage, privacy violations, malicious downloads,
+#         data exfiltration, and destructive or over-broad actions.
+#         Tool: {{.FullName}}
+#         Arguments: {{.Arguments}}
 #   - match: "filesystem__delete_file"
 #     hook:
 #       type: http

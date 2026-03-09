@@ -39,6 +39,10 @@ export function fetchConfig() {
   return apiJSON('/_admin/api/config')
 }
 
+export function fetchToolHookSuggestions() {
+  return apiJSON('/_admin/api/tool-hooks/suggestions')
+}
+
 export async function saveConfig(config) {
   const res = await apiFetch('/_admin/api/config', {
     method: 'PUT',

@@ -822,9 +822,10 @@ type Step struct {
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
 - McpToolDetail：工具详情（名称、描述、input schema）、enabled/disabled toggle 开关（运行时生效）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
-- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply）
+- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply），并通过 `/_admin/api/tool-hooks/suggestions` 基于最近日志里的 OpenAI Chat / Responses / Anthropic `tool call` 聚合候选 match、route、model；建议卡片按 route 直接生成/填充 AI 规则，并支持一键补全 Exec/HTTP 规则骨架。AI/Exec/HTTP 建议按钮统一复用同一套“新增或填充已有规则”的判定逻辑；页面还提供可折叠的参数快速上手说明、可折叠的日志建议区块、MCP/工具拆分展示，以及偏向命令执行与隐私保护的默认 AI 安全提示词。AI hook 的 `route`/`model` 字段基于当前配置生成下拉项，其中 `model` 选项按 route 绑定的 providers 和 `system_prompts` 键动态收敛
+- Config：通用配置编辑器除 provider/route/mcp/webhook 外，也提供 `tool_hooks` 的可视化编辑，支持 `exec` / `ai` / `http` 三种规则字段
 - Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
-- Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停；会话分组采用“指纹优先 + 回退哈希”策略：优先按 `model + sys_hash + FSM 严格前缀` 连续性聚合，无指纹时回退到“用户消息 hash + 10 分钟时间窗”启发式；前端在 `Logs.vue` 内对 request 解析、preview、user-hash、fingerprint、timestamp 使用 per-log WeakMap 缓存，并按 `(model, sys_hash)` 与 `lastUserHash` 建立候选链索引，减少重复解析与全量回扫开销。
+- Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停；会话分组采用“指纹优先 + 回退哈希”策略：优先按 `model + sys_hash + FSM 严格前缀` 连续性聚合，无指纹时回退到“用户消息 hash + 10 分钟时间窗”启发式；前端在 `Logs.vue` 内对 request 解析、preview、user-hash、fingerprint、timestamp 使用 per-log WeakMap 缓存，并按 `(model, sys_hash)` 与 `lastUserHash` 建立候选链索引，减少重复解析与全量回扫开销；耗时展示使用动态单位格式化，短时保留 `ms`，长时自动切换到 `s` / `m` / `h`。
 
 ## 实现顺序
 

@@ -139,25 +139,86 @@ export default {
 		about: "About",
 		aboutDesc:
 			"Global hook rules intercept tool calls matching a pattern before or after execution. Pattern format: {pattern}. Use {wildcard} as wildcard (e.g. {example1} or {example2} to match all tools). Pre hooks can block execution; post hooks are audit-only.",
+		quickStartTitle: "Quick Start",
+		quickStartDesc:
+			"Start by narrowing the match scope, then choose the hook type and fill only the needed parameters.",
+		exampleLabel: "Example",
+		guideMatchTitle: "Start with the match scope",
+		guideMatchDesc:
+			"The pattern matches the full tool name, not the model name. Keep the scope narrow before blocking.",
+		guideExecTitle: "Exec: delegate to a local program",
+		guideExecDesc:
+			"Warden writes the tool-call JSON to stdin. Use this for your own policy binary or script.",
+		guideAiTitle: "AI: delegate to an LLM security review",
+		guideAiDesc:
+			"Best for fast rollout. The default prompt focuses on command execution, privacy leaks, malicious downloads, and overreach.",
+		guideHttpTitle: "HTTP: delegate to an external audit service",
+		guideHttpDesc:
+			"Warden sends the tool call to a webhook defined under config.webhook. Useful for centralized audit or existing risk services.",
+		suggestionsTitle: "Log Suggestions ({n})",
+		suggestionsDesc:
+			"Candidate rules derived from tool calls, routes, and models seen in the latest {n} cached admin logs.",
+		refreshSuggestions: "Refresh Suggestions",
+		loadingSuggestions: "Analyzing recent logs...",
+		noSuggestions: "No tool call suggestions found in recent logs.",
+		loadSuggestionsFailed: "Failed to load suggestions: {error}",
 		hookRules: "Hook Rules ({n})",
 		addRule: "+ Add Rule",
 		noRules: "No hook rules configured.",
 		remove: "Remove",
 		matchPattern: "Match Pattern",
 		matchPlaceholder: "mcp_name__tool_name  or  *",
-		matchHint: "Format: mcp_name__tool_name, supports * wildcard",
+		matchHint: "Matches the full tool name. Examples: filesystem__write_file, filesystem__*, *",
 		type: "Type",
+		typeHint: "exec runs a local program, ai asks an LLM, http calls a webhook.",
 		when: "When",
 		preBlock: "pre (can block)",
 		postAudit: "post (audit only)",
+		whenHint:
+			"pre decides before execution and can block; post only inspects the result for audit.",
 		timeout: "Timeout",
+		timeoutHint:
+			"Supports Go durations like 2s, 5s, or 1m. Hook timeout/errors default to pass-through.",
 		command: "Command",
+		commandHint:
+			"Path to the executable. Warden writes the tool-call JSON to the program's stdin.",
 		args: "Args",
-		argsHint: "Space-separated arguments",
+		argsHint:
+			"Space-separated. Each segment is passed as one argument and is not shell-expanded. Example: --policy strict --format json",
+		webhookLabel: "Webhook",
+		webhookHint:
+			"Use a name defined under config.webhook. The actual URL, headers, and timeout live in the webhook config.",
 		route: "Route",
+		selectRoute: "Select route",
+		routeHint:
+			"Pick an existing route prefix. The AI hook uses that route to call Warden's own model.",
 		model: "Model",
+		selectModel: "Select model",
+		modelHint:
+			"Use a model available on that route. A stable, lower-cost model is usually enough for first-pass review.",
 		promptLabel: "Prompt",
-		promptHint: "Supports: {{.ToolName}}, {{.Arguments}}, {{.Result}}, {{.CallID}}",
+		promptHint:
+			"Supports: {{.ToolName}}, {{.FullName}}, {{.MCPName}}, {{.Arguments}}, {{.Result}}, {{.CallID}}",
+		promptHelp:
+			"Must return JSON only. The default safety template focuses on command execution, privacy, malicious commands, and risky outbound access.",
+		useSafePrompt: "Use Default Safety Prompt",
+		sampleArgs: "Recent Arguments",
+		routeHints: "Route Hints",
+		toolNameLabel: "Tool",
+		mcpNameLabel: "MCP",
+		useRouteHint: "Use This Route",
+		addAiRule: "Add AI Rule",
+		fillAiRule: "Fill AI Rule",
+		addExecRule: "Add Exec Rule",
+		fillExecRule: "Fill Exec Rule",
+		addHttpRule: "Add HTTP Rule",
+		fillHttpRule: "Fill HTTP Rule",
+		recentCount: "Recent {n}",
+		lastSeen: "Last seen",
+		filledExistingRule: "Filled suggestion into rule #{n}.",
+		addedSuggestedRule: "Added suggested rule.",
+		noRouteHint:
+			"This suggestion has no route hint yet, so an AI hook cannot be generated automatically.",
 		saveApply: "Save & Apply",
 		saving: "Saving...",
 		savedMsg: "Saved. Restart gateway to apply changes.",
@@ -179,6 +240,7 @@ export default {
 		ssh: "SSH",
 		providersSection: "Providers",
 		routesSection: "Routes",
+		toolHooks: "Tool Hooks",
 		mcp: "MCP",
 		confirmDelete: 'Delete {section} "{key}"?',
 		confirmDiscard: "Discard all unsaved changes?",

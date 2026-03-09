@@ -123,7 +123,7 @@
 							<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
 							<td>{{ chain.displayLogs[0].model }}</td>
 							<td>{{ chain.displayLogs[0].provider }}</td>
-							<td>{{ chain.displayLogs[0].duration_ms }}ms</td>
+							<td>{{ formatDuration(chain.displayLogs[0].duration_ms) }}</td>
 							<td>{{ statusText(chain.displayLogs[0]) }}</td>
 						</tr>
 						<!-- multi-request chain -->
@@ -142,7 +142,7 @@
 								<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
 								<td>{{ chain.displayLogs[0].model }}</td>
 								<td>-</td>
-								<td>{{ chainTotalDuration(chain) }}ms</td>
+								<td>{{ formatDuration(chainTotalDuration(chain)) }}</td>
 								<td>
 									<span class="badge badge-chain"
 										>{{ chain.displayLogs.length }} {{ $t('logs.reqs') }}</span
@@ -170,7 +170,7 @@
 									<td class="cell-prompt">{{ lastUserPreview(log) }}</td>
 									<td>{{ log.model }}</td>
 									<td>{{ log.provider }}</td>
-									<td>{{ log.duration_ms }}ms</td>
+									<td>{{ formatDuration(log.duration_ms) }}</td>
 									<td>{{ statusText(log) }}</td>
 								</tr>
 							</template>
@@ -211,7 +211,7 @@
 							<tr><td>{{ $t('logs.route') }}</td><td><code>{{ selected.route }}</code></td></tr>
 							<tr><td>{{ $t('logs.model') }}</td><td>{{ selected.model }}</td></tr>
 							<tr><td>{{ $t('logs.provider') }}</td><td>{{ selected.provider }}</td></tr>
-							<tr><td>{{ $t('logs.duration') }}</td><td>{{ selected.duration_ms }}ms</td></tr>
+							<tr><td>{{ $t('logs.duration') }}</td><td>{{ formatDuration(selected.duration_ms) }}</td></tr>
 							<tr v-if="selected.fingerprint"><td>{{ $t('logs.session') }}</td><td><code class="fp-str">{{ selected.fingerprint }}</code></td></tr>
 						</table>
 
@@ -326,6 +326,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { createLogStream } from "../api.js";
+import { formatDuration } from "../utils.js";
 
 const logs = ref([]);
 const paused = ref(false);

@@ -347,6 +347,115 @@
       </div>
     </section>
 
+    <!-- Tool Hooks -->
+    <section class="config-section">
+      <div class="section-header" @click="toolHooksOpen = !toolHooksOpen">
+        <h3>{{ $t('config.toolHooks') }} <span class="count">({{ toolHookCount }})</span></h3>
+        <span class="chevron">{{ toolHooksOpen ? '▼' : '▶' }}</span>
+      </div>
+      <div v-show="toolHooksOpen">
+        <div class="subsection-header">
+          <span>tool_hooks</span>
+          <button class="btn btn-sm" @click="addToolHookRule">{{ $t('hooks.addRule') }}</button>
+        </div>
+        <div v-if="toolHookCount === 0" class="hint" style="margin-top:10px">
+          {{ $t('hooks.noRules') }}
+        </div>
+        <div v-for="(rule, idx) in (config.tool_hooks || [])" :key="'tool-hook-'+idx" class="card">
+          <div class="card-header" @click="toggleCard('tool-hook', idx)">
+            <strong>{{ rule.match || '*' }}</strong>
+            <span class="tag-proto">{{ rule.hook?.type || 'exec' }} · {{ rule.hook?.when || 'pre' }}</span>
+            <span class="chevron">{{ isCardOpen('tool-hook', idx) ? '▼' : '▶' }}</span>
+          </div>
+          <div v-show="isCardOpen('tool-hook', idx)" class="card-body">
+            <div class="form-grid">
+              <label>{{ $t('hooks.matchPattern') }} <span class="req">*</span></label>
+              <input v-model="rule.match" class="form-input" :placeholder="$t('hooks.matchPlaceholder')" spellcheck="false" />
+
+              <label>{{ $t('hooks.type') }} <span class="req">*</span></label>
+              <select v-model="rule.hook.type" class="form-input" @change="applyToolHookTypeDefaults(rule)">
+                <option value="exec">exec</option>
+                <option value="ai">ai</option>
+                <option value="http">http</option>
+              </select>
+
+              <label>{{ $t('hooks.when') }} <span class="req">*</span></label>
+              <select v-model="rule.hook.when" class="form-input">
+                <option value="pre">{{ $t('hooks.preBlock') }}</option>
+                <option value="post">{{ $t('hooks.postAudit') }}</option>
+              </select>
+
+              <label>{{ $t('hooks.timeout') }}</label>
+              <input v-model="rule.hook.timeout" class="form-input" placeholder="5s" />
+
+              <template v-if="rule.hook.type === 'exec'">
+                <label>{{ $t('hooks.command') }} <span class="req">*</span></label>
+                <input v-model="rule.hook.command" class="form-input" placeholder="/usr/bin/guard-check" spellcheck="false" />
+
+                <label>{{ $t('hooks.args') }}</label>
+                <div>
+                  <input
+                    :value="(rule.hook.args || []).join(' ')"
+                    @input="rule.hook.args = $event.target.value.split(' ').filter(Boolean)"
+                    class="form-input"
+                    placeholder="--flag value"
+                    spellcheck="false"
+                  />
+                  <div class="hint" style="margin-top:6px">{{ $t('hooks.argsHint') }}</div>
+                </div>
+              </template>
+
+              <template v-if="rule.hook.type === 'ai'">
+                <label>{{ $t('hooks.route') }} <span class="req">*</span></label>
+                <div>
+                  <input
+                    v-model="rule.hook.route"
+                    class="form-input"
+                    list="config-hook-route-options"
+                    placeholder="/openai"
+                    spellcheck="false"
+                  />
+                  <div class="hint" style="margin-top:6px">{{ $t('hooks.routeHint') }}</div>
+                </div>
+
+                <label>{{ $t('hooks.model') }} <span class="req">*</span></label>
+                <div>
+                  <input v-model="rule.hook.model" class="form-input" placeholder="gpt-4o" spellcheck="false" />
+                  <div class="hint" style="margin-top:6px">{{ $t('hooks.modelHint') }}</div>
+                </div>
+
+                <label>{{ $t('hooks.promptLabel') }} <span class="req">*</span></label>
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                    <span class="hint">{{ $t('hooks.promptHelp') }}</span>
+                    <button class="btn btn-secondary btn-sm" type="button" @click="applyDefaultToolHookPrompt(rule)">
+                      {{ $t('hooks.useSafePrompt') }}
+                    </button>
+                  </div>
+                  <textarea
+                    v-model="rule.hook.prompt"
+                    class="form-input form-textarea"
+                    rows="8"
+                    :placeholder="defaultAiPrompt()"
+                    spellcheck="false"
+                  />
+                </div>
+              </template>
+
+              <template v-if="rule.hook.type === 'http'">
+                <label>{{ $t('hooks.webhookLabel') }} <span class="req">*</span></label>
+                <select v-model="rule.hook.webhook" class="form-input">
+                  <option value="">(none)</option>
+                  <option v-for="w in webhookNames" :key="'tool-hook-webhook-'+w" :value="w">{{ w }}</option>
+                </select>
+              </template>
+            </div>
+            <button class="btn btn-danger btn-sm" @click="removeToolHookRule(idx)">{{ $t('hooks.remove') }}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- MCP -->
     <section class="config-section">
       <div class="section-header" @click="mcpOpen = !mcpOpen">
@@ -390,6 +499,10 @@
         </div>
       </div>
     </section>
+
+    <datalist id="config-hook-route-options">
+      <option v-for="route in routeNames" :key="'config-hook-route-'+route" :value="route"></option>
+    </datalist>
   </div>
 </template>
 
@@ -399,6 +512,7 @@ import { useI18n } from 'vue-i18n'
 import { fetchConfig, fetchConfigSource, saveConfig, validateConfig, restartGateway, fetchStatus } from '../api.js'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import TagListEditor from '../components/TagListEditor.vue'
+import { DEFAULT_AI_HOOK_PROMPT } from '../utils.js'
 
 const { t } = useI18n()
 
@@ -424,6 +538,7 @@ const sshOpen = ref(false)
 const webhookOpen = ref(false)
 const providersOpen = ref(true)
 const routesOpen = ref(true)
+const toolHooksOpen = ref(false)
 const mcpOpen = ref(false)
 const showAdminPw = ref(false)
 
@@ -438,12 +553,14 @@ const sshCount = computed(() => Object.keys(config.value.ssh || {}).length)
 const webhookCount = computed(() => Object.keys(config.value.webhook || {}).length)
 const providerCount = computed(() => Object.keys(config.value.provider || {}).length)
 const routeCount = computed(() => Object.keys(config.value.route || {}).length)
+const toolHookCount = computed(() => (config.value.tool_hooks || []).length)
 const mcpCount = computed(() => Object.keys(config.value.mcp || {}).length)
 
 // names for cross-references
 const sshNames = computed(() => Object.keys(config.value.ssh || {}))
 const webhookNames = computed(() => Object.keys(config.value.webhook || {}))
 const providerNames = computed(() => Object.keys(config.value.provider || {}))
+const routeNames = computed(() => Object.keys(config.value.route || {}))
 const mcpNames = computed(() => Object.keys(config.value.mcp || {}))
 
 // admin password handling
@@ -512,6 +629,65 @@ function addPatchOp(cfg) {
 }
 function removePatchOp(cfg, i) {
   cfg.request_patch.splice(i, 1)
+}
+
+function emptyToolHookRule() {
+  return {
+    match: '',
+    hook: {
+      type: 'exec',
+      when: 'pre',
+      timeout: '5s',
+      command: '',
+      args: [],
+      route: '',
+      model: '',
+      prompt: '',
+      webhook: '',
+    },
+  }
+}
+
+function defaultAiPrompt() {
+  return DEFAULT_AI_HOOK_PROMPT
+}
+
+function applyToolHookTypeDefaults(rule) {
+  if (rule?.hook?.type === 'ai' && !String(rule.hook.prompt || '').trim()) {
+    rule.hook.prompt = defaultAiPrompt()
+  }
+}
+
+function applyDefaultToolHookPrompt(rule) {
+  rule.hook.prompt = defaultAiPrompt()
+}
+
+function normalizeToolHookRule(rule) {
+  return {
+    match: rule?.match || '',
+    hook: {
+      type: rule?.hook?.type || 'exec',
+      when: rule?.hook?.when || 'pre',
+      timeout: rule?.hook?.timeout || '5s',
+      command: rule?.hook?.command || '',
+      args: rule?.hook?.args || [],
+      route: rule?.hook?.route || '',
+      model: rule?.hook?.model || '',
+      prompt: rule?.hook?.prompt || '',
+      webhook: rule?.hook?.webhook || '',
+    },
+  }
+}
+
+function addToolHookRule() {
+  if (!config.value.tool_hooks) config.value.tool_hooks = []
+  const idx = config.value.tool_hooks.length
+  config.value.tool_hooks.push(emptyToolHookRule())
+  nextTick(() => { openCards['tool-hook/' + idx] = true })
+}
+
+function removeToolHookRule(idx) {
+  config.value.tool_hooks.splice(idx, 1)
 }
 
 // add/delete map entries
@@ -594,7 +770,10 @@ async function load() {
   loading.value = true
   try {
     const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()])
-    config.value = cfg
+    config.value = {
+      ...cfg,
+      tool_hooks: (cfg.tool_hooks || []).map(normalizeToolHookRule),
+    }
     configSource.value = source
     adminPwEdited.value = false
     adminPwValue.value = ''

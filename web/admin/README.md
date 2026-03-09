@@ -4,8 +4,13 @@
 
 `web/admin` is the embedded Vue 3 admin console for Warden.
 
-- Renders runtime status, provider details, route details, config editor, MCP tools, and live logs.
+- Renders runtime status, provider details, route details, config editor, MCP tools, live logs, and tool-hook suggestions derived from recent logs.
+- The config editor includes visual `tool_hooks` editing for `exec` / `ai` / `http` rules.
+- Hook suggestions support route-aware one-click AI rule filling plus Exec/HTTP rule skeletons, and all suggestion buttons share the same add-vs-fill detection logic.
+- The dedicated Tool Hooks page adds collapsible quick-start guidance and collapsible log suggestions, plus MCP/tool breakdown chips and a stricter default AI safety prompt focused on command execution and privacy protection.
+- On the Tool Hooks page, AI hook `route`/`model` fields are rendered as config-derived dropdowns, and model options stay scoped to the selected route's providers and system prompt keys.
 - Connects to admin SSE endpoints for status, logs, and dashboard telemetry.
+- Formats long log durations with dynamic units (`ms` / `s` / `m` / `h`) instead of forcing milliseconds.
 - Builds static assets into `dist/`, which are embedded by `web/embed.go`.
 
 ## Dashboard Data Flow
