@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/selector"
 )
 
 func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
@@ -103,5 +105,43 @@ func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 
 	if gotAuthorization != "Bearer provider-token" {
 		t.Fatalf("Authorization = %q", gotAuthorization)
+	}
+}
+
+func TestWriteUpstreamAwareError_PreservesUpstreamStatusAndJSONBody(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	err := &selector.UpstreamError{
+		Code: http.StatusUnauthorized,
+		Body: `{"error":{"type":"key_model_access_denied","message":"denied"}}`,
+	}
+
+	writeUpstreamAwareError(rec, err)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != err.Body {
+		t.Fatalf("body = %q, want %q", body, err.Body)
+	}
+}
+
+func TestWriteUpstreamAwareError_WrappedNonUpstreamFallsBackTo502(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	err := fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
+
+	writeUpstreamAwareError(rec, err)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "wrapped: context deadline exceeded") {
+		t.Fatalf("body = %q", body)
 	}
 }

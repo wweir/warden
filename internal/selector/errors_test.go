@@ -31,7 +31,7 @@ func TestIsRetryableError_UpstreamRetryable(t *testing.T) {
 		{404, true},
 		{403, true},
 		{400, true},
-		{401, false},
+		{401, true},
 		{422, false},
 	}
 	for _, c := range cases {
@@ -138,12 +138,21 @@ func TestIsRetryableError_AnthropicRateLimit(t *testing.T) {
 	}
 }
 
+func TestIsRetryableError_KeyModelAccessDenied401(t *testing.T) {
+	err := &UpstreamError{
+		Code: 401,
+		Body: `{"error":{"message":"key not allowed to access model","type":"key_model_access_denied","param":"model","code":"401"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(key_model_access_denied 401) = false, want true")
+	}
+}
+
 func TestIsRetryableError_NonRetryable4xx(t *testing.T) {
 	cases := []struct {
 		code int
 		body string
 	}{
-		{401, `{"error":{"type":"authentication_error"}}`},
 		{422, `{"error":{"type":"invalid_request_error","message":"Unprocessable"}}`},
 	}
 	for _, c := range cases {

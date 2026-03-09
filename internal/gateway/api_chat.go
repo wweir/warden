@@ -152,7 +152,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 					}
 				}
 				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
+				writeUpstreamAwareError(w, err)
 				return
 			}
 			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
@@ -218,7 +218,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 					}
 				}
 				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
+				writeUpstreamAwareError(w, err)
 				return
 			}
 			g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
@@ -273,7 +273,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				}
 			}
 			logRecord(nil, err.Error())
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			writeUpstreamAwareError(w, err)
 			return
 		}
 		g.selector.RecordOutcome(selectedProvider.Name, nil, latency)
@@ -621,7 +621,7 @@ func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request,
 					}
 				}
 				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
+				writeUpstreamAwareError(w, err)
 				return
 			}
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
@@ -680,7 +680,7 @@ func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request,
 				}
 			}
 			logRecord(nil, err.Error())
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			writeUpstreamAwareError(w, err)
 			return
 		}
 		g.selector.RecordOutcome(provCfg.Name, nil, latency)

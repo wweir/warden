@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -106,6 +107,26 @@ func sendRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint s
 	}
 
 	return respBody, latency, nil
+}
+
+func writeUpstreamAwareError(w http.ResponseWriter, err error) {
+	var upErr *selector.UpstreamError
+	if !errors.As(err, &upErr) || upErr.Code < http.StatusBadRequest {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	body := strings.TrimSpace(upErr.Body)
+	if len(body) > 0 && (body[0] == '{' || body[0] == '[') {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(upErr.Code)
+		if _, writeErr := w.Write([]byte(body)); writeErr != nil {
+			slog.Warn("Failed to write upstream error response", "error", writeErr)
+		}
+		return
+	}
+
+	http.Error(w, upErr.Error(), upErr.Code)
 }
 
 // pipeRawStream sends a raw request body upstream and returns the response bytes

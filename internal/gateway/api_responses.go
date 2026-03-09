@@ -123,7 +123,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					continue
 				}
 				logRecord(nil, err.Error())
-				http.Error(w, err.Error(), http.StatusBadGateway)
+				writeUpstreamAwareError(w, err)
 				return
 			}
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
@@ -180,7 +180,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					continue
 				}
 				logRecord(nil, firstErr.Error())
-				http.Error(w, firstErr.Error(), http.StatusBadGateway)
+				writeUpstreamAwareError(w, firstErr)
 				return
 			}
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
@@ -220,7 +220,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				continue
 			}
 			logRecord(nil, err.Error())
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			writeUpstreamAwareError(w, err)
 			return
 		}
 		g.selector.RecordOutcome(provCfg.Name, nil, latency)

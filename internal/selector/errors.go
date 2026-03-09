@@ -34,6 +34,7 @@ func (e *UpstreamError) IsAuthError() bool {
 //
 // Retryable by HTTP status code:
 //   - 400: bad request — some providers reject valid requests (e.g. unsupported params), another may accept
+//   - 401: unauthorized — credentials/model entitlements may differ across providers
 //   - 403: forbidden — provider may reject specific models/keys, another provider may accept
 //   - 404: endpoint not found — provider does not support this API (e.g. /responses)
 //   - 429: rate limit / quota exhausted — different provider may have capacity
@@ -42,10 +43,11 @@ func (e *UpstreamError) IsAuthError() bool {
 // Retryable by response body content (for 4xx that are actually proxy/capacity issues):
 //   - Non-JSON body (HTML error pages from nginx/Cloudflare) on any error status
 //   - Anthropic: overloaded_error, api_error, rate_limit_error
-//   - OpenAI: server_error, rate_limit_error, insufficient_quota, model_not_found
+//   - OpenAI-compatible: server_error, rate_limit_error, insufficient_quota, model_not_found
+//   - Vendor-specific 401s that indicate provider/model access mismatch: key_model_access_denied
 func (e *UpstreamError) IsRetryable() bool {
-	// 5xx, 429, 404, 403 and 400 are always retryable
-	if e.Code >= 500 || e.Code == 400 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
+	// 5xx, 429, 404, 403, 401 and 400 are always retryable
+	if e.Code >= 500 || e.Code == 400 || e.Code == 401 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
 		return true
 	}
 
@@ -68,7 +70,7 @@ func IsRetryableByBody(body string) bool {
 	if errType != "" {
 		switch errType {
 		case "overloaded_error", "api_error", "rate_limit_error", "new_api_error",
-			"server_error", "insufficient_quota":
+			"server_error", "insufficient_quota", "key_model_access_denied":
 			return true
 		}
 	}
