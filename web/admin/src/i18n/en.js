@@ -253,6 +253,8 @@ export default {
 		savingDisabled: "Config was not loaded from a file, saving is disabled",
 		chatToResponsesHint:
 			"Route chat/completions to upstream /responses endpoint (enables web search, file search, etc.)",
+		responsesToChatHint:
+			"Route responses to upstream /chat/completions endpoint (function-tools subset only)",
 	},
 	logs: {
 		title: "Request Logs",

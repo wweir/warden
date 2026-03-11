@@ -122,6 +122,13 @@ curl http://localhost:8080/openai/models
 
 MCP 工具对客户端完全透明 — Warden 自动注入工具定义、拦截工具调用、执行后将结果回传 LLM 继续生成。客户端只看到最终回复（或仅看到客户端自己定义的工具调用）。
 
+对 `protocol: "openai"` 的 provider，可选开启双向协议桥接：
+
+- `chat_to_responses: true`：本地 `chat/completions` → 上游 `/responses`
+- `responses_to_chat: true`：本地 `responses` → 上游 `/chat/completions`
+
+`responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射到 Chat 协议。
+
 所有上游转发请求（包括 `chat/completions`、`responses`、透明代理）统一采用 header 安全转发策略：复制请求头后清洗 hop-by-hop/客户端认证头，重建 `X-Forwarded-*`，最后注入 provider 认证头。
 
 Anthropic 原生 `/messages` 端点也可通过路由前缀访问，但走透明代理路径，**不支持 MCP 工具注入和 System Prompt 注入**：

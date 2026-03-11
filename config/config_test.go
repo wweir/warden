@@ -259,3 +259,26 @@ func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 		t.Fatalf("expected webhook required error, got %v", err)
 	}
 }
+
+func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"anthropic": {
+				URL:             "https://api.anthropic.com/v1",
+				Protocol:        "anthropic",
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/anthropic": {Providers: []string{"anthropic"}},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "responses_to_chat requires protocol 'openai'") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

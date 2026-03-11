@@ -87,18 +87,19 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name         string            `json:"-"` // populated from map key
-	URL          string            `json:"url" usage:"Upstream LLM base URL"`
-	Protocol     string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
-	APIKey       deferlog.Secret   `json:"api_key" usage:"API key for authentication"`
-	ConfigDir    string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	Timeout      string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
-	Proxy        string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers      map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models       []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ModelAliases map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name), alias appears in /models and is resolved before upstream request"`
-	RequestPatch    []RequestPatchOp `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
-	ChatToResponses bool             `json:"chat_to_responses" usage:"Route chat/completions to upstream /responses for openai protocol"`
+	Name            string            `json:"-"` // populated from map key
+	URL             string            `json:"url" usage:"Upstream LLM base URL"`
+	Protocol        string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
+	APIKey          deferlog.Secret   `json:"api_key" usage:"API key for authentication"`
+	ConfigDir       string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
+	Timeout         string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers         map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models          []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	ModelAliases    map[string]string `json:"model_aliases" usage:"Model alias mapping (alias_name = real_name), alias appears in /models and is resolved before upstream request"`
+	RequestPatch    []RequestPatchOp  `json:"request_patch" usage:"JSON Patch operations (RFC 6902) applied to request body before forwarding"`
+	ChatToResponses bool              `json:"chat_to_responses" usage:"Route chat/completions to upstream /responses for openai protocol"`
+	ResponsesToChat bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
@@ -449,6 +450,9 @@ func (c *ConfigStruct) Validate() error {
 		// validate chat_to_responses requires openai protocol
 		if prov.ChatToResponses && prov.Protocol != "openai" {
 			return NewValidationError("provider %s: chat_to_responses requires protocol 'openai', got %q", name, prov.Protocol)
+		}
+		if prov.ResponsesToChat && prov.Protocol != "openai" {
+			return NewValidationError("provider %s: responses_to_chat requires protocol 'openai', got %q", name, prov.Protocol)
 		}
 	}
 

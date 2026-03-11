@@ -240,6 +240,8 @@ export default {
 		savingDisabled: "配置未从文件加载，保存已禁用",
 		chatToResponsesHint:
 			"将 chat/completions 路由到上游 /responses 端点（启用 web search、file search 等功能）",
+		responsesToChatHint:
+			"将 responses 路由到上游 /chat/completions 端点（仅支持 function tools 子集）",
 	},
 	logs: {
 		title: "请求日志",

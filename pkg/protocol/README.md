@@ -10,6 +10,7 @@ protocol/
 ├── openai/             # OpenAI 协议实现
 │   ├── types.go        # Chat Completions API 请求/响应类型
 │   ├── responses.go    # Responses API 请求/响应类型
+│   ├── convert.go      # Chat ↔ Responses 双向转换
 │   ├── stream.go       # SSE 流式解析器（Chat + Responses）
 │   ├── inject.go       # 工具注入
 │   └── prompt.go       # 系统提示词注入
@@ -24,12 +25,14 @@ protocol/
 - 定义 LLM 协议公共类型（`Event`、`ToolCallInfo`）
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
+- 提供 OpenAI `chat/completions` 与 `responses` 的双向请求/响应/SSE 转换
 
 ## 主要类型
 
 ### Event
 
 SSE 事件结构：
+
 ```go
 type Event struct {
     EventType string // 事件类型（如 "message"、"content_block_delta"）
@@ -41,6 +44,7 @@ type Event struct {
 ### ToolCallInfo
 
 协议无关的工具调用信息：
+
 ```go
 type ToolCallInfo struct {
     ID        string // tool call ID
@@ -52,6 +56,7 @@ type ToolCallInfo struct {
 ### StreamParser 接口
 
 流式响应解析器接口：
+
 ```go
 type StreamParser interface {
     // Parse extracts tool call infos from SSE events

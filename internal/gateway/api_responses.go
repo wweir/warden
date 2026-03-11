@@ -13,6 +13,7 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/internal/toolexec"
 	"github.com/wweir/warden/pkg/protocol"
@@ -62,6 +63,11 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	// Set provider header for metrics middleware
 	w.Header().Set("X-Provider", provCfg.Name)
+
+	if provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
+		g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, availableTools, startTime, reqID, excluded, authRetried)
+		return
+	}
 
 	var steps []reqlog.Step
 
@@ -439,6 +445,266 @@ func (g *Gateway) pipeResponsesStream(ctx context.Context, w http.ResponseWriter
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	return pipeRawStream(ctx, w, provCfg, protocolEndpoint(provCfg.Protocol, true), reqBody)
+}
+
+// handleResponsesViaChat handles Responses API requests by converting to/from Chat Completions.
+// This is used when responses_to_chat is enabled for a provider.
+func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
+	rawReqBody []byte, model string, stream bool, provCfg *config.ProviderConfig,
+	availableTools []mcp.Tool, startTime time.Time, reqID string,
+	excluded []string, authRetried map[string]bool,
+) {
+	var err error
+	defer func() { deferlog.DebugError(err, "handle responses via chat", "route", route.Prefix) }()
+
+	var steps []reqlog.Step
+	logRecord := func(respBody []byte, errMsg string) {
+		rec := reqlog.Record{
+			Timestamp:   startTime,
+			RequestID:   reqID,
+			Route:       route.Prefix,
+			Endpoint:    "responses",
+			Model:       model,
+			Stream:      stream,
+			Provider:    provCfg.Name,
+			UserAgent:   r.UserAgent(),
+			DurationMs:  time.Since(startTime).Milliseconds(),
+			Error:       errMsg,
+			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
+			Request:     rawReqBody,
+			Response:    respBody,
+			Steps:       steps,
+		}
+		if stream && len(respBody) > 0 && errMsg == "" {
+			events := protocol.ParseEvents(respBody)
+			if cr := openai.ExtractCompletedResponse(events); cr != nil {
+				if assembled, marshalErr := json.Marshal(cr); marshalErr == nil {
+					rec.Response = assembled
+					usage := ExtractTokenUsage(assembled)
+					g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "responses", usage, rec.DurationMs)
+				}
+			}
+		} else if len(respBody) > 0 && errMsg == "" {
+			usage := ExtractTokenUsage(respBody)
+			g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, "responses", usage, rec.DurationMs)
+		}
+		g.recordAndBroadcast(rec)
+	}
+
+	var respReq openai.ResponsesRequest
+	if err = json.Unmarshal(rawReqBody, &respReq); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	respReq.Input = openai.InjectSystemPromptResponses(respReq.Input, route.SystemPrompts[model])
+
+	chatReq, err := openai.ResponsesRequestToChatRequest(respReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("convert to chat: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	injectedTools := openai.Inject(&chatReq, mcpToolsToToolDefs(availableTools))
+	origModel := chatReq.Model
+	chatReq.Model = provCfg.ResolveModel(chatReq.Model)
+
+	if stream {
+		for {
+			logRequest(r, provCfg.Name, origModel)
+
+			rawResp, latency, sendErr := sendUpstreamChatRawWithLatency(r.Context(), provCfg, chatReq)
+			if sendErr != nil {
+				g.selector.RecordOutcomeWithSource(provCfg.Name, sendErr, latency, "pre_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "pre_stream")
+				if tryAuthRetry(sendErr, provCfg, authRetried) {
+					continue
+				}
+				if next := g.tryFailover(sendErr, provCfg.Name, &excluded, route, origModel); next != nil {
+					provCfg = next
+					chatReq.Model = provCfg.ResolveModel(origModel)
+					continue
+				}
+				logRecord(nil, sendErr.Error())
+				writeUpstreamAwareError(w, sendErr)
+				return
+			}
+			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			g.RecordTTFTMetric(route.Prefix, provCfg.Name, origModel, "responses", latency)
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+
+			if len(injectedTools) == 0 {
+				respSSE := openai.ChatSSEToResponsesSSE(rawResp, model)
+				if _, writeErr := w.Write(respSSE); writeErr != nil {
+					slog.Warn("Failed to write converted stream response", "error", writeErr)
+				}
+				w.(http.Flusher).Flush()
+				logRecord(respSSE, "")
+				return
+			}
+
+			respBody, streamSteps, streamErr := g.processChatStreamToolCallsConverted(w, r, provCfg, chatReq, injectedTools, rawResp, model)
+			steps = append(steps, streamSteps...)
+			if streamErr != nil {
+				g.selector.RecordOutcomeWithSource(provCfg.Name, streamErr, time.Since(startTime), "in_stream")
+				g.RecordStreamErrorMetric(provCfg.Name, "in_stream")
+				logRecord(respBody, streamErr.Error())
+			} else {
+				logRecord(respBody, "")
+			}
+			return
+		}
+	}
+
+	for {
+		logRequest(r, provCfg.Name, origModel)
+
+		chatResp, _, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), provCfg, chatReq)
+		if forwardErr != nil {
+			g.selector.RecordOutcome(provCfg.Name, forwardErr, latency)
+			if tryAuthRetry(forwardErr, provCfg, authRetried) {
+				continue
+			}
+			if next := g.tryFailover(forwardErr, provCfg.Name, &excluded, route, origModel); next != nil {
+				provCfg = next
+				chatReq.Model = provCfg.ResolveModel(origModel)
+				continue
+			}
+			logRecord(nil, forwardErr.Error())
+			writeUpstreamAwareError(w, forwardErr)
+			return
+		}
+		g.selector.RecordOutcome(provCfg.Name, nil, latency)
+
+		if len(chatResp.Choices) > 0 && len(chatResp.Choices[0].Message.ToolCalls) > 0 {
+			if !hasInjectedChatToolCalls(chatResp, injectedTools) {
+				allInfos := toolCallsToInfos(chatResp.Choices[0].Message.ToolCalls)
+				if _, err := toolexec.Execute(r.Context(), allInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr); err != nil {
+					slog.Error("ResponsesToChat: failed to run tool hooks", "error", err)
+				}
+			} else {
+				chatResp = g.handleToolCalls(r.Context(), chatReq, chatResp, injectedTools, provCfg, &steps)
+			}
+		}
+
+		respResp, convErr := openai.ChatResponseToResponsesResponse(chatResp, model)
+		if convErr != nil {
+			http.Error(w, fmt.Sprintf("convert response: %v", convErr), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		respBody, _ := json.Marshal(respResp)
+		if _, writeErr := w.Write(respBody); writeErr != nil {
+			slog.Warn("Failed to write converted response", "error", writeErr)
+		}
+		logRecord(respBody, "")
+		return
+	}
+}
+
+func hasInjectedChatToolCalls(resp openai.ChatCompletionResponse, injectedTools []string) bool {
+	if len(resp.Choices) == 0 {
+		return false
+	}
+	for _, tc := range resp.Choices[0].Message.ToolCalls {
+		if slices.Contains(injectedTools, tc.Function.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func sendUpstreamChatRawWithLatency(ctx context.Context, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest) ([]byte, time.Duration, error) {
+	reqBody, err := marshalProtocolRequest(provCfg.Protocol, req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal request: %w", err)
+	}
+	return sendRequest(ctx, provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody, true)
+}
+
+func (g *Gateway) processChatStreamToolCallsConverted(w http.ResponseWriter, r *http.Request,
+	provCfg *config.ProviderConfig, req openai.ChatCompletionRequest, injectedTools []string, rawBody []byte, model string,
+) ([]byte, []reqlog.Step, error) {
+	parser := newStreamParser(provCfg.Protocol, false)
+	messages := req.Messages
+	var steps []reqlog.Step
+
+	for i := range maxToolCallIterations {
+		if i > 0 {
+			var err error
+			rawBody, _, err = sendUpstreamChatRawWithLatency(r.Context(), provCfg, req)
+			if err != nil {
+				return nil, steps, err
+			}
+		}
+
+		events := protocol.ParseEvents(rawBody)
+		sseInfos, hasInjected, err := parser.Parse(events, injectedTools)
+		if err != nil {
+			respSSE := openai.ChatSSEToResponsesSSE(rawBody, model)
+			w.Write(respSSE)
+			w.(http.Flusher).Flush()
+			return respSSE, steps, nil
+		}
+
+		if !hasInjected {
+			if len(sseInfos) > 0 {
+				if _, err := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr); err != nil {
+					slog.Error("ResponsesToChat stream: failed to run tool hooks", "error", err)
+				}
+			}
+			respSSE := openai.ChatSSEToResponsesSSE(rawBody, model)
+			w.Write(respSSE)
+			w.(http.Flusher).Flush()
+			return respSSE, steps, nil
+		}
+
+		injectedInfos, clientInfos := splitInfos(sseInfos, injectedTools)
+		results, execErr := toolexec.Execute(r.Context(), sseInfos, injectedTools, g.mcpClients, g.cfg.MCP, g.cfg.ToolHooks, g.cfg.Addr)
+		if execErr != nil {
+			slog.Error("ResponsesToChat stream: failed to execute tools", "error", execErr)
+			respSSE := openai.ChatSSEToResponsesSSE(rawBody, model)
+			w.Write(respSSE)
+			w.(http.Flusher).Flush()
+			return respSSE, steps, nil
+		}
+
+		llmReqBody, _ := json.Marshal(req)
+		steps = append(steps, buildStep(i+1, injectedInfos, results, llmReqBody, rawBody))
+
+		assistantMsg := openai.Message{Role: "assistant", ToolCalls: infosToToolCalls(sseInfos)}
+		messages = append(messages, assistantMsg)
+		messages = append(messages, toolResultsToMessages(results)...)
+		req.Messages = messages
+
+		if len(clientInfos) > 0 {
+			rawResp, _, err := sendUpstreamChatRawWithLatency(r.Context(), provCfg, req)
+			if rawResp != nil {
+				respSSE := openai.ChatSSEToResponsesSSE(rawResp, model)
+				if _, writeErr := w.Write(respSSE); writeErr != nil {
+					slog.Warn("Failed to write converted mixed stream response", "error", writeErr)
+				}
+				w.(http.Flusher).Flush()
+				return respSSE, steps, err
+			}
+			return nil, steps, err
+		}
+	}
+
+	rawResp, _, err := sendUpstreamChatRawWithLatency(r.Context(), provCfg, req)
+	if rawResp != nil {
+		respSSE := openai.ChatSSEToResponsesSSE(rawResp, model)
+		if _, writeErr := w.Write(respSSE); writeErr != nil {
+			slog.Warn("Failed to write converted final stream response", "error", writeErr)
+		}
+		w.(http.Flusher).Flush()
+		return respSSE, steps, err
+	}
+	return nil, steps, err
 }
 
 // --- responses helpers ---

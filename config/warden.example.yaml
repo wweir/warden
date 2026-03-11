@@ -63,6 +63,8 @@ provider:
     timeout: "120s" # non-streaming first-token timeout
     # chat_to_responses: true              # route chat/completions to upstream /responses endpoint
     # enables Responses API features (web search, file search, etc.)
+    # responses_to_chat: true              # route responses to upstream /chat/completions endpoint
+    # only supports chat-compatible subset (string/array input + function tools)
     # requires protocol: "openai"
 
   anthropic:
