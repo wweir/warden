@@ -514,6 +514,7 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"timeout":           provCfg.Timeout,
 		"has_api_key":       provCfg.APIKey.Value() != "",
 		"chat_to_responses": provCfg.ChatToResponses,
+		"responses_to_chat": provCfg.ResponsesToChat,
 		"model_aliases":     provCfg.ModelAliases,
 		"models":            models,
 		"status":            status,
@@ -934,23 +935,15 @@ func (g *Gateway) collectMetricsData() map[string]any {
 		Value    float64 `json:"value"`
 	}
 	var rates []tokenRateStat
-	for _, met := range collectMetrics(tokenRate) {
-		rs := tokenRateStat{Value: met.GetGauge().GetValue()}
-		for _, l := range met.GetLabel() {
-			switch l.GetName() {
-			case "route":
-				rs.Route = l.GetValue()
-			case "provider":
-				rs.Provider = l.GetValue()
-			case "model":
-				rs.Model = l.GetValue()
-			case "endpoint":
-				rs.Endpoint = l.GetValue()
-			case "type":
-				rs.Type = l.GetValue()
-			}
-		}
-		rates = append(rates, rs)
+	for _, entry := range g.outputRates.Snapshot(time.Now()) {
+		rates = append(rates, tokenRateStat{
+			Route:    entry.Route,
+			Provider: entry.Provider,
+			Model:    entry.Model,
+			Endpoint: entry.Endpoint,
+			Type:     entry.Type,
+			Value:    entry.Value,
+		})
 	}
 
 	type quantileStat struct {
@@ -1051,32 +1044,16 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 		sample.Tokens += met.GetCounter().GetValue()
 	}
 
-	for _, met := range collectMetrics(tokenRate) {
-		isCompletion := false
-		provider := ""
-		route := ""
-		for _, label := range met.GetLabel() {
-			if label.GetName() == "type" && label.GetValue() == "completion" {
-				isCompletion = true
-				continue
-			}
-			if label.GetName() == "provider" {
-				provider = label.GetValue()
-				continue
-			}
-			if label.GetName() == "route" {
-				route = label.GetValue()
-			}
+	for _, entry := range g.outputRates.Snapshot(sample.Timestamp) {
+		if entry.Type != "completion" {
+			continue
 		}
-		if isCompletion {
-			value := met.GetGauge().GetValue()
-			sample.OutputRate += value
-			if provider != "" {
-				sample.OutputByProv[provider] += value
-			}
-			if route != "" {
-				sample.RouteOutput[route] += value
-			}
+		sample.OutputRate += entry.Value
+		if entry.Provider != "" {
+			sample.OutputByProv[entry.Provider] += entry.Value
+		}
+		if entry.Route != "" {
+			sample.RouteOutput[entry.Route] += entry.Value
 		}
 	}
 

@@ -30,7 +30,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── api_chat.go          # Chat Completions 请求处理（透传优化 + 工具拦截）
 │   │   ├── api_responses.go     # Responses API 请求处理（透传优化 + 工具拦截）
 │   │   ├── adapter.go           # 协议适配：endpoint 路由、请求/响应序列化、流式 parser 工厂
-│   │   ├── dashboard_metrics.go # 仪表盘实时指标滚动缓存：Prometheus 累计指标 -> 时序点（含总输出速率与按 provider 分组的输出速率）
+│   │   ├── dashboard_metrics.go # 仪表盘实时指标滚动缓存：Prometheus 累计指标 + 新鲜输出速率缓存 -> 时序点（空闲后输出速率自动归零）
 │   │   ├── http.go              # upstream HTTP 通信：sendRequest、pipeRawStream、认证注入、模型拉取
 │   │   ├── convert.go           # 公共转换辅助函数：tool call/result 类型转换、分离（泛型实现）、过滤
 │   │   ├── selector.go          # Provider 多选策略：配置顺序 + 模型匹配 + 失败抑制 + 滑动窗口统计 + 状态暴露
@@ -53,7 +53,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 │   │   ├── openai/
 │   │   │   ├── types.go         # OpenAI Chat Completions API 请求/响应类型定义
 │   │   │   ├── responses.go     # OpenAI Responses API 请求/响应类型定义
-│   │   │   ├── convert.go       # Chat↔Responses 协议转换器（chat_to_responses 模式）
+│   │   │   ├── convert.go       # Chat↔Responses 协议转换器（chat_to_responses / responses_to_chat）
 │   │   │   ├── stream.go        # OpenAI SSE 流式解析器（Chat + Responses）
 │   │   │   ├── inject.go        # 工具注入（Chat Completions + Responses API）
 │   │   │   └── prompt.go        # 系统提示词注入（Chat Completions + Responses API）
@@ -82,7 +82,7 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`，响应转回 Chat 格式返回客户端，从而利用 Responses API 的高级功能（web search、file search 等）。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
+主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`；也可配置 `responses_to_chat: true`（仅限 `protocol: "openai"`），将客户端 `responses` 请求转换为 Chat Completions 格式发送到上游 `/chat/completions`。后者仅支持 Chat 兼容子集：字符串/数组 `input`、`function` tools；`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
 
 ### provider 多选策略 (internal/gateway/selector.go)
 
@@ -905,4 +905,4 @@ type Step struct {
     - **非流式请求**：使用可配置的超时（`provider.timeout`，默认 120s）。非流式请求需要等待完整响应生成，推理模型可能需要较长时间。超时仅应用于等待响应头（`ResponseHeaderTimeout`），body 读取无时间限制。
     - 延迟统计记录首-token 时间，用于 provider 健康度评估和 failover 决策。
 
-18. **Chat-to-Responses 协议转换**：当 provider 配置 `chat_to_responses: true` 时，客户端仍通过 `POST /chat/completions` 发请求，但网关将请求转换为 Responses API 格式发送到上游 `/responses`，并将响应转回 Chat 格式返回客户端。转换逻辑位于 `pkg/protocol/openai/convert.go`，提供三个核心函数：`ChatRequestToResponsesRequest`（请求转换：messages→input、tools 扁平化、system→developer 角色映射）、`ResponsesResponseToChatResponse`（非流式响应转换：output items→choices、function_call→tool_calls）、`ResponsesSSEToChatSSE`（流式 SSE 转换：Responses 语义化事件→Chat delta chunks）。实现为独立的 `handleChatViaResponses` 方法，在 `handleChatCompletion` 入口处判断分流，复用 `api_responses.go` 的工具处理逻辑（`handleResponsesToolCalls`、`buildResponsesInput` 等），最小化对原有 Chat 流程的侵入。
+18. **OpenAI 双向协议转换**：当 provider 配置 `chat_to_responses: true` 时，客户端仍通过 `POST /chat/completions` 发请求，但网关将请求转换为 Responses API 格式发送到上游 `/responses`，并将响应转回 Chat 格式返回客户端。反向地，当 provider 配置 `responses_to_chat: true` 时，客户端通过 `POST /responses` 发请求，网关将其转换为 Chat Completions 格式发送到上游 `/chat/completions`，再把响应转回 Responses 格式返回客户端。转换逻辑位于 `pkg/protocol/openai/convert.go`，核心函数包括 `ChatRequestToResponsesRequest`、`ResponsesRequestToChatRequest`、`ResponsesResponseToChatResponse`、`ChatResponseToResponsesResponse`、`ResponsesSSEToChatSSE`、`ChatSSEToResponsesSSE`。入口分流分别位于 `handleChatCompletion` 和 `handleResponses`，工具调用处理分别复用 chat/responses 既有循环逻辑，避免重复实现。`responses_to_chat` 明确只支持 Chat 兼容子集；Responses 原生内建工具与 `previous_response_id` 不可桥接。

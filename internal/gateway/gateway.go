@@ -33,11 +33,17 @@ type Gateway struct {
 	logger         reqlog.Logger
 	broadcaster    *reqlog.Broadcaster
 	dashboardStore *dashboardMetricsStore
+	outputRates    *outputRateTracker
 	handler        http.Handler
 	reloadFn       func() error
 	ctx            context.Context
 	cancel         context.CancelFunc
 }
+
+const (
+	dashboardMetricsSampleInterval = 2 * time.Second
+	dashboardMetricsHistoryLimit   = 180
+)
 
 // SetReloadFn sets the function called to hot-reload the gateway.
 func (g *Gateway) SetReloadFn(fn func() error) {
@@ -72,7 +78,8 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		selector:       sel.NewSelector(cfg),
 		mcpClients:     mcpClients,
 		broadcaster:    reqlog.NewBroadcaster(),
-		dashboardStore: newDashboardMetricsStore(2*time.Second, 180),
+		dashboardStore: newDashboardMetricsStore(dashboardMetricsSampleInterval, dashboardMetricsHistoryLimit),
+		outputRates:    newOutputRateTracker(dashboardMetricsSampleInterval),
 		ctx:            ctx,
 		cancel:         cancel,
 	}

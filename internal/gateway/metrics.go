@@ -201,7 +201,11 @@ func (g *Gateway) RecordTokenMetrics(route, provider, model, endpoint string, us
 		}
 		tokenCounter.WithLabelValues(provider, model, typ).Add(float64(count))
 		if durationMs > 0 {
-			tokenRate.WithLabelValues(route, provider, model, endpoint, typ).Set(float64(count) / (float64(durationMs) / 1000.0))
+			value := float64(count) / (float64(durationMs) / 1000.0)
+			tokenRate.WithLabelValues(route, provider, model, endpoint, typ).Set(value)
+			if g.outputRates != nil {
+				g.outputRates.Record(route, provider, model, endpoint, typ, value, time.Now())
+			}
 		}
 	}
 	recordTokenType(usage.PromptTokens, "prompt")
