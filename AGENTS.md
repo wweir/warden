@@ -13,7 +13,7 @@ Use Simplified Chinese to answer my questions.
 
 1. 代码变更后用 LSP 检查错误
 2. 需求模糊时先提问澄清，不要猜测
-3. 禁止未授权的重构，最小修改面
+3. 禁止未授权的重构，避免扩大修改面
 
 ## Design Preferences
 
