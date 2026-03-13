@@ -108,6 +108,26 @@ export function toggleMcpTool(mcp, tool, disabled) {
   })
 }
 
+export function fetchAPIKeys() {
+  return apiJSON('/_admin/api/apikeys')
+}
+
+export function createAPIKey(name) {
+  return apiJSON('/_admin/api/apikeys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function deleteAPIKey(name) {
+  return apiJSON('/_admin/api/apikeys', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
 export function fetchRouteDetail(prefix) {
   return apiJSON(`/_admin/api/routes/detail?prefix=${encodeURIComponent(prefix)}`)
 }

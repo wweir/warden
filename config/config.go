@@ -14,7 +14,6 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
-	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/pkg/provider"
 	"github.com/wweir/warden/pkg/ssh"
 )
@@ -27,7 +26,8 @@ type SSHConfig = ssh.Config
 
 type ConfigStruct struct {
 	Addr          string                     `json:"addr" usage:"Gateway listening address"`
-	AdminPassword string                     `json:"admin_password" usage:"Admin panel password (empty to disable)"`
+	AdminPassword SecretString               `json:"admin_password" usage:"Admin panel password (empty to disable)"`
+	APIKeys       map[string]SecretString    `json:"api_keys" usage:"API keys for programmatic access (name -> key)"`
 	Log           *LogConfig                 `json:"log" usage:"Request/response logging configuration"`
 	Webhook       map[string]*WebhookConfig  `json:"webhook" usage:"Reusable HTTP webhook configurations (referenced by log http targets)"`
 	Provider      map[string]*ProviderConfig `json:"provider" usage:"Upstream LLM provider configurations"`
@@ -90,7 +90,7 @@ type ProviderConfig struct {
 	Name            string            `json:"-"` // populated from map key
 	URL             string            `json:"url" usage:"Upstream LLM base URL"`
 	Protocol        string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
-	APIKey          deferlog.Secret   `json:"api_key" usage:"API key for authentication"`
+	APIKey          SecretString      `json:"api_key" usage:"API key for authentication"`
 	ConfigDir       string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
 	Timeout         string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
 	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`

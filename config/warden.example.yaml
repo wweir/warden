@@ -1,7 +1,15 @@
 addr: ":8080"
 
 # Admin panel password (empty to disable admin UI at /_admin/)
+# Stored as base64 in config file, but accepts plaintext on read.
 # admin_password: "your-secret-password"
+
+# API keys for programmatic access (name -> key)
+# Keys are stored as base64 in config file, but accepts plaintext on read.
+# Generate and manage keys via the admin UI at /_admin/api-keys
+# api_keys:
+#   my-app: "generated-api-key"
+#   cli-tool: "another-api-key"
 
 # Webhook configurations for HTTP log push targets
 # webhook:

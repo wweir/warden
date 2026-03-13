@@ -13,6 +13,7 @@ import Routes from './views/Routes.vue'
 import Providers from './views/Providers.vue'
 import Chat from './views/Chat.vue'
 import ToolHooks from './views/ToolHooks.vue'
+import ApiKeys from './views/ApiKeys.vue'
 
 const router = createRouter({
   history: createWebHistory('/_admin/'),
@@ -22,6 +23,7 @@ const router = createRouter({
     { path: '/routes', component: Routes },
     { path: '/providers', component: Providers },
     { path: '/tool-hooks', component: ToolHooks },
+    { path: '/api-keys', component: ApiKeys },
     { path: '/config', component: Config },
     { path: '/logs', component: Logs },
     { path: '/providers/:name', component: ProviderDetail, props: true },

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/selector"
 )
@@ -33,7 +32,7 @@ func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
 		Protocol: "openai",
-		APIKey:   deferlog.Secret("provider-token"),
+		APIKey:   config.SecretString("provider-token"),
 	}
 
 	clientReq := httptest.NewRequest(http.MethodPost, "http://gateway.local/openai/chat/completions", nil)
@@ -95,7 +94,7 @@ func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
 		Protocol: "openai",
-		APIKey:   deferlog.Secret("provider-token"),
+		APIKey:   config.SecretString("provider-token"),
 	}
 
 	_, _, err := sendRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)

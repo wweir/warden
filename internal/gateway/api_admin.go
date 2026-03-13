@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -113,6 +114,15 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("GET /api/metrics/stream", func(w http.ResponseWriter, r *http.Request) {
 		g.handleMetricsStream(w, r, nil)
 	})
+	mux.HandleFunc("GET /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
+		g.handleAPIKeysList(w, r, nil)
+	})
+	mux.HandleFunc("POST /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
+		g.handleAPIKeysCreate(w, r, nil)
+	})
+	mux.HandleFunc("DELETE /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
+		g.handleAPIKeysDelete(w, r, nil)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fp := strings.TrimPrefix(r.URL.Path, "/")
 		if fp != "" {
@@ -147,7 +157,7 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 func (g *Gateway) basicAuth(next httprouter.Handle) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != "admin" || subtle.ConstantTimeCompare([]byte(pass), []byte(g.cfg.AdminPassword)) != 1 {
+		if !ok || user != "admin" || subtle.ConstantTimeCompare([]byte(pass), []byte(g.cfg.AdminPassword.Value())) != 1 {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Warden Admin"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -386,10 +396,19 @@ func writeSSE(w http.ResponseWriter, r reqlog.Record) {
 }
 
 // injectSecrets writes real secret values from cfg into cfgMap,
-// since json.Marshal masks deferlog.Secret fields as "***".
+// since json.Marshal masks SecretString fields as "***".
 func injectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 	if cfg.AdminPassword != "" {
-		cfgMap["admin_password"] = cfg.AdminPassword
+		cfgMap["admin_password"] = cfg.AdminPassword.Value()
+	}
+	// inject api_keys
+	if len(cfg.APIKeys) > 0 {
+		apiKeysMap, _ := cfgMap["api_keys"].(map[string]any)
+		for name, key := range cfg.APIKeys {
+			if key != "" && apiKeysMap != nil {
+				apiKeysMap[name] = key.Value()
+			}
+		}
 	}
 	providerMap, _ := cfgMap["provider"].(map[string]any)
 	for name, prov := range cfg.Provider {
@@ -1066,4 +1085,98 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 	}
 
 	return sample
+}
+
+// handleAPIKeysList returns all API keys (masked).
+func (g *Gateway) handleAPIKeysList(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	keys := make([]map[string]string, 0, len(g.cfg.APIKeys))
+	for name := range g.cfg.APIKeys {
+		keys = append(keys, map[string]string{
+			"name": name,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"keys": keys,
+	})
+}
+
+// handleAPIKeysCreate generates a new API key.
+func (g *Gateway) handleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Generate a random API key
+	key := generateAPIKey()
+
+	// Store in config
+	if g.cfg.APIKeys == nil {
+		g.cfg.APIKeys = make(map[string]config.SecretString)
+	}
+	g.cfg.APIKeys[body.Name] = config.SecretString(key)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"name": body.Name,
+		"key":  key, // Only return the key on creation
+	})
+}
+
+// handleAPIKeysDelete removes an API key.
+func (g *Gateway) handleAPIKeysDelete(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := g.cfg.APIKeys[body.Name]; !exists {
+		http.Error(w, "key not found", http.StatusNotFound)
+		return
+	}
+
+	delete(g.cfg.APIKeys, body.Name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
+// generateAPIKey creates a random API key with "wk_" prefix.
+func generateAPIKey() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const keyLen = 32
+
+	b := make([]byte, keyLen)
+	// crypto/rand.Read fills b with random bytes
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		// Fallback to time-based (shouldn't happen)
+		for i := range b {
+			b[i] = charset[i%len(charset)]
+		}
+	}
+
+	// Convert random bytes to charset characters
+	for i := range b {
+		b[i] = charset[int(b[i])%len(charset)]
+	}
+
+	return "wk_" + string(b)
 }
