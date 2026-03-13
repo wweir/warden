@@ -76,6 +76,7 @@ func (req *ResponsesRequest) Validate() error {
 // ResponsesResponse represents the response from POST /v1/responses.
 type ResponsesResponse struct {
 	ID     string                     `json:"id"`
+	Status string                     `json:"status,omitempty"` // "completed", "incomplete", "failed"
 	Output []json.RawMessage          `json:"output"` // output items, keep as RawMessage
 	Extra  map[string]json.RawMessage `json:"-"`
 }
@@ -85,6 +86,11 @@ func (r ResponsesResponse) MarshalJSON() ([]byte, error) {
 	maps.Copy(m, r.Extra)
 	if b, err := json.Marshal(r.ID); err == nil {
 		m["id"] = b
+	}
+	if r.Status != "" {
+		if b, err := json.Marshal(r.Status); err == nil {
+			m["status"] = b
+		}
 	}
 	if b, err := json.Marshal(r.Output); err == nil {
 		m["output"] = b
@@ -100,6 +106,10 @@ func (r *ResponsesResponse) UnmarshalJSON(data []byte) error {
 	if v, ok := m["id"]; ok {
 		json.Unmarshal(v, &r.ID)
 		delete(m, "id")
+	}
+	if v, ok := m["status"]; ok {
+		json.Unmarshal(v, &r.Status)
+		delete(m, "status")
 	}
 	if v, ok := m["output"]; ok {
 		json.Unmarshal(v, &r.Output)

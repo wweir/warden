@@ -82,11 +82,13 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-主要配置块：`addr`、`admin_password`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`；也可配置 `responses_to_chat: true`（仅限 `protocol: "openai"`），将客户端 `responses` 请求转换为 Chat Completions 格式发送到上游 `/chat/completions`。后者仅支持 Chat 兼容子集：字符串/数组 `input`、`function` tools；`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
+主要配置块：`addr`、`admin_password`、`api_keys`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。`admin_password`、`api_keys.*` 与 `provider.*.api_key` 都使用 `config.SecretString` 表示，配置文件写回时按 base64 编码保存，读取时同时兼容 base64 和明文。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`；也可配置 `responses_to_chat: true`（仅限 `protocol: "openai"`），将客户端 `responses` 请求转换为 Chat Completions 格式发送到上游 `/chat/completions`。后者仅支持 Chat 兼容子集：字符串/数组 `input`、`function` tools；`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
 
 ### provider 多选策略 (internal/gateway/selector.go)
 
 当 route 配置了多个 providers 时，选择策略如下，优先级从高到低：
+
+0. **强制指定 Provider**：客户端可通过 `X-Provider` 请求头强制选择特定 provider。若指定了有效的 provider 名称（必须在路由配置的 providers 列表中），则直接使用该 provider，跳过所有自动选择和 failover 逻辑。若指定的 provider 不在路由中，返回 `400 Bad Request`。此功能适用于调试或确保使用特定功能（如 `responses_to_chat`）的 provider。
 
 1. **配置顺序**（主要选择逻辑）：按 `RouteConfig.Providers` 的顺序遍历所有 provider（第一个 = 最高优先级）。当请求指定了 model 时，通过 `availableModels`（来自 `GET /models`）过滤不支持该 model 的 provider。跳过被抑制的 provider。
 
@@ -794,10 +796,14 @@ type Step struct {
 | POST | `/_admin/api/mcp/tool-toggle`           | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置）      |
 | GET  | `/_admin/api/logs/stream`               | SSE 实时日志推送                                                  |
 | GET  | `/_admin/api/metrics/stream`            | SSE 仪表盘指标推送（聚合快照 + 滚动时序点）                       |
+| GET  | `/_admin/api/apikeys`                   | 列出已配置 API Key 名称（不返回明文值）                          |
+| POST | `/_admin/api/apikeys`                   | 生成新 API Key，写入运行时配置，并仅在创建响应里返回一次明文值   |
+| DELETE | `/_admin/api/apikeys`                 | 按名称删除运行时 API Key                                         |
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
 - 配置更新：写入前检查文件 hash 防止并发冲突
 - 静态资源压缩：优先读取 `*.br` 预压缩文件，并按 `Accept-Encoding` 严格协商；不支持 `br` 的客户端回退为服务端即时解压后返回
+- API Key 管理：当前仅修改运行时内存配置 `cfg.APIKeys`；创建接口生成 `wk_` 前缀随机密钥，列表接口只暴露名称，明文密钥只在创建成功时返回一次
 
 **实时日志广播器**（`internal/reqlog/broadcast.go`）：
 
@@ -825,6 +831,7 @@ type Step struct {
 - ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply），并通过 `/_admin/api/tool-hooks/suggestions` 基于最近日志里的 OpenAI Chat / Responses / Anthropic `tool call` 聚合候选 match、route、model；建议卡片按 route 直接生成/填充 AI 规则，并支持一键补全 Exec/HTTP 规则骨架。AI/Exec/HTTP 建议按钮统一复用同一套“新增或填充已有规则”的判定逻辑；页面还提供可折叠的参数快速上手说明、可折叠的日志建议区块、MCP/工具拆分展示，以及偏向命令执行与隐私保护的默认 AI 安全提示词。AI hook 的 `route`/`model` 字段基于当前配置生成下拉项，其中 `model` 选项按 route 绑定的 providers 和 `system_prompts` 键动态收敛
 - Config：通用配置编辑器除 provider/route/mcp/webhook 外，也提供 `tool_hooks` 的可视化编辑，支持 `exec` / `ai` / `http` 三种规则字段
 - Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
+- ApiKeys：独立 API Key 管理页，支持列出名称、创建新密钥、一次性展示新生成密钥、删除现有密钥
 - Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停；会话分组采用“指纹优先 + 回退哈希”策略：优先按 `model + sys_hash + FSM 严格前缀` 连续性聚合，无指纹时回退到“用户消息 hash + 10 分钟时间窗”启发式；前端在 `Logs.vue` 内对 request 解析、preview、user-hash、fingerprint、timestamp 使用 per-log WeakMap 缓存，并按 `(model, sys_hash)` 与 `lastUserHash` 建立候选链索引，减少重复解析与全量回扫开销；耗时展示使用动态单位格式化，短时保留 `ms`，长时自动切换到 `s` / `m` / `h`。
 
 ## 实现顺序
@@ -906,3 +913,5 @@ type Step struct {
     - 延迟统计记录首-token 时间，用于 provider 健康度评估和 failover 决策。
 
 18. **OpenAI 双向协议转换**：当 provider 配置 `chat_to_responses: true` 时，客户端仍通过 `POST /chat/completions` 发请求，但网关将请求转换为 Responses API 格式发送到上游 `/responses`，并将响应转回 Chat 格式返回客户端。反向地，当 provider 配置 `responses_to_chat: true` 时，客户端通过 `POST /responses` 发请求，网关将其转换为 Chat Completions 格式发送到上游 `/chat/completions`，再把响应转回 Responses 格式返回客户端。转换逻辑位于 `pkg/protocol/openai/convert.go`，核心函数包括 `ChatRequestToResponsesRequest`、`ResponsesRequestToChatRequest`、`ResponsesResponseToChatResponse`、`ChatResponseToResponsesResponse`、`ResponsesSSEToChatSSE`、`ChatSSEToResponsesSSE`。入口分流分别位于 `handleChatCompletion` 和 `handleResponses`，工具调用处理分别复用 chat/responses 既有循环逻辑，避免重复实现。`responses_to_chat` 明确只支持 Chat 兼容子集；Responses 原生内建工具与 `previous_response_id` 不可桥接。
+
+19. **流完整性检测**：`ChatSSEToResponsesSSE` 函数检测 Chat SSE 流是否包含 `[DONE]` 标记。若流在上游断开导致 `[DONE]` 缺失，转换后的 `response.completed` 事件会设置 `status: "incomplete"` 并包含错误信息（`error.type: "stream_error"`、`error.message: "stream disconnected before completion"`）。正常完成的流设置 `status: "completed"`。这确保客户端能识别不完整的响应，避免因上游连接断开导致的静默数据丢失。

@@ -84,12 +84,13 @@ func (req *ChatCompletionRequest) Validate() error {
 
 // Message represents a single message in a conversation.
 type Message struct {
-	Role       string                     `json:"role"`
-	Content    any                        `json:"content,omitempty"`
-	ToolCalls  []ToolCall                 `json:"tool_calls,omitempty"`
-	ToolCallID string                     `json:"tool_call_id,omitempty"`
-	Name       string                     `json:"name,omitempty"`
-	Extra      map[string]json.RawMessage `json:"-"`
+	Role             string                     `json:"role"`
+	Content          any                        `json:"content,omitempty"`
+	ReasoningContent string                     `json:"reasoning_content,omitempty"` // Extended thinking content
+	ToolCalls        []ToolCall                 `json:"tool_calls,omitempty"`
+	ToolCallID       string                     `json:"tool_call_id,omitempty"`
+	Name             string                     `json:"name,omitempty"`
+	Extra            map[string]json.RawMessage `json:"-"`
 }
 
 func (msg Message) MarshalJSON() ([]byte, error) {
@@ -103,6 +104,11 @@ func (msg Message) MarshalJSON() ([]byte, error) {
 	if msg.Content != nil {
 		if b, err := json.Marshal(msg.Content); err == nil {
 			m["content"] = b
+		}
+	}
+	if msg.ReasoningContent != "" {
+		if b, err := json.Marshal(msg.ReasoningContent); err == nil {
+			m["reasoning_content"] = b
 		}
 	}
 	if len(msg.ToolCalls) > 0 {
@@ -146,6 +152,10 @@ func (msg *Message) UnmarshalJSON(data []byte) error {
 			}
 		}
 		delete(m, "content")
+	}
+	if v, ok := m["reasoning_content"]; ok {
+		json.Unmarshal(v, &msg.ReasoningContent)
+		delete(m, "reasoning_content")
 	}
 	if v, ok := m["tool_calls"]; ok {
 		json.Unmarshal(v, &msg.ToolCalls)

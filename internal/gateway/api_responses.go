@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -55,10 +56,21 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	var excluded []string
 	authRetried := map[string]bool{}
-	provCfg, err := g.selector.Select(g.cfg, route, model)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+
+	// Check for X-Provider header to force specific provider selection
+	var provCfg *config.ProviderConfig
+	if forceProvider := r.Header.Get("X-Provider"); forceProvider != "" {
+		provCfg, err = g.selector.SelectByName(g.cfg, route, forceProvider)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("provider %q not found in route", forceProvider), http.StatusBadRequest)
+			return
+		}
+	} else {
+		provCfg, err = g.selector.Select(g.cfg, route, model)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Set provider header for metrics middleware
@@ -113,6 +125,12 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		}
 
 		for {
+			// Check if this provider needs responses_to_chat conversion
+			if provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
+				g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, availableTools, startTime, reqID, excluded, authRetried)
+				return
+			}
+
 			logRequest(r, provCfg.Name, model)
 
 			provReqBody := prepareRawBody(rawReqBody, provCfg, model)
@@ -512,9 +530,11 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 	if stream {
 		for {
 			logRequest(r, provCfg.Name, origModel)
+			slog.Debug("ResponsesToChat: starting upstream request", "provider", provCfg.Name, "model", chatReq.Model)
 
 			rawResp, latency, sendErr := sendUpstreamChatRawWithLatency(r.Context(), provCfg, chatReq)
 			if sendErr != nil {
+				slog.Warn("ResponsesToChat: upstream request failed", "provider", provCfg.Name, "error", sendErr, "latency_ms", latency.Milliseconds())
 				g.selector.RecordOutcomeWithSource(provCfg.Name, sendErr, latency, "pre_stream")
 				g.RecordStreamErrorMetric(provCfg.Name, "pre_stream")
 				if tryAuthRetry(sendErr, provCfg, authRetried) {
@@ -529,6 +549,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 				writeUpstreamAwareError(w, sendErr)
 				return
 			}
+			slog.Debug("ResponsesToChat: upstream response received", "provider", provCfg.Name, "bytes", len(rawResp), "latency_ms", latency.Milliseconds(), "has_done", bytes.Contains(rawResp, []byte("[DONE]")))
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
 			g.RecordTTFTMetric(route.Prefix, provCfg.Name, origModel, "responses", latency)
 
@@ -537,11 +558,17 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			w.Header().Set("Connection", "keep-alive")
 
 			if len(injectedTools) == 0 {
+				// Check stream completeness before converting
+				if !bytes.Contains(rawResp, []byte("[DONE]")) {
+					slog.Warn("ResponsesToChat: incomplete stream from upstream", "provider", provCfg.Name, "bytes_read", len(rawResp))
+				}
 				respSSE := openai.ChatSSEToResponsesSSE(rawResp, model)
+				slog.Debug("ResponsesToChat: converted stream", "input_len", len(rawResp), "output_len", len(respSSE), "has_done", bytes.Contains(rawResp, []byte("[DONE]")))
 				if _, writeErr := w.Write(respSSE); writeErr != nil {
 					slog.Warn("Failed to write converted stream response", "error", writeErr)
 				}
 				w.(http.Flusher).Flush()
+				slog.Debug("ResponsesToChat: response sent to client", "bytes_written", len(respSSE))
 				logRecord(respSSE, "")
 				return
 			}

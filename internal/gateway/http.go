@@ -76,6 +76,11 @@ func sendRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint s
 
 	respBody, err := io.ReadAll(reader)
 	if err != nil {
+		slog.Warn("sendRequest: failed to read response body", "error", err, "status", resp.StatusCode, "bytes_read", len(respBody))
+		// For streaming requests, partial data is not useful - return error
+		if isStreaming {
+			return nil, latency, fmt.Errorf("read stream body: %w", err)
+		}
 		return nil, latency, fmt.Errorf("read response body: %w", err)
 	}
 

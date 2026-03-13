@@ -451,7 +451,15 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 				Input: json.RawMessage(`"hello"`),
 				Tools: []json.RawMessage{json.RawMessage(`{"type":"web_search_preview"}`)},
 			},
-			wantErr: true,
+			wantErr: false, // Now converts to mock tool instead of error
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Tools) != 1 {
+					t.Errorf("expected 1 mock tool, got %d", len(chatReq.Tools))
+				}
+				if chatReq.Tools[0].Function.Name != MockToolPrefix+"web_search_preview_" {
+					t.Errorf("expected mock tool name '%s', got %s", MockToolPrefix+"web_search_preview_", chatReq.Tools[0].Function.Name)
+				}
+			},
 		},
 	}
 
@@ -541,6 +549,36 @@ data: [DONE]
 	if !contains(outputStr, `"name":"lookup"`) {
 		t.Fatal("expected function name in output")
 	}
+	// Verify complete stream has "completed" status
+	if !contains(outputStr, `"status":"completed"`) {
+		t.Fatal("expected status:completed for complete stream")
+	}
+}
+
+func TestChatSSEToResponsesSSE_IncompleteStream(t *testing.T) {
+	// Stream without [DONE] marker - simulates disconnection
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+`
+
+	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	outputStr := string(output)
+
+	// Should have response.completed event
+	if !contains(outputStr, "event: response.completed") {
+		t.Fatal("expected response.completed event")
+	}
+
+	// Should have "incomplete" status
+	if !contains(outputStr, `"status":"incomplete"`) {
+		t.Fatal("expected status:incomplete for incomplete stream")
+	}
+
+	// Should have error message
+	if !contains(outputStr, "stream disconnected before completion") {
+		t.Fatal("expected stream disconnected error message")
+	}
 }
 
 func contains(s, substr string) bool {
@@ -554,4 +592,190 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestResponsesRequestToChatRequest_Reasoning tests that reasoning input items
+// are converted to ReasoningContent field in Chat messages.
+func TestResponsesRequestToChatRequest_Reasoning(t *testing.T) {
+	input := json.RawMessage(`[
+		{"type": "message", "role": "user", "content": "What is 2+2?"},
+		{"type": "reasoning", "summary": "Let me think about this step by step..."},
+		{"type": "message", "role": "assistant", "content": "The answer is 4."}
+	]`)
+
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: input,
+	}
+
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
+		t.Fatalf("ResponsesRequestToChatRequest() error = %v", err)
+	}
+
+	// Should have 2 messages: user and assistant with reasoning
+	if len(chatReq.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+	}
+
+	// First message should be user
+	if chatReq.Messages[0].Role != "user" {
+		t.Errorf("expected first message role 'user', got %s", chatReq.Messages[0].Role)
+	}
+
+	// Second message should be assistant with reasoning content
+	if chatReq.Messages[1].Role != "assistant" {
+		t.Errorf("expected second message role 'assistant', got %s", chatReq.Messages[1].Role)
+	}
+
+	// Check ReasoningContent was set
+	if chatReq.Messages[1].ReasoningContent != "Let me think about this step by step..." {
+		t.Errorf("expected ReasoningContent 'Let me think about this step by step...', got %q", chatReq.Messages[1].ReasoningContent)
+	}
+
+	// Check content is also present
+	if chatReq.Messages[1].Content != "The answer is 4." {
+		t.Errorf("expected content 'The answer is 4.', got %v", chatReq.Messages[1].Content)
+	}
+}
+
+// TestResponsesRequestToChatRequest_CustomTools tests that custom tool types
+// are converted to mock function tools for passthrough.
+func TestResponsesRequestToChatRequest_CustomTools(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[{"type": "message", "role": "user", "content": "Search for weather"}]`),
+		Tools: []json.RawMessage{
+			json.RawMessage(`{"type": "custom", "name": "web_search", "description": "Search the web"}`),
+			json.RawMessage(`{"type": "file_search", "name": "search_files"}`),
+			json.RawMessage(`{"type": "function", "name": "get_weather", "description": "Get weather info"}`),
+		},
+	}
+
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
+		t.Fatalf("ResponsesRequestToChatRequest() error = %v", err)
+	}
+
+	// Should have 3 tools
+	if len(chatReq.Tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(chatReq.Tools))
+	}
+
+	// Check custom tool was converted to mock function
+	customTool := chatReq.Tools[0]
+	if customTool.Type != "function" {
+		t.Errorf("expected custom tool type 'function', got %s", customTool.Type)
+	}
+	if customTool.Function.Name != MockToolPrefix+"custom_web_search" {
+		t.Errorf("expected custom tool name '%s', got %s", MockToolPrefix+"custom_web_search", customTool.Function.Name)
+	}
+	// Original tool data should be preserved in Parameters
+	if len(customTool.Function.Parameters.(json.RawMessage)) == 0 {
+		t.Error("expected custom tool to have preserved parameters")
+	}
+
+	// Check file_search tool was converted
+	fileTool := chatReq.Tools[1]
+	if fileTool.Function.Name != MockToolPrefix+"file_search_search_files" {
+		t.Errorf("expected file_search tool name '%s', got %s", MockToolPrefix+"file_search_search_files", fileTool.Function.Name)
+	}
+
+	// Check normal function tool was preserved
+	funcTool := chatReq.Tools[2]
+	if funcTool.Function.Name != "get_weather" {
+		t.Errorf("expected function tool name 'get_weather', got %s", funcTool.Function.Name)
+	}
+}
+
+// TestResponsesRequestToChatRequest_UnknownInputType tests that unknown input item types
+// are converted to mock tool calls for passthrough.
+func TestResponsesRequestToChatRequest_UnknownInputType(t *testing.T) {
+	input := json.RawMessage(`[
+		{"type": "message", "role": "user", "content": "Hello"},
+		{"type": "unknown_type", "some_field": "some_value"}
+	]`)
+
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: input,
+	}
+
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
+		t.Fatalf("ResponsesRequestToChatRequest() error = %v", err)
+	}
+
+	// Should have 2 messages
+	if len(chatReq.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+	}
+
+	// First message should be user
+	if chatReq.Messages[0].Role != "user" {
+		t.Errorf("expected first message role 'user', got %s", chatReq.Messages[0].Role)
+	}
+
+	// Second message should be assistant with mock tool call
+	if chatReq.Messages[1].Role != "assistant" {
+		t.Errorf("expected second message role 'assistant', got %s", chatReq.Messages[1].Role)
+	}
+
+	// Check tool call was created
+	if len(chatReq.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(chatReq.Messages[1].ToolCalls))
+	}
+
+	tc := chatReq.Messages[1].ToolCalls[0]
+	if tc.Type != "function" {
+		t.Errorf("expected tool call type 'function', got %s", tc.Type)
+	}
+	if tc.Function.Name != MockToolPrefix+"unknown_type" {
+		t.Errorf("expected tool call name '%s', got %s", MockToolPrefix+"unknown_type", tc.Function.Name)
+	}
+	// Original data should be preserved in Arguments
+	if !contains(tc.Function.Arguments, "some_field") {
+		t.Errorf("expected Arguments to contain original data, got %s", tc.Function.Arguments)
+	}
+}
+
+// TestChatRequestToResponsesRequest_ReasoningContent tests that ReasoningContent
+// in Chat messages is properly converted back to Responses format.
+func TestChatRequestToResponsesRequest_ReasoningContent(t *testing.T) {
+	chatReq := ChatCompletionRequest{
+		Model: "gpt-4o",
+		Messages: []Message{
+			{Role: "user", Content: "Think about this"},
+			{Role: "assistant", Content: "The answer is 42.", ReasoningContent: "I need to think deeply..."},
+		},
+	}
+
+	respReq, err := ChatRequestToResponsesRequest(chatReq)
+	if err != nil {
+		t.Fatalf("ChatRequestToResponsesRequest() error = %v", err)
+	}
+
+	// Parse the input to check reasoning was converted
+	var items []map[string]any
+	if err := json.Unmarshal(respReq.Input, &items); err != nil {
+		t.Fatalf("failed to unmarshal input: %v", err)
+	}
+
+	// Should have 3 items: user message, reasoning item, assistant message
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+
+	// Second item should be reasoning
+	if items[1]["type"] != "reasoning" {
+		t.Errorf("expected second item type 'reasoning', got %s", items[1]["type"])
+	}
+	if items[1]["summary"] != "I need to think deeply..." {
+		t.Errorf("expected reasoning summary 'I need to think deeply...', got %s", items[1]["summary"])
+	}
+
+	// Third item should be assistant message
+	if items[2]["role"] != "assistant" {
+		t.Errorf("expected third item role 'assistant', got %s", items[2]["role"])
+	}
 }
