@@ -15,6 +15,8 @@ import (
 	"github.com/wweir/warden/config"
 )
 
+const defaultWebhookTimeout = 5 * time.Second
+
 // runHTTP calls a configured webhook endpoint to evaluate a tool call.
 // The request body defaults to CallContext JSON, or webhook.body_template when configured.
 // The webhook may return JSON {"allow":bool,"reason":"..."} to explicitly reject.
@@ -48,7 +50,7 @@ func runHTTP(ctx context.Context, idx int, hook config.HookConfig, hctx CallCont
 			return r
 		}
 
-		statusCode, respText, reqErr := callWebhook(ctx, method, hook.WebhookCfg.URL, hook.WebhookCfg.Headers, body)
+		statusCode, respText, reqErr := callWebhook(ctx, method, hook.WebhookCfg, body)
 		r.httpResponse = respText
 
 		if reqErr != nil {
@@ -109,16 +111,22 @@ func renderWebhookBody(bodyTemplate string, hctx CallContext) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func callWebhook(ctx context.Context, method, url string, headers map[string]string, body []byte) (int, string, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+func callWebhook(ctx context.Context, method string, webhookCfg *config.WebhookConfig, body []byte) (int, string, error) {
+	reqCtx, cancel, err := withOptionalTimeout(ctx, parseWebhookTimeout(webhookCfg.Timeout, defaultWebhookTimeout))
+	if err != nil {
+		return 0, "", fmt.Errorf("resolve request timeout: %w", err)
+	}
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, method, webhookCfg.URL, bytes.NewReader(body))
 	if err != nil {
 		return 0, "", fmt.Errorf("create request: %w", err)
 	}
 
-	if _, ok := headers["Content-Type"]; !ok {
+	if _, ok := webhookCfg.Headers["Content-Type"]; !ok {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	for k, v := range headers {
+	for k, v := range webhookCfg.Headers {
 		req.Header.Set(k, v)
 	}
 
@@ -134,6 +142,17 @@ func callWebhook(ctx context.Context, method, url string, headers map[string]str
 	}
 
 	return resp.StatusCode, string(bodyBytes), nil
+}
+
+func parseWebhookTimeout(raw string, fallback time.Duration) time.Duration {
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 func waitRetry(ctx context.Context) bool {

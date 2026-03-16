@@ -405,69 +405,6 @@
 
 							<label>models</label>
 							<TagListEditor v-model="cfg.models" placeholder="Model ID" />
-
-							<template v-if="cfg.protocol !== 'copilot'">
-								<label>model_aliases</label>
-								<KeyValueEditor
-									v-model="cfg.model_aliases"
-									keyPlaceholder="Alias"
-									valuePlaceholder="Real model"
-								/>
-							</template>
-
-							<!-- request_patch: advanced, for openai/anthropic/ollama -->
-							<template
-								v-if="!['qwen', 'copilot'].includes(cfg.protocol || 'openai')"
-							>
-								<label>request_patch</label>
-								<div>
-									<div
-										v-for="(op, i) in cfg.request_patch || []"
-										:key="i"
-										class="patch-row"
-									>
-										<select v-model="op.op" class="form-input form-input-sm">
-											<option>add</option>
-											<option>remove</option>
-											<option>replace</option>
-											<option>move</option>
-											<option>copy</option>
-											<option>test</option>
-										</select>
-										<input
-											v-model="op.path"
-											class="form-input"
-											placeholder="/path"
-										/>
-										<input
-											v-if="op.op === 'move' || op.op === 'copy'"
-											v-model="op.from"
-											class="form-input"
-											placeholder="/from"
-										/>
-										<input
-											v-if="['add', 'replace', 'test'].includes(op.op)"
-											v-model="op.value"
-											class="form-input"
-											placeholder="value"
-										/>
-										<button
-											class="btn-icon btn-danger-icon"
-											@click="removePatchOp(cfg, i)"
-											type="button"
-										>
-											✕
-										</button>
-									</div>
-									<button
-										class="btn btn-sm"
-										@click="addPatchOp(cfg)"
-										type="button"
-									>
-										+ Add op
-									</button>
-								</div>
-							</template>
 						</div>
 						<button
 							class="btn btn-danger btn-sm"
@@ -514,6 +451,14 @@
 							<label>prefix</label>
 							<input :value="prefix" class="form-input" readonly />
 
+							<label>protocol</label>
+							<select v-model="cfg.protocol" class="form-input">
+								<option value="">legacy</option>
+								<option value="chat">chat</option>
+								<option value="responses">responses</option>
+								<option value="anthropic">anthropic</option>
+							</select>
+
 							<label>providers</label>
 							<TagListEditor
 								v-model="cfg.providers"
@@ -528,11 +473,22 @@
 								placeholder="MCP name"
 							/>
 
-							<label>system_prompts</label>
-							<KeyValueEditor
-								v-model="cfg.system_prompts"
-								keyPlaceholder="Model name"
-								valuePlaceholder="System prompt"
+							<label>models</label>
+							<textarea
+								class="form-input form-textarea"
+								:value="formatJSONValue(cfg.models)"
+								@change="updateJSONValue(cfg, 'models', $event.target.value)"
+								placeholder='{"gpt-4o":{"upstreams":[{"provider":"openai","model":"gpt-4o"}]}}'
+								spellcheck="false"
+							/>
+
+							<label>hooks</label>
+							<textarea
+								class="form-input form-textarea"
+								:value="formatJSONValue(cfg.hooks)"
+								@change="updateJSONValue(cfg, 'hooks', $event.target.value)"
+								placeholder='[{"match":"filesystem__*","hook":{"type":"http","when":"post","webhook":"audit"}}]'
+								spellcheck="false"
 							/>
 						</div>
 						<button
@@ -546,182 +502,6 @@
 			</div>
 		</section>
 
-		<!-- Tool Hooks -->
-		<section class="config-section">
-			<div class="section-header" @click="toolHooksOpen = !toolHooksOpen">
-				<h3>
-					{{ $t("config.toolHooks") }} <span class="count">({{ toolHookCount }})</span>
-				</h3>
-				<span class="chevron">{{ toolHooksOpen ? "▼" : "▶" }}</span>
-			</div>
-			<div v-show="toolHooksOpen">
-				<div class="subsection-header">
-					<span>tool_hooks</span>
-					<button class="btn btn-sm" @click="addToolHookRule">
-						{{ $t("hooks.addRule") }}
-					</button>
-				</div>
-				<div v-if="toolHookCount === 0" class="hint" style="margin-top: 10px">
-					{{ $t("hooks.noRules") }}
-				</div>
-				<div
-					v-for="(rule, idx) in config.tool_hooks || []"
-					:key="'tool-hook-' + idx"
-					class="card"
-				>
-					<div class="card-header" @click="toggleCard('tool-hook', idx)">
-						<strong>{{ rule.match || "*" }}</strong>
-						<span class="tag-proto"
-							>{{ rule.hook?.type || "exec" }} · {{ rule.hook?.when || "pre" }}</span
-						>
-						<span class="chevron">{{ isCardOpen("tool-hook", idx) ? "▼" : "▶" }}</span>
-					</div>
-					<div v-show="isCardOpen('tool-hook', idx)" class="card-body">
-						<div class="form-grid">
-							<label>{{ $t("hooks.matchPattern") }} <span class="req">*</span></label>
-							<input
-								v-model="rule.match"
-								class="form-input"
-								:placeholder="$t('hooks.matchPlaceholder')"
-								spellcheck="false"
-							/>
-
-							<label>{{ $t("hooks.type") }} <span class="req">*</span></label>
-							<select
-								v-model="rule.hook.type"
-								class="form-input"
-								@change="applyToolHookTypeDefaults(rule)"
-							>
-								<option value="exec">exec</option>
-								<option value="ai">ai</option>
-								<option value="http">http</option>
-							</select>
-
-							<label>{{ $t("hooks.when") }} <span class="req">*</span></label>
-							<select v-model="rule.hook.when" class="form-input">
-								<option value="pre">{{ $t("hooks.preBlock") }}</option>
-								<option value="post">{{ $t("hooks.postAudit") }}</option>
-							</select>
-
-							<label>{{ $t("hooks.timeout") }}</label>
-							<input
-								v-model="rule.hook.timeout"
-								class="form-input"
-								placeholder="5s"
-							/>
-
-							<template v-if="rule.hook.type === 'exec'">
-								<label>{{ $t("hooks.command") }} <span class="req">*</span></label>
-								<input
-									v-model="rule.hook.command"
-									class="form-input"
-									placeholder="/usr/bin/guard-check"
-									spellcheck="false"
-								/>
-
-								<label>{{ $t("hooks.args") }}</label>
-								<div>
-									<input
-										:value="(rule.hook.args || []).join(' ')"
-										@input="
-											rule.hook.args = $event.target.value
-												.split(' ')
-												.filter(Boolean)
-										"
-										class="form-input"
-										placeholder="--flag value"
-										spellcheck="false"
-									/>
-									<div class="hint" style="margin-top: 6px">
-										{{ $t("hooks.argsHint") }}
-									</div>
-								</div>
-							</template>
-
-							<template v-if="rule.hook.type === 'ai'">
-								<label>{{ $t("hooks.route") }} <span class="req">*</span></label>
-								<div>
-									<input
-										v-model="rule.hook.route"
-										class="form-input"
-										list="config-hook-route-options"
-										placeholder="/openai"
-										spellcheck="false"
-									/>
-									<div class="hint" style="margin-top: 6px">
-										{{ $t("hooks.routeHint") }}
-									</div>
-								</div>
-
-								<label>{{ $t("hooks.model") }} <span class="req">*</span></label>
-								<div>
-									<input
-										v-model="rule.hook.model"
-										class="form-input"
-										placeholder="gpt-4o"
-										spellcheck="false"
-									/>
-									<div class="hint" style="margin-top: 6px">
-										{{ $t("hooks.modelHint") }}
-									</div>
-								</div>
-
-								<label
-									>{{ $t("hooks.promptLabel") }} <span class="req">*</span></label
-								>
-								<div>
-									<div
-										style="
-											display: flex;
-											justify-content: space-between;
-											align-items: center;
-											gap: 8px;
-											margin-bottom: 6px;
-										"
-									>
-										<span class="hint">{{ $t("hooks.promptHelp") }}</span>
-										<button
-											class="btn btn-secondary btn-sm"
-											type="button"
-											@click="applyDefaultToolHookPrompt(rule)"
-										>
-											{{ $t("hooks.useSafePrompt") }}
-										</button>
-									</div>
-									<textarea
-										v-model="rule.hook.prompt"
-										class="form-input form-textarea"
-										rows="8"
-										:placeholder="defaultAiPrompt()"
-										spellcheck="false"
-									/>
-								</div>
-							</template>
-
-							<template v-if="rule.hook.type === 'http'">
-								<label
-									>{{ $t("hooks.webhookLabel") }}
-									<span class="req">*</span></label
-								>
-								<select v-model="rule.hook.webhook" class="form-input">
-									<option value="">(none)</option>
-									<option
-										v-for="w in webhookNames"
-										:key="'tool-hook-webhook-' + w"
-										:value="w"
-									>
-										{{ w }}
-									</option>
-								</select>
-							</template>
-						</div>
-						<button class="btn btn-danger btn-sm" @click="removeToolHookRule(idx)">
-							{{ $t("hooks.remove") }}
-						</button>
-					</div>
-				</div>
-			</div>
-		</section>
 
 		<!-- MCP -->
 		<section class="config-section">
@@ -781,13 +561,6 @@
 			</div>
 		</section>
 
-		<datalist id="config-hook-route-options">
-			<option
-				v-for="route in routeNames"
-				:key="'config-hook-route-' + route"
-				:value="route"
-			></option>
-		</datalist>
 	</div>
 </template>
 
@@ -804,7 +577,6 @@ import {
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
 import TagListEditor from "../components/TagListEditor.vue";
-import { DEFAULT_AI_HOOK_PROMPT } from "../utils.js";
 
 const { t } = useI18n();
 
@@ -834,7 +606,6 @@ const sshOpen = ref(false);
 const webhookOpen = ref(false);
 const providersOpen = ref(true);
 const routesOpen = ref(true);
-const toolHooksOpen = ref(false);
 const mcpOpen = ref(false);
 const showAdminPw = ref(false);
 
@@ -849,14 +620,12 @@ const sshCount = computed(() => Object.keys(config.value.ssh || {}).length);
 const webhookCount = computed(() => Object.keys(config.value.webhook || {}).length);
 const providerCount = computed(() => Object.keys(config.value.provider || {}).length);
 const routeCount = computed(() => Object.keys(config.value.route || {}).length);
-const toolHookCount = computed(() => (config.value.tool_hooks || []).length);
 const mcpCount = computed(() => Object.keys(config.value.mcp || {}).length);
 
 // names for cross-references
 const sshNames = computed(() => Object.keys(config.value.ssh || {}));
 const webhookNames = computed(() => Object.keys(config.value.webhook || {}));
 const providerNames = computed(() => Object.keys(config.value.provider || {}));
-const routeNames = computed(() => Object.keys(config.value.route || {}));
 const mcpNames = computed(() => Object.keys(config.value.mcp || {}));
 
 // admin password handling
@@ -917,6 +686,28 @@ function isSecretConfigured(val) {
 	return val && val !== "";
 }
 
+function formatJSONValue(value) {
+	if (value == null) return "";
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return "";
+	}
+}
+
+function updateJSONValue(target, key, raw) {
+	const text = String(raw || "").trim();
+	if (!text) {
+		target[key] = Array.isArray(target[key]) ? [] : {};
+		return;
+	}
+	try {
+		target[key] = JSON.parse(text);
+	} catch (e) {
+		error.value = `Invalid JSON for ${key}: ${e.message}`;
+	}
+}
+
 // provider url placeholder by protocol
 function providerUrlPlaceholder(protocol) {
 	switch (protocol) {
@@ -931,76 +722,6 @@ function providerUrlPlaceholder(protocol) {
 		default:
 			return "https://api.openai.com/v1";
 	}
-}
-
-// request_patch helpers
-function addPatchOp(cfg) {
-	if (!cfg.request_patch) cfg.request_patch = [];
-	cfg.request_patch.push({ op: "add", path: "", value: "" });
-}
-function removePatchOp(cfg, i) {
-	cfg.request_patch.splice(i, 1);
-}
-
-function emptyToolHookRule() {
-	return {
-		match: "",
-		hook: {
-			type: "exec",
-			when: "pre",
-			timeout: "5s",
-			command: "",
-			args: [],
-			route: "",
-			model: "",
-			prompt: "",
-			webhook: "",
-		},
-	};
-}
-
-function defaultAiPrompt() {
-	return DEFAULT_AI_HOOK_PROMPT;
-}
-
-function applyToolHookTypeDefaults(rule) {
-	if (rule?.hook?.type === "ai" && !String(rule.hook.prompt || "").trim()) {
-		rule.hook.prompt = defaultAiPrompt();
-	}
-}
-
-function applyDefaultToolHookPrompt(rule) {
-	rule.hook.prompt = defaultAiPrompt();
-}
-
-function normalizeToolHookRule(rule) {
-	return {
-		match: rule?.match || "",
-		hook: {
-			type: rule?.hook?.type || "exec",
-			when: rule?.hook?.when || "pre",
-			timeout: rule?.hook?.timeout || "5s",
-			command: rule?.hook?.command || "",
-			args: rule?.hook?.args || [],
-			route: rule?.hook?.route || "",
-			model: rule?.hook?.model || "",
-			prompt: rule?.hook?.prompt || "",
-			webhook: rule?.hook?.webhook || "",
-		},
-	};
-}
-
-function addToolHookRule() {
-	if (!config.value.tool_hooks) config.value.tool_hooks = [];
-	const idx = config.value.tool_hooks.length;
-	config.value.tool_hooks.push(emptyToolHookRule());
-	nextTick(() => {
-		openCards["tool-hook/" + idx] = true;
-	});
-}
-
-function removeToolHookRule(idx) {
-	config.value.tool_hooks.splice(idx, 1);
 }
 
 // add/delete map entries
@@ -1085,7 +806,6 @@ async function load() {
 		const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()]);
 		config.value = {
 			...cfg,
-			tool_hooks: (cfg.tool_hooks || []).map(normalizeToolHookRule),
 		};
 		configSource.value = source;
 		adminPwEdited.value = false;

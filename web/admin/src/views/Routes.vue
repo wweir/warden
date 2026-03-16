@@ -116,6 +116,8 @@
 				<thead>
 					<tr>
 						<th>{{ $t("routes.prefix") }}</th>
+						<th>{{ $t("routes.protocol") }}</th>
+						<th>{{ $t("routes.models") }}</th>
 						<th>{{ $t("routes.providers") }}</th>
 						<th>{{ $t("routes.tools") }}</th>
 						<th>{{ $t("routes.requests") }}</th>
@@ -132,6 +134,12 @@
 								><code>{{ r.prefix }}</code></router-link
 							>
 						</td>
+						<td>
+							<span class="badge" :class="r.protocol ? 'badge-ok' : 'badge-warn'">
+								{{ r.protocol || "legacy" }}
+							</span>
+						</td>
+						<td class="metric-cell">{{ (r.models || []).length }}</td>
 						<td>
 							<template v-for="(p, i) in r.providers || []" :key="p">
 								<span v-if="i > 0">, </span>
@@ -171,7 +179,7 @@
 						<td class="metric-cell">{{ formatMs(r.latencyP95) }}</td>
 					</tr>
 					<tr v-if="filteredRoutes.length === 0">
-						<td colspan="8" class="empty" style="padding: 16px 0">
+						<td colspan="10" class="empty" style="padding: 16px 0">
 							{{ $t("routes.noMatch", { query: search }) }}
 						</td>
 					</tr>
@@ -213,6 +221,8 @@ const filtered = computed(() => {
 	return routes.filter(
 		(r) =>
 			r.prefix.toLowerCase().includes(q) ||
+			(r.protocol || "").toLowerCase().includes(q) ||
+			(r.models || []).some((m) => m.toLowerCase().includes(q)) ||
 			(r.providers || []).some((p) => p.toLowerCase().includes(q)) ||
 			(r.tools || []).some((t) => t.toLowerCase().includes(q)),
 	);
@@ -358,7 +368,7 @@ function quantileFromHistogramBuckets(buckets, quantile) {
 
 const routeMetrics = computed(() => {
 	const map = {};
-	for (const row of metricsData.value?.requests_total ?? []) {
+	for (const row of metricsData.value?.route_requests_total ?? []) {
 		if (!map[row.route]) {
 			map[row.route] = {
 				route: row.route,
@@ -378,7 +388,7 @@ const routeMetrics = computed(() => {
 	}
 
 	const durationBuckets = {};
-	for (const row of metricsData.value?.request_duration ?? []) {
+	for (const row of metricsData.value?.route_request_duration ?? []) {
 		if (!durationBuckets[row.route]) durationBuckets[row.route] = {};
 		const le = Number(row.le);
 		if (!Number.isFinite(le)) continue;
@@ -405,7 +415,7 @@ const routeMetrics = computed(() => {
 		map[route].latencyP95 = q.value;
 	}
 
-	for (const row of metricsData.value?.stream_ttft_p95_ms ?? []) {
+	for (const row of metricsData.value?.route_stream_ttft_p95_ms ?? []) {
 		if (!map[row.route]) {
 			map[row.route] = {
 				route: row.route,
@@ -425,7 +435,7 @@ const routeMetrics = computed(() => {
 		map[row.route].ttftSamples += count;
 	}
 
-	for (const row of metricsData.value?.throughput_p99_tokens ?? []) {
+	for (const row of metricsData.value?.route_throughput_p99_tokens ?? []) {
 		if (!map[row.route]) {
 			map[row.route] = {
 				route: row.route,
@@ -445,7 +455,7 @@ const routeMetrics = computed(() => {
 		map[row.route].throughputSamples += count;
 	}
 
-	for (const row of metricsData.value?.token_rate ?? []) {
+	for (const row of metricsData.value?.route_token_rate ?? []) {
 		if (row.type !== "completion") continue;
 		if (!row.route) continue;
 		if (!map[row.route]) {

@@ -16,23 +16,38 @@ import (
 )
 
 var (
-	// requestCounter counts total requests by route, provider, model, endpoint, and status.
-	requestCounter = prometheus.NewCounterVec(
+	routeRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "warden_requests_total",
-			Help: "Total number of requests processed",
+			Name: "warden_route_requests_total",
+			Help: "Total number of requests processed by route model",
 		},
-		[]string{"route", "provider", "model", "endpoint", "status"},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint", "status"},
 	)
 
-	// requestDuration tracks request latency distribution.
-	requestDuration = prometheus.NewHistogramVec(
+	providerRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_provider_requests_total",
+			Help: "Total number of requests processed by provider model",
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "status"},
+	)
+
+	routeRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "warden_request_duration_ms",
-			Help:    "Request latency in milliseconds",
+			Name:    "warden_route_request_duration_ms",
+			Help:    "Route-model request latency in milliseconds",
 			Buckets: []float64{50, 100, 250, 500, 1000, 2500, 5000, 10000},
 		},
-		[]string{"route", "provider", "model", "endpoint"},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint"},
+	)
+
+	providerRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warden_request_duration_ms",
+			Help:    "Provider-model request latency in milliseconds",
+			Buckets: []float64{50, 100, 250, 500, 1000, 2500, 5000, 10000},
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
 	)
 
 	// providerHealth tracks provider consecutive failures.
@@ -53,60 +68,104 @@ var (
 		[]string{"provider"},
 	)
 
-	// tokenCounter tracks total tokens by provider and model.
-	tokenCounter = prometheus.NewCounterVec(
+	routeTokenCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "warden_tokens_total",
-			Help: "Total tokens processed by provider and model",
+			Name: "warden_route_tokens_total",
+			Help: "Total tokens processed by route model",
 		},
-		[]string{"provider", "model", "type"}, // type: prompt, completion
+		[]string{"route", "protocol", "route_model", "matched_pattern", "type"},
 	)
 
-	// tokenRate tracks tokens per second by provider and model.
-	tokenRate = prometheus.NewGaugeVec(
+	providerTokenCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_provider_tokens_total",
+			Help: "Total tokens processed by provider model",
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "type"},
+	)
+
+	routeTokenRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "warden_token_rate",
-			Help: "Tokens per second for the last request by provider and model",
+			Name: "warden_route_token_rate",
+			Help: "Tokens per second for the last request by route model",
 		},
-		[]string{"route", "provider", "model", "endpoint", "type"}, // type: prompt, completion
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint", "type"},
 	)
 
-	// streamTTFT tracks time-to-first-token distribution for streaming requests.
-	streamTTFT = prometheus.NewHistogramVec(
+	providerTokenRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "warden_provider_token_rate",
+			Help: "Tokens per second for the last request by provider model",
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "type"},
+	)
+
+	routeStreamTTFT = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "warden_stream_ttft_ms",
-			Help:    "Streaming time-to-first-token in milliseconds",
+			Name:    "warden_route_stream_ttft_ms",
+			Help:    "Streaming time-to-first-token in milliseconds by route model",
 			Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000},
 		},
-		[]string{"route", "provider", "model", "endpoint"},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint"},
 	)
 
-	// completionThroughput tracks completion token throughput distribution.
-	completionThroughput = prometheus.NewHistogramVec(
+	providerStreamTTFT = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "warden_completion_throughput_tps",
-			Help:    "Completion token throughput in tokens per second",
+			Name:    "warden_stream_ttft_ms",
+			Help:    "Streaming time-to-first-token in milliseconds by provider model",
+			Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000},
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
+	)
+
+	routeCompletionThroughput = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warden_route_completion_throughput_tps",
+			Help:    "Completion token throughput by route model",
 			Buckets: []float64{1, 2, 5, 10, 20, 40, 80, 160, 320, 640, 1280},
 		},
-		[]string{"route", "provider", "model", "endpoint"},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint"},
 	)
 
-	// providerFailovers counts failover events per provider.
+	providerCompletionThroughput = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warden_completion_throughput_tps",
+			Help:    "Completion token throughput in tokens per second by provider model",
+			Buckets: []float64{1, 2, 5, 10, 20, 40, 80, 160, 320, 640, 1280},
+		},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
+	)
+
+	routeFailovers = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_route_failovers_total",
+			Help: "Total number of failover events by route model",
+		},
+		[]string{"route", "protocol", "route_model", "matched_pattern"},
+	)
+
 	providerFailovers = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "warden_provider_failovers_total",
-			Help: "Total number of failover events triggered by provider",
+			Help: "Total number of failover events triggered by provider model",
 		},
-		[]string{"provider"},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern"},
 	)
 
-	// providerStreamErrors counts stream errors by provider and phase.
+	routeStreamErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_route_stream_errors_total",
+			Help: "Total stream errors by route model and phase",
+		},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "phase"},
+	)
+
 	providerStreamErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "warden_provider_stream_errors_total",
-			Help: "Total stream errors by provider and phase (pre_stream, in_stream)",
+			Help: "Total stream errors by provider model and phase (pre_stream, in_stream)",
 		},
-		[]string{"provider", "phase"},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "phase"},
 	)
 
 	// providerSuccessRate tracks the success rate gauge per provider.
@@ -130,11 +189,15 @@ var (
 
 func init() {
 	prometheus.MustRegister(
-		requestCounter, requestDuration,
+		routeRequestCounter, providerRequestCounter,
+		routeRequestDuration, providerRequestDuration,
 		providerHealth, providerSuppressed,
-		tokenCounter, tokenRate,
-		streamTTFT, completionThroughput,
-		providerFailovers, providerStreamErrors,
+		routeTokenCounter, providerTokenCounter,
+		routeTokenRate, providerTokenRate,
+		routeStreamTTFT, providerStreamTTFT,
+		routeCompletionThroughput, providerCompletionThroughput,
+		routeFailovers, providerFailovers,
+		routeStreamErrors, providerStreamErrors,
 		providerSuccessRate, providerAvgLatency,
 	)
 }
@@ -145,13 +208,15 @@ func (g *Gateway) MetricsHandler() http.Handler {
 }
 
 // recordRequestMetrics records request metrics.
-func (g *Gateway) recordRequestMetrics(route, provider, model, endpoint string, success bool, duration time.Duration) {
+func (g *Gateway) recordRequestMetrics(labels requestMetricLabels, success bool, duration time.Duration) {
 	status := "success"
 	if !success {
 		status = "failure"
 	}
-	requestCounter.WithLabelValues(route, provider, model, endpoint, status).Inc()
-	requestDuration.WithLabelValues(route, provider, model, endpoint).Observe(float64(duration.Milliseconds()))
+	routeRequestCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
+	providerRequestCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
+	routeRequestDuration.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
+	providerRequestDuration.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
 }
 
 // updateProviderMetrics updates provider health metrics.
@@ -177,13 +242,15 @@ func (g *Gateway) updateProviderMetrics(cfg *config.ConfigStruct) {
 }
 
 // RecordFailoverMetric records a failover event in Prometheus metrics.
-func (g *Gateway) RecordFailoverMetric(provider string) {
-	providerFailovers.WithLabelValues(provider).Inc()
+func (g *Gateway) RecordFailoverMetric(labels requestMetricLabels) {
+	routeFailovers.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern).Inc()
+	providerFailovers.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern).Inc()
 }
 
 // RecordStreamErrorMetric records a stream error in Prometheus metrics.
-func (g *Gateway) RecordStreamErrorMetric(provider, phase string) {
-	providerStreamErrors.WithLabelValues(provider, phase).Inc()
+func (g *Gateway) RecordStreamErrorMetric(labels requestMetricLabels, phase string) {
+	routeStreamErrors.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, phase).Inc()
+	providerStreamErrors.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, phase).Inc()
 }
 
 // TokenUsage represents extracted token usage from a response.
@@ -194,34 +261,39 @@ type TokenUsage struct {
 
 // RecordTokenMetrics records token usage metrics for a request.
 // durationMs is the request duration in milliseconds, used to calculate token/s rate.
-func (g *Gateway) RecordTokenMetrics(route, provider, model, endpoint string, usage TokenUsage, durationMs int64) {
+func (g *Gateway) RecordTokenMetrics(labels requestMetricLabels, usage TokenUsage, durationMs int64) {
 	recordTokenType := func(count int64, typ string) {
 		if count <= 0 {
 			return
 		}
-		tokenCounter.WithLabelValues(provider, model, typ).Add(float64(count))
+		routeTokenCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
+		providerTokenCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
 		if durationMs > 0 {
 			value := float64(count) / (float64(durationMs) / 1000.0)
-			tokenRate.WithLabelValues(route, provider, model, endpoint, typ).Set(value)
+			routeTokenRate.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
+			providerTokenRate.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
 			if g.outputRates != nil {
-				g.outputRates.Record(route, provider, model, endpoint, typ, value, time.Now())
+				g.outputRates.Record(labels, typ, value, time.Now())
 			}
 		}
 	}
 	recordTokenType(usage.PromptTokens, "prompt")
 	recordTokenType(usage.CompletionTokens, "completion")
 	if usage.CompletionTokens > 0 && durationMs > 0 {
-		completionThroughput.WithLabelValues(route, provider, model, endpoint).
+		routeCompletionThroughput.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).
+			Observe(float64(usage.CompletionTokens) / (float64(durationMs) / 1000.0))
+		providerCompletionThroughput.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).
 			Observe(float64(usage.CompletionTokens) / (float64(durationMs) / 1000.0))
 	}
 }
 
 // RecordTTFTMetric records streaming time-to-first-token in milliseconds.
-func (g *Gateway) RecordTTFTMetric(route, provider, model, endpoint string, ttft time.Duration) {
+func (g *Gateway) RecordTTFTMetric(labels requestMetricLabels, ttft time.Duration) {
 	if ttft <= 0 {
 		return
 	}
-	streamTTFT.WithLabelValues(route, provider, model, endpoint).Observe(float64(ttft.Milliseconds()))
+	routeStreamTTFT.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(ttft.Milliseconds()))
+	providerStreamTTFT.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(ttft.Milliseconds()))
 }
 
 // PromMiddleware is the middleware that records Prometheus metrics.
@@ -329,18 +401,15 @@ func (g *Gateway) promMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Read route/provider/model/endpoint from headers set by business handlers
-		route := wrapped.Header().Get("X-Route")
-		provider := wrapped.Header().Get("X-Provider")
-		model := wrapped.Header().Get("X-Model")
-		endpoint := wrapped.Header().Get("X-Endpoint")
-		if route == "" {
+		labels := metricLabelsFromHeader(wrapped.Header())
+		if labels.Route == "" {
 			return
 		}
 
 		duration := time.Since(start)
 		success := wrapped.StatusCode() < 500
 
-		g.recordRequestMetrics(route, provider, model, endpoint, success, duration)
+		g.recordRequestMetrics(labels, success, duration)
 	})
 }
 

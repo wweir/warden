@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -77,7 +78,13 @@ func CommandWithEnv(cfg *Config, env map[string]string, command string, args ...
 	// build "VAR1=val1 VAR2=val2 command arg1 arg2" as a single shell string
 	// env keys are not quoted (valid identifiers: [A-Za-z_][A-Za-z0-9_]*)
 	var parts []string
-	for k, v := range env {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		v := env[k]
 		parts = append(parts, k+"="+shellQuote(v))
 	}
 	parts = append(parts, shellQuote(command))

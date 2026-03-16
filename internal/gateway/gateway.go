@@ -59,11 +59,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	mcpClients := make(map[string]*mcp.Client)
 	for name, mcpCfg := range cfg.MCP {
-		client, err := mcp.NewClient(mcpCfg)
-		if err != nil {
-			slog.Warn("Failed to create MCP client", "name", name, "error", err)
-			continue
-		}
+		client := mcp.NewClient(mcpCfg)
 		if err := client.Start(ctx, mcpCfg); err != nil {
 			slog.Warn("Failed to start MCP client", "name", name, "error", err)
 			continue
@@ -110,14 +106,18 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 				g.handleModels(w, r, route)
 			})
-		router.Handle(http.MethodPost, prefix+"/chat/completions",
-			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-				g.handleChatCompletion(w, r, route)
-			})
-		router.Handle(http.MethodPost, prefix+"/responses",
-			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-				g.handleResponses(w, r, route)
-			})
+		if route.Protocol == "" || route.Protocol == config.RouteProtocolChat {
+			router.Handle(http.MethodPost, prefix+"/chat/completions",
+				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+					g.handleChatCompletion(w, r, route)
+				})
+		}
+		if route.Protocol == "" || route.Protocol == config.RouteProtocolResponses {
+			router.Handle(http.MethodPost, prefix+"/responses",
+				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+					g.handleResponses(w, r, route)
+				})
+		}
 	}
 
 	// fallback: match route prefix and proxy unhandled requests
@@ -197,14 +197,12 @@ func isInferenceEndpoint(path string) bool {
 
 // handleProxy transparently forwards non-chat/responses requests.
 func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
-	// Set headers for metrics middleware
-	w.Header().Set("X-Route", route.Prefix)
-	w.Header().Set("X-Endpoint", strings.TrimPrefix(r.URL.Path, "/"))
+	r = r.WithContext(withRouteHooks(withClientRequest(r.Context(), r), route.Hooks))
 
 	startTime := time.Now()
 	reqID := reqlog.GenerateID()
 
-	// always buffer request body for model extraction and alias resolution
+	// always buffer request body for model extraction and route-model rewrite
 	reqBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -215,26 +213,55 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 	// extract model from request body for provider selection (best-effort; non-JSON bodies are fine)
 	model := gjson.GetBytes(reqBody, "model").String()
 	stream := gjson.GetBytes(reqBody, "stream").Bool()
-	w.Header().Set("X-Model", model)
 
 	var excluded []string
 	authRetried := map[string]bool{}
-	provCfg, err := g.selector.Select(g.cfg, route, model)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	explicitProvider := r.Header.Get("X-Provider")
+	allowFailover := isInferenceEndpoint(r.URL.Path)
+	serviceProtocol := route.Protocol
+	endpoint := strings.TrimPrefix(r.URL.Path, "/")
+	if strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/messages" {
+		serviceProtocol = config.RouteProtocolAnthropic
+	}
+	var resolved *resolvedRouteTarget
+	var provCfg *config.ProviderConfig
+	var target *sel.RouteTarget
+	if model != "" {
+		resolved, err = g.selectRouteTarget(route, serviceProtocol, model, explicitProvider, excluded)
+		if err != nil {
+			writeModelSelectionError(w, err)
+			return
+		}
+		provCfg = resolved.prov
+		target = resolved.target
+	} else {
+		for _, providerName := range route.ProviderNames() {
+			if explicitProvider != "" && providerName != explicitProvider {
+				continue
+			}
+			candidate := g.cfg.Provider[providerName]
+			if candidate == nil || !config.ProviderSupportsRouteProtocol(candidate.Protocol, serviceProtocol) {
+				continue
+			}
+			provCfg = candidate
+			break
+		}
+		if provCfg == nil {
+			http.Error(w, "provider not found for route", http.StatusBadRequest)
+			return
+		}
 	}
 
-	// Set provider header for metrics middleware
-	w.Header().Set("X-Provider", provCfg.Name)
-
-	allowFailover := isInferenceEndpoint(r.URL.Path)
+	metricLabels := buildMetricLabels(route, serviceProtocol, endpoint, target)
+	if target == nil {
+		metricLabels.Provider = provCfg.Name
+	}
+	applyMetricHeaders(w, metricLabels)
 
 	for {
 		logRequest(r, provCfg.Name, model)
 
-		// resolve model alias to real model name for upstream request
-		provReqBody := prepareRawBody(reqBody, provCfg, model)
+		provReqBody := prepareRawBody(reqBody, target)
 
 		targetURL := provCfg.URL + r.URL.Path
 		if r.URL.RawQuery != "" {
@@ -258,9 +285,13 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 				g.selector.RecordOutcome(provCfg.Name, err, latency)
 			}
 			// Only failover for inference endpoints
-			if allowFailover {
-				if next := g.tryFailover(err, provCfg.Name, &excluded, route, model); next != nil {
-					provCfg = next
+			if allowFailover && resolved != nil && explicitProvider == "" {
+				if next := g.tryFailover(err, resolved, &excluded, route, serviceProtocol, endpoint, model); next != nil {
+					resolved = next
+					provCfg = next.prov
+					target = next.target
+					metricLabels = buildMetricLabels(route, serviceProtocol, endpoint, target)
+					applyMetricHeaders(w, metricLabels)
 					continue
 				}
 			}
@@ -296,18 +327,20 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 				continue
 			}
 			// Only failover for inference endpoints
-			if allowFailover {
-				if next := g.tryFailover(upErr, provCfg.Name, &excluded, route, model); next != nil {
-					provCfg = next
+			if allowFailover && resolved != nil && explicitProvider == "" {
+				if next := g.tryFailover(upErr, resolved, &excluded, route, serviceProtocol, endpoint, model); next != nil {
+					resolved = next
+					provCfg = next.prov
+					target = next.target
+					metricLabels = buildMetricLabels(route, serviceProtocol, endpoint, target)
+					applyMetricHeaders(w, metricLabels)
 					continue
 				}
 			}
 		} else {
 			g.selector.RecordOutcome(provCfg.Name, nil, latency)
 			if stream {
-				endpoint := strings.TrimPrefix(r.URL.Path, route.Prefix)
-				endpoint = strings.TrimPrefix(endpoint, "/")
-				g.RecordTTFTMetric(route.Prefix, provCfg.Name, model, endpoint, latency)
+				g.RecordTTFTMetric(metricLabels, latency)
 			}
 		}
 
@@ -328,7 +361,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			usage := ExtractTokenUsage(logResp)
 			endpoint := strings.TrimPrefix(r.URL.Path, route.Prefix)
 			endpoint = strings.TrimPrefix(endpoint, "/")
-			g.RecordTokenMetrics(route.Prefix, provCfg.Name, model, endpoint, usage, durationMs)
+			g.RecordTokenMetrics(metricLabels, usage, durationMs)
 		}
 
 		rec := reqlog.Record{

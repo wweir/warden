@@ -191,3 +191,33 @@ func TestRunHTTPDefaultContentType(t *testing.T) {
 		t.Fatalf("expected application/json, got %s", contentType)
 	}
 }
+
+func TestRunHTTPUsesWebhookTimeoutWithoutParentDeadline(t *testing.T) {
+	var deadlineSet bool
+	withDefaultClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		_, deadlineSet = req.Context().Deadline()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"allow":true}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+
+	hook := config.HookConfig{
+		Type:    "http",
+		When:    "pre",
+		Webhook: "audit",
+		WebhookCfg: &config.WebhookConfig{
+			URL:     "http://example.com/hook",
+			Timeout: "250ms",
+		},
+	}
+
+	r := runHTTP(context.Background(), 0, hook, CallContext{FullName: "web_search"})
+	if r.rejected {
+		t.Fatalf("expected rejected=false")
+	}
+	if !deadlineSet {
+		t.Fatal("expected webhook request context to have deadline")
+	}
+}

@@ -19,6 +19,7 @@ func (m *RecoveryMiddleware) Process(next http.Handler) http.Handler {
 		defer func() {
 			if err := recover(); err != nil {
 				slog.Error("Panic recovered", "error", err)
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{
 					"error": "Internal server error",

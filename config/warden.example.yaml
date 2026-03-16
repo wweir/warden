@@ -80,14 +80,6 @@ provider:
     protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
-    # request_patch applies JSON Patch (RFC 6902) operations to each request body before forwarding.
-    # Useful for stripping fields unsupported by a specific upstream (e.g. extended thinking).
-    # request_patch:
-    #   - op: "remove"
-    #     path: "/thinking"
-    #   - op: "replace"
-    #     path: "/max_tokens"
-    #     value: 8192
 
   anthropic-fallback:
     url: "https://api.anthropic.com/v1"
@@ -99,9 +91,6 @@ provider:
     url: "http://localhost:11434/v1"
     protocol: "ollama"
     timeout: "180s" # local models may be slow
-    # model_aliases: alias_name = real_name, alias appears in /models and is resolved before upstream request
-    # model_aliases:
-    #   gpt-4o: "llama3.3"
 
   qwen:
     protocol: "qwen"
@@ -124,63 +113,93 @@ provider:
       - "o3-mini"
       - "gemini-2.0-flash"
 
-# 路由配置 - 路由前缀与工具绑定
+# 路由配置 - route-centric：每个 route 暴露单一协议，并定义公开模型
 route:
   /openai:
-    providers:
-      - "openai"
+    protocol: "chat"
     tools:
       - "web-search"
+    hooks:
+      - match: "filesystem__write_*"
+        hook:
+          type: http
+          when: post
+          timeout: "5s"
+          webhook: "audit-webhook"
+    models:
+      gpt-4o:
+        system_prompt: "You are a helpful assistant."
+        upstreams:
+          - provider: "openai"
+            model: "gpt-4o"
+          - provider: "anthropic-fallback"
+            model: "claude-sonnet-4"
+      # Public model name can differ from upstream model name.
+      # This exact route model is exposed as `gpt-4o-mini`, but forwarded upstream as `gpt-4.1-mini`.
+      gpt-4o-mini:
+        upstreams:
+          - provider: "openai-fast"
+            model: "gpt-4.1-mini"
+      "gpt-*":
+        providers:
+          - "openai-fast"
+          - "openai"
 
   /anthropic:
-    providers:
-      - "anthropic"
+    protocol: "anthropic"
     tools:
       - "web-search"
       - "filesystem"
-    # system_prompts: inject a system prompt for specific models (exact match)
-    # system_prompts:
-    #   claude-sonnet-4-5-20250929: "You are a helpful assistant."
+    models:
+      claude-sonnet-4-5-20250929:
+        upstreams:
+          - provider: "anthropic"
+            model: "claude-sonnet-4-5-20250929"
 
   /ollama:
-    providers:
-      - "ollama"
+    protocol: "responses"
     tools: []
+    models:
+      llama3.3:
+        upstreams:
+          - provider: "ollama"
+            model: "llama3.3"
 
-# 全局 tool hooks（对任意 tool call 生效）
-# match 匹配的是完整工具名：
+# Route hooks 绑定到具体路由。match 匹配的是完整工具名：
 # - 注入 MCP 工具：<mcp_name>__<tool_name>
 # - 客户端工具：<tool_name>
 # 支持 * 通配符，例如 "filesystem__*"、"web_*"、"*"
-# tool_hooks:
-#   - match: "filesystem__write_*"
-#     hook:
-#       type: exec
-#       when: pre
-#       timeout: "3s"
-#       command: "/usr/local/bin/check-write-permission"
-#       args: []
-#   - match: "web_search"
-#     hook:
-#       type: ai
-#       when: pre
-#       timeout: "15s"
-#       route: "/openai"
-#       model: "gpt-4o-mini"
-#       prompt: |
-#         You are a security reviewer for tool calls.
-#         Return JSON only: {"allow": true/false, "reason": "short reason"}
-#         Default to allow=false if risk is unclear.
-#         Focus on command execution, secret leakage, privacy violations, malicious downloads,
-#         data exfiltration, and destructive or over-broad actions.
-#         Tool: {{.FullName}}
-#         Arguments: {{.Arguments}}
-#   - match: "filesystem__delete_file"
-#     hook:
-#       type: http
-#       when: pre
-#       timeout: "5s"
-#       webhook: "audit-webhook"   # references webhook.<name>; body uses webhook.body_template or default CallContext JSON
+# route:
+#   /openai:
+#     hooks:
+#       - match: "filesystem__write_*"
+#         hook:
+#           type: exec
+#           when: pre
+#           timeout: "3s"
+#           command: "/usr/local/bin/check-write-permission"
+#           args: []
+#       - match: "web_search"
+#         hook:
+#           type: ai
+#           when: pre
+#           timeout: "15s"
+#           route: "/openai"
+#           model: "gpt-4o-mini"
+#           prompt: |
+#             You are a security reviewer for tool calls.
+#             Return JSON only: {"allow": true/false, "reason": "short reason"}
+#             Default to allow=false if risk is unclear.
+#             Focus on command execution, secret leakage, privacy violations, malicious downloads,
+#             data exfiltration, and destructive or over-broad actions.
+#             Tool: {{.FullName}}
+#             Arguments: {{.Arguments}}
+#       - match: "filesystem__delete_file"
+#         hook:
+#           type: http
+#           when: pre
+#           timeout: "5s"
+#           webhook: "audit-webhook"   # references webhook.<name>; body uses webhook.body_template or default CallContext JSON
 
 # MCP 工具配置 - 启用的 MCP 工具
 mcp:

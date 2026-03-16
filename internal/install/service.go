@@ -42,7 +42,6 @@ func InstallService(confirm ConfirmFunc) error {
 			if isUpdate {
 				_ = systemctl("stop", "warden")
 			}
-			os.Remove(targetPath)
 			if err := os.WriteFile(targetPath, data, 0o755); err != nil {
 				return fmt.Errorf("write binary to %s: %w", targetPath, err)
 			}
@@ -136,11 +135,16 @@ func systemctl(args ...string) error {
 func ensureDefaultFiles() {
 	const configPath = "/etc/warden.yaml"
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := os.WriteFile(configPath, []byte(config.ExampleConfig), 0o644); err != nil {
-			fmt.Printf("  ⚠️  Failed to write default config: %v\n", err)
-			return
-		}
-		fmt.Printf("  ✓ Default config written to %s\n", configPath)
+	if _, err := os.Stat(configPath); err == nil {
+		return
+	} else if !os.IsNotExist(err) {
+		fmt.Printf("  ⚠️  Failed to inspect default config path: %v\n", err)
+		return
 	}
+
+	if err := os.WriteFile(configPath, []byte(config.ExampleConfig), 0o644); err != nil {
+		fmt.Printf("  ⚠️  Failed to write default config: %v\n", err)
+		return
+	}
+	fmt.Printf("  ✓ Default config written to %s\n", configPath)
 }

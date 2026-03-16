@@ -20,6 +20,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/julienschmidt/httprouter"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/reqlog"
@@ -204,8 +205,11 @@ func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 	}
 	type routeInfo struct {
 		Prefix    string   `json:"prefix"`
+		Protocol  string   `json:"protocol"`
 		Providers []string `json:"providers"`
+		Models    []string `json:"models"`
 		Tools     []string `json:"tools"`
+		HookCount int      `json:"hook_count"`
 	}
 
 	providers := g.selector.ProviderStatuses()
@@ -214,8 +218,11 @@ func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 	for prefix, r := range g.cfg.Route {
 		routes = append(routes, routeInfo{
 			Prefix:    prefix,
-			Providers: r.Providers,
+			Protocol:  r.Protocol,
+			Providers: r.ProviderNames(),
+			Models:    r.PublicModels(),
 			Tools:     r.Tools,
+			HookCount: len(r.Hooks),
 		})
 	}
 	slices.SortFunc(routes, func(a, b routeInfo) int {
@@ -534,7 +541,6 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"has_api_key":       provCfg.APIKey.Value() != "",
 		"chat_to_responses": provCfg.ChatToResponses,
 		"responses_to_chat": provCfg.ResponsesToChat,
-		"model_aliases":     provCfg.ModelAliases,
 		"models":            models,
 		"status":            status,
 	})
@@ -668,7 +674,7 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 	}
 
 	var providers []sel.ProviderStatus
-	for _, provName := range route.Providers {
+	for _, provName := range route.ProviderNames() {
 		if status := g.selector.ProviderDetail(provName); status != nil {
 			providers = append(providers, *status)
 		}
@@ -695,13 +701,48 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		tools = []mcpToolStatus{}
 	}
 
-	resp := map[string]any{
-		"prefix":    prefix,
-		"providers": providers,
-		"tools":     tools,
+	type routeModelDetail struct {
+		Name          string   `json:"name"`
+		SystemPrompt  string   `json:"system_prompt,omitempty"`
+		UpstreamNames []string `json:"upstreams,omitempty"`
+		Wildcard      bool     `json:"wildcard"`
+		Pattern       string   `json:"pattern,omitempty"`
 	}
-	if len(route.SystemPrompts) > 0 {
-		resp["system_prompts"] = route.SystemPrompts
+	var exactModels []routeModelDetail
+	for _, name := range route.PublicModels() {
+		matched := route.MatchModel(name)
+		if matched == nil {
+			continue
+		}
+		row := routeModelDetail{Name: name, SystemPrompt: matched.SystemPrompt}
+		for _, upstream := range matched.Upstreams {
+			row.UpstreamNames = append(row.UpstreamNames, upstream.Provider+":"+upstream.UpstreamModel)
+		}
+		exactModels = append(exactModels, row)
+	}
+	var wildcardModels []routeModelDetail
+	for _, wildcard := range route.WildcardModels() {
+		row := routeModelDetail{
+			Name:         wildcard.Pattern,
+			SystemPrompt: wildcard.SystemPrompt,
+			Wildcard:     true,
+			Pattern:      wildcard.Pattern,
+		}
+		for _, upstream := range wildcard.Upstreams {
+			row.UpstreamNames = append(row.UpstreamNames, upstream.Provider)
+		}
+		wildcardModels = append(wildcardModels, row)
+	}
+
+	resp := map[string]any{
+		"prefix":          prefix,
+		"protocol":        route.Protocol,
+		"providers":       providers,
+		"tools":           tools,
+		"models":          route.PublicModels(),
+		"exact_models":    exactModels,
+		"wildcard_models": wildcardModels,
+		"hook_count":      len(route.Hooks),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -865,165 +906,253 @@ func (g *Gateway) collectMetricsData() map[string]any {
 	g.updateProviderMetrics(g.cfg)
 
 	type requestStat struct {
-		Route    string `json:"route"`
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
-		Endpoint string `json:"endpoint"`
-		Status   string `json:"status"`
-		Value    int    `json:"value"`
+		Route          string `json:"route"`
+		Protocol       string `json:"protocol,omitempty"`
+		RouteModel     string `json:"route_model,omitempty"`
+		MatchedPattern string `json:"matched_pattern,omitempty"`
+		Provider       string `json:"provider,omitempty"`
+		ProviderModel  string `json:"provider_model,omitempty"`
+		Model          string `json:"model,omitempty"`
+		Endpoint       string `json:"endpoint"`
+		Status         string `json:"status"`
+		Value          int    `json:"value"`
 	}
-	var requests []requestStat
-	for _, met := range collectMetrics(requestCounter) {
-		req := requestStat{Value: int(met.GetCounter().GetValue())}
-		for _, l := range met.GetLabel() {
-			switch l.GetName() {
-			case "route":
-				req.Route = l.GetValue()
-			case "provider":
-				req.Provider = l.GetValue()
-			case "model":
-				req.Model = l.GetValue()
-			case "endpoint":
-				req.Endpoint = l.GetValue()
-			case "status":
-				req.Status = l.GetValue()
-			}
-		}
-		requests = append(requests, req)
-	}
-
-	type durationBucket struct {
-		Route    string  `json:"route"`
-		Provider string  `json:"provider"`
-		Model    string  `json:"model"`
-		Endpoint string  `json:"endpoint"`
-		Le       float64 `json:"le"`
-		Value    int     `json:"value"`
-	}
-	var durations []durationBucket
-	for _, met := range collectMetrics(requestDuration) {
-		for _, b := range met.GetHistogram().GetBucket() {
-			if b.GetUpperBound() == float64(1<<63-1) {
-				continue // skip +Inf bucket
-			}
-			db := durationBucket{Le: b.GetUpperBound(), Value: int(b.GetCumulativeCount())}
+	collectRequestStats := func(collector *prometheus.CounterVec) []requestStat {
+		var rows []requestStat
+		for _, met := range collectMetrics(collector) {
+			row := requestStat{Value: int(met.GetCounter().GetValue())}
 			for _, l := range met.GetLabel() {
 				switch l.GetName() {
 				case "route":
-					db.Route = l.GetValue()
+					row.Route = l.GetValue()
+				case "protocol":
+					row.Protocol = l.GetValue()
+				case "route_model":
+					row.RouteModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "matched_pattern":
+					row.MatchedPattern = l.GetValue()
 				case "provider":
-					db.Provider = l.GetValue()
-				case "model":
-					db.Model = l.GetValue()
+					row.Provider = l.GetValue()
+				case "provider_model":
+					row.ProviderModel = l.GetValue()
+					row.Model = l.GetValue()
 				case "endpoint":
-					db.Endpoint = l.GetValue()
+					row.Endpoint = l.GetValue()
+				case "status":
+					row.Status = l.GetValue()
 				}
 			}
-			durations = append(durations, db)
+			rows = append(rows, row)
 		}
+		return rows
+	}
+
+	type durationBucket struct {
+		Route          string  `json:"route"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Endpoint       string  `json:"endpoint"`
+		Le             float64 `json:"le"`
+		Value          int     `json:"value"`
+	}
+	collectDurationStats := func(collector *prometheus.HistogramVec) []durationBucket {
+		var rows []durationBucket
+		for _, met := range collectMetrics(collector) {
+			for _, b := range met.GetHistogram().GetBucket() {
+				if b.GetUpperBound() == float64(1<<63-1) {
+					continue
+				}
+				row := durationBucket{Le: b.GetUpperBound(), Value: int(b.GetCumulativeCount())}
+				for _, l := range met.GetLabel() {
+					switch l.GetName() {
+					case "route":
+						row.Route = l.GetValue()
+					case "protocol":
+						row.Protocol = l.GetValue()
+					case "route_model":
+						row.RouteModel = l.GetValue()
+						row.Model = l.GetValue()
+					case "matched_pattern":
+						row.MatchedPattern = l.GetValue()
+					case "provider":
+						row.Provider = l.GetValue()
+					case "provider_model":
+						row.ProviderModel = l.GetValue()
+						row.Model = l.GetValue()
+					case "endpoint":
+						row.Endpoint = l.GetValue()
+					}
+				}
+				rows = append(rows, row)
+			}
+		}
+		return rows
 	}
 
 	type tokenStat struct {
-		Provider string  `json:"provider"`
-		Model    string  `json:"model"`
-		Type     string  `json:"type"`
-		Value    float64 `json:"value"`
+		Route          string  `json:"route,omitempty"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Type           string  `json:"type"`
+		Value          float64 `json:"value"`
 	}
-	var tokens []tokenStat
-	for _, met := range collectMetrics(tokenCounter) {
-		ts := tokenStat{Value: met.GetCounter().GetValue()}
-		for _, l := range met.GetLabel() {
-			switch l.GetName() {
-			case "provider":
-				ts.Provider = l.GetValue()
-			case "model":
-				ts.Model = l.GetValue()
-			case "type":
-				ts.Type = l.GetValue()
+	collectTokenStats := func(collector *prometheus.CounterVec) []tokenStat {
+		var rows []tokenStat
+		for _, met := range collectMetrics(collector) {
+			row := tokenStat{Value: met.GetCounter().GetValue()}
+			for _, l := range met.GetLabel() {
+				switch l.GetName() {
+				case "route":
+					row.Route = l.GetValue()
+				case "protocol":
+					row.Protocol = l.GetValue()
+				case "route_model":
+					row.RouteModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "matched_pattern":
+					row.MatchedPattern = l.GetValue()
+				case "provider":
+					row.Provider = l.GetValue()
+				case "provider_model":
+					row.ProviderModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "type":
+					row.Type = l.GetValue()
+				}
 			}
+			rows = append(rows, row)
 		}
-		tokens = append(tokens, ts)
+		return rows
 	}
 
 	type tokenRateStat struct {
-		Route    string  `json:"route"`
-		Provider string  `json:"provider"`
-		Model    string  `json:"model"`
-		Endpoint string  `json:"endpoint"`
-		Type     string  `json:"type"`
-		Value    float64 `json:"value"`
+		Route          string  `json:"route,omitempty"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Endpoint       string  `json:"endpoint"`
+		Type           string  `json:"type"`
+		Value          float64 `json:"value"`
 	}
-	var rates []tokenRateStat
+	var providerRates []tokenRateStat
+	routeRateMap := map[string]tokenRateStat{}
 	for _, entry := range g.outputRates.Snapshot(time.Now()) {
-		rates = append(rates, tokenRateStat{
-			Route:    entry.Route,
-			Provider: entry.Provider,
-			Model:    entry.Model,
-			Endpoint: entry.Endpoint,
-			Type:     entry.Type,
-			Value:    entry.Value,
+		providerRates = append(providerRates, tokenRateStat{
+			Route:          entry.Route,
+			Protocol:       entry.Protocol,
+			RouteModel:     entry.RouteModel,
+			MatchedPattern: entry.MatchedPattern,
+			Provider:       entry.Provider,
+			ProviderModel:  entry.ProviderModel,
+			Model:          entry.ProviderModel,
+			Endpoint:       entry.Endpoint,
+			Type:           entry.Type,
+			Value:          entry.Value,
 		})
+		key := entry.Route + "\x00" + entry.Protocol + "\x00" + entry.RouteModel + "\x00" + entry.MatchedPattern + "\x00" + entry.Endpoint + "\x00" + entry.Type
+		row := routeRateMap[key]
+		row.Route = entry.Route
+		row.Protocol = entry.Protocol
+		row.RouteModel = entry.RouteModel
+		row.MatchedPattern = entry.MatchedPattern
+		row.Model = entry.RouteModel
+		row.Endpoint = entry.Endpoint
+		row.Type = entry.Type
+		row.Value += entry.Value
+		routeRateMap[key] = row
+	}
+	routeRates := make([]tokenRateStat, 0, len(routeRateMap))
+	for _, row := range routeRateMap {
+		routeRates = append(routeRates, row)
 	}
 
 	type quantileStat struct {
-		Route    string  `json:"route"`
-		Provider string  `json:"provider"`
-		Model    string  `json:"model"`
-		Endpoint string  `json:"endpoint"`
-		Value    float64 `json:"value"`
-		Count    uint64  `json:"count"`
+		Route          string  `json:"route,omitempty"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Endpoint       string  `json:"endpoint"`
+		Value          float64 `json:"value"`
+		Count          uint64  `json:"count"`
+	}
+	collectQuantiles := func(collector *prometheus.HistogramVec, q float64) []quantileStat {
+		var rows []quantileStat
+		for _, met := range collectMetrics(collector) {
+			row := quantileStat{
+				Value: histogramQuantile(q, met.GetHistogram().GetBucket()),
+				Count: met.GetHistogram().GetSampleCount(),
+			}
+			for _, l := range met.GetLabel() {
+				switch l.GetName() {
+				case "route":
+					row.Route = l.GetValue()
+				case "protocol":
+					row.Protocol = l.GetValue()
+				case "route_model":
+					row.RouteModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "matched_pattern":
+					row.MatchedPattern = l.GetValue()
+				case "provider":
+					row.Provider = l.GetValue()
+				case "provider_model":
+					row.ProviderModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "endpoint":
+					row.Endpoint = l.GetValue()
+				}
+			}
+			rows = append(rows, row)
+		}
+		return rows
 	}
 
-	var ttftP95 []quantileStat
-	for _, met := range collectMetrics(streamTTFT) {
-		entry := quantileStat{
-			Value: histogramQuantile(0.95, met.GetHistogram().GetBucket()),
-			Count: met.GetHistogram().GetSampleCount(),
-		}
-		for _, l := range met.GetLabel() {
-			switch l.GetName() {
-			case "route":
-				entry.Route = l.GetValue()
-			case "provider":
-				entry.Provider = l.GetValue()
-			case "model":
-				entry.Model = l.GetValue()
-			case "endpoint":
-				entry.Endpoint = l.GetValue()
-			}
-		}
-		ttftP95 = append(ttftP95, entry)
-	}
-
-	var throughputP99 []quantileStat
-	for _, met := range collectMetrics(completionThroughput) {
-		entry := quantileStat{
-			Value: histogramQuantile(0.99, met.GetHistogram().GetBucket()),
-			Count: met.GetHistogram().GetSampleCount(),
-		}
-		for _, l := range met.GetLabel() {
-			switch l.GetName() {
-			case "route":
-				entry.Route = l.GetValue()
-			case "provider":
-				entry.Provider = l.GetValue()
-			case "model":
-				entry.Model = l.GetValue()
-			case "endpoint":
-				entry.Endpoint = l.GetValue()
-			}
-		}
-		throughputP99 = append(throughputP99, entry)
-	}
+	providerRequests := collectRequestStats(providerRequestCounter)
+	routeRequests := collectRequestStats(routeRequestCounter)
+	providerDurations := collectDurationStats(providerRequestDuration)
+	routeDurations := collectDurationStats(routeRequestDuration)
+	providerTokens := collectTokenStats(providerTokenCounter)
+	routeTokens := collectTokenStats(routeTokenCounter)
+	providerTTFT := collectQuantiles(providerStreamTTFT, 0.95)
+	routeTTFT := collectQuantiles(routeStreamTTFT, 0.95)
+	providerThroughput := collectQuantiles(providerCompletionThroughput, 0.99)
+	routeThroughput := collectQuantiles(routeCompletionThroughput, 0.99)
 
 	return map[string]any{
-		"requests_total":        requests,
-		"request_duration":      durations,
-		"tokens_total":          tokens,
-		"token_rate":            rates,
-		"stream_ttft_p95_ms":    ttftP95,
-		"throughput_p99_tokens": throughputP99,
-		"realtime":              g.dashboardStore.Snapshot(),
+		"requests_total":                 providerRequests,
+		"request_duration":               providerDurations,
+		"tokens_total":                   providerTokens,
+		"token_rate":                     providerRates,
+		"stream_ttft_p95_ms":             providerTTFT,
+		"throughput_p99_tokens":          providerThroughput,
+		"route_requests_total":           routeRequests,
+		"route_request_duration":         routeDurations,
+		"route_tokens_total":             routeTokens,
+		"route_token_rate":               routeRates,
+		"route_stream_ttft_p95_ms":       routeTTFT,
+		"route_throughput_p99_tokens":    routeThroughput,
+		"provider_requests_total":        providerRequests,
+		"provider_request_duration":      providerDurations,
+		"provider_tokens_total":          providerTokens,
+		"provider_token_rate":            providerRates,
+		"provider_stream_ttft_p95_ms":    providerTTFT,
+		"provider_throughput_p99_tokens": providerThroughput,
+		"realtime":                       g.dashboardStore.Snapshot(),
 	}
 }
 
@@ -1036,7 +1165,7 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 		RouteOutput:  make(map[string]float64),
 	}
 
-	for _, met := range collectMetrics(requestCounter) {
+	for _, met := range collectMetrics(routeRequestCounter) {
 		value := met.GetCounter().GetValue()
 		sample.Requests += value
 		route := ""
@@ -1059,7 +1188,7 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 		}
 	}
 
-	for _, met := range collectMetrics(tokenCounter) {
+	for _, met := range collectMetrics(routeTokenCounter) {
 		sample.Tokens += met.GetCounter().GetValue()
 	}
 
@@ -1076,11 +1205,11 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 		}
 	}
 
-	for _, met := range collectMetrics(providerFailovers) {
+	for _, met := range collectMetrics(routeFailovers) {
 		sample.Failovers += met.GetCounter().GetValue()
 	}
 
-	for _, met := range collectMetrics(providerStreamErrors) {
+	for _, met := range collectMetrics(routeStreamErrors) {
 		sample.StreamErrors += met.GetCounter().GetValue()
 	}
 

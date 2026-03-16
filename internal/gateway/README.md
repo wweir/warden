@@ -5,10 +5,18 @@
 `internal/gateway` contains the core HTTP gateway and admin API implementation:
 
 - Registers route handlers for proxy, chat completions, responses, admin API, and Prometheus metrics.
-- Selects providers, records outcomes, and coordinates MCP tool injection/execution.
+- Selects route-model upstream targets, records outcomes, and coordinates MCP tool injection/execution.
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
 - Bridges OpenAI `chat/completions` ↔ `responses` when a provider enables protocol-conversion flags.
+
+## Route-Centric Runtime
+
+- `route.protocol` defines the external protocol exposed by a route: `chat`, `responses`, or `anthropic`.
+- `route.models` is the public model surface. Exact model entries use ordered `upstreams`, while wildcard entries use ordered `providers`.
+- Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
+- Wildcard model entries preserve the request model name and only choose which provider serves it.
+- Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
 
 ## Key Interfaces
 

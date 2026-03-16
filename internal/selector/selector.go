@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -98,6 +99,17 @@ type Selector struct {
 	states map[string]*providerState
 }
 
+type RouteTarget struct {
+	Key            string
+	ProviderName   string
+	UpstreamModel  string
+	PublicModel    string
+	RequestedModel string
+	MatchedPattern string
+	RenameModel    bool
+	Wildcard       bool
+}
+
 // NewSelector creates a new Selector and initializes state for all providers.
 func NewSelector(cfg *config.ConfigStruct) *Selector {
 	states := make(map[string]*providerState, len(cfg.Provider))
@@ -107,37 +119,59 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 	return &Selector{states: states}
 }
 
-// Select returns the best provider for the given route and model.
-func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, model string, exclude ...string) (*config.ProviderConfig, error) {
+// Select returns the best upstream target for the given matched route model.
+func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, serviceProtocol string, matched *config.CompiledRouteModel, requestedModel string, exclude ...string) (*RouteTarget, *config.ProviderConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	_ = route
 
 	now := time.Now()
 
 	type candidate struct {
-		name    string
+		target  *RouteTarget
 		provCfg *config.ProviderConfig
 		state   *providerState
 	}
 	var candidates []candidate
-	for _, provName := range route.Providers {
-		if slices.Contains(exclude, provName) {
+	for _, upstream := range matched.Upstreams {
+		target := &RouteTarget{
+			Key:            upstream.Provider + ":" + requestedModel,
+			ProviderName:   upstream.Provider,
+			UpstreamModel:  upstream.UpstreamModel,
+			PublicModel:    matched.PublicModel,
+			RequestedModel: requestedModel,
+			MatchedPattern: "",
+			RenameModel:    upstream.RenameModel,
+			Wildcard:       matched.Wildcard,
+		}
+		if matched.Wildcard {
+			target.Key = upstream.Provider + ":" + requestedModel
+			target.UpstreamModel = requestedModel
+			target.MatchedPattern = matched.Pattern
+		} else {
+			target.Key = upstream.Provider + ":" + upstream.UpstreamModel
+		}
+		if slices.Contains(exclude, target.Key) {
 			continue
 		}
-		provCfg, exists := cfg.Provider[provName]
+		provCfg, exists := cfg.Provider[upstream.Provider]
 		if !exists {
 			continue
 		}
-		st := s.states[provName]
+		if !config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
+			continue
+		}
+		st := s.states[upstream.Provider]
 		if st == nil {
 			continue
 		}
-		if model != "" && st.availableModels != nil {
-			if !st.availableModels[model] && provCfg.ModelAliases[model] == "" {
+		upstreamModel := target.UpstreamModel
+		if upstreamModel != "" && st.availableModels != nil && !st.availableModels[upstreamModel] {
+			if matched.Wildcard {
 				continue
 			}
 		}
-		candidates = append(candidates, candidate{name: provName, provCfg: provCfg, state: st})
+		candidates = append(candidates, candidate{target: target, provCfg: provCfg, state: st})
 	}
 
 	for _, c := range candidates {
@@ -145,7 +179,7 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 			continue // skip manually suppressed providers
 		}
 		if now.After(c.state.suppressUntil) {
-			return c.provCfg, nil
+			return c.target, c.provCfg, nil
 		}
 	}
 
@@ -165,29 +199,49 @@ func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, m
 			}
 		}
 		suppressedInfo := make([]any, 0, len(autoSuppressed)*4+2)
-		suppressedInfo = append(suppressedInfo, "selected", earliest.name, "suppress_until", earliest.state.suppressUntil)
+		suppressedInfo = append(suppressedInfo, "selected", earliest.target.ProviderName, "suppress_until", earliest.state.suppressUntil)
 		for _, c := range autoSuppressed {
-			suppressedInfo = append(suppressedInfo, c.name+"_failures", c.state.consecutiveFailures,
-				c.name+"_suppress_until", c.state.suppressUntil)
+			suppressedInfo = append(suppressedInfo, c.target.ProviderName+"_failures", c.state.consecutiveFailures,
+				c.target.ProviderName+"_suppress_until", c.state.suppressUntil)
 		}
 		slog.Warn("All auto-suppressed providers unavailable, selecting earliest expiring", suppressedInfo...)
-		return earliest.provCfg, nil
+		return earliest.target, earliest.provCfg, nil
 	}
 
-	return nil, ErrProviderNotFound
+	return nil, nil, ErrProviderNotFound
 }
 
-// SelectByName returns a specific provider by name if it exists in the route.
-// Returns ErrProviderNotFound if the provider is not in the route's provider list.
-func (s *Selector) SelectByName(cfg *config.ConfigStruct, route *config.RouteConfig, providerName string) (*config.ProviderConfig, error) {
-	for _, provName := range route.Providers {
-		if provName == providerName {
-			if provCfg, exists := cfg.Provider[provName]; exists {
-				return provCfg, nil
+// SelectByName returns a specific upstream target by provider name if it exists in the matched route model.
+func (s *Selector) SelectByName(cfg *config.ConfigStruct, serviceProtocol string, matched *config.CompiledRouteModel, requestedModel, providerName string) (*RouteTarget, *config.ProviderConfig, error) {
+	for _, upstream := range matched.Upstreams {
+		if upstream.Provider == providerName {
+			provCfg, exists := cfg.Provider[providerName]
+			if !exists {
+				break
 			}
+			if !config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
+				break
+			}
+			target := &RouteTarget{
+				ProviderName:   providerName,
+				RequestedModel: requestedModel,
+				PublicModel:    matched.PublicModel,
+				MatchedPattern: "",
+				RenameModel:    upstream.RenameModel,
+				Wildcard:       matched.Wildcard,
+			}
+			if matched.Wildcard {
+				target.UpstreamModel = requestedModel
+				target.Key = providerName + ":" + requestedModel
+				target.MatchedPattern = matched.Pattern
+			} else {
+				target.UpstreamModel = upstream.UpstreamModel
+				target.Key = providerName + ":" + upstream.UpstreamModel
+			}
+			return target, provCfg, nil
 		}
 	}
-	return nil, ErrProviderNotFound
+	return nil, nil, ErrProviderNotFound
 }
 
 // RecordOutcome records the result of an upstream request.
@@ -343,55 +397,62 @@ func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 	wg.Wait()
 }
 
-// Models returns aggregated raw model objects from all providers in the route.
+// Models returns the public model list exposed by the route.
 func (s *Selector) Models(cfg *config.ConfigStruct, route *config.RouteConfig) []json.RawMessage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	_ = cfg
 
 	seen := make(map[string]bool)
 	var result []json.RawMessage
 
-	for _, provName := range route.Providers {
-		provCfg, exists := cfg.Provider[provName]
-		if !exists {
+	for _, modelName := range route.PublicModels() {
+		compiled := route.MatchModel(modelName)
+		if compiled == nil {
 			continue
 		}
-		st := s.states[provName]
-		if st == nil {
+		if seen[modelName] {
 			continue
 		}
-		for _, raw := range st.rawModels {
-			var entry map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &entry); err != nil {
-				continue
-			}
-			var id string
-			if idRaw, ok := entry["id"]; ok {
-				json.Unmarshal(idRaw, &id)
-			}
-			if id == "" {
-				continue
-			}
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			entry["owned_by"] = mustMarshal(provName)
-			out, _ := json.Marshal(entry)
-			result = append(result, out)
+		seen[modelName] = true
+		entry := map[string]any{
+			"id":       modelName,
+			"object":   "model",
+			"owned_by": route.Prefix,
 		}
+		if !compiled.Wildcard && len(compiled.Upstreams) > 0 && compiled.Upstreams[0].RenameModel {
+			entry["aliased"] = compiled.Upstreams[0].UpstreamModel
+		}
+		result = append(result, mustMarshal(entry))
+	}
 
-		for alias, real := range provCfg.ModelAliases {
-			if seen[alias] {
+	for _, wildcard := range route.WildcardModels() {
+		for _, upstream := range wildcard.Upstreams {
+			st := s.states[upstream.Provider]
+			if st == nil {
 				continue
 			}
-			seen[alias] = true
-			result = append(result, mustMarshal(map[string]string{
-				"id":       alias,
-				"object":   "model",
-				"owned_by": provName,
-				"aliased":  real,
-			}))
+			for _, raw := range st.rawModels {
+				var entry map[string]json.RawMessage
+				if err := json.Unmarshal(raw, &entry); err != nil {
+					continue
+				}
+				var id string
+				if idRaw, ok := entry["id"]; ok {
+					_ = json.Unmarshal(idRaw, &id)
+				}
+				if id == "" || seen[id] {
+					continue
+				}
+				matched, err := path.Match(wildcard.Pattern, id)
+				if err != nil || !matched {
+					continue
+				}
+				seen[id] = true
+				entry["owned_by"] = mustMarshal(route.Prefix)
+				out, _ := json.Marshal(entry)
+				result = append(result, out)
+			}
 		}
 	}
 

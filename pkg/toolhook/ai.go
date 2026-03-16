@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/wweir/warden/config"
 )
+
+const defaultAIHookTimeout = 5 * time.Second
 
 // runAI calls the gateway's own chat completions endpoint to evaluate a tool call.
 // The prompt template is rendered with CallContext fields plus Args (parsed Arguments map).
@@ -28,7 +31,7 @@ func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx CallContex
 		return r
 	}
 
-	content, err := callGateway(ctx, gatewayAddr, hook.Route, hook.Model, prompt)
+	content, err := callGateway(ctx, gatewayAddr, hook, prompt)
 	if err != nil {
 		slog.Warn("Hook AI: request failed, passing through", "hook_index", idx, "error", err)
 		return r
@@ -67,15 +70,21 @@ func renderPrompt(promptTmpl string, hctx CallContext) (string, error) {
 }
 
 // callGateway sends a chat completion request to the gateway and returns the assistant content.
-func callGateway(ctx context.Context, gatewayAddr, route, model, prompt string) (string, error) {
+func callGateway(ctx context.Context, gatewayAddr string, hook config.HookConfig, prompt string) (string, error) {
+	reqCtx, cancel, err := withOptionalTimeout(ctx, timeoutOrDefault(hook.TimeoutDuration, defaultAIHookTimeout))
+	if err != nil {
+		return "", fmt.Errorf("resolve request timeout: %w", err)
+	}
+	defer cancel()
+
 	addr := gatewayAddr
 	if strings.HasPrefix(addr, ":") {
 		addr = "localhost" + addr
 	}
-	url := "http://" + addr + route + "/chat/completions"
+	url := "http://" + addr + hook.Route + "/chat/completions"
 
 	reqBody, err := json.Marshal(map[string]any{
-		"model": model,
+		"model": hook.Model,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
@@ -84,7 +93,7 @@ func callGateway(ctx context.Context, gatewayAddr, route, model, prompt string) 
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -124,4 +133,22 @@ func callGateway(ctx context.Context, gatewayAddr, route, model, prompt string) 
 		return "", fmt.Errorf("response content is not a string")
 	}
 	return content, nil
+}
+
+func timeoutOrDefault(d, fallback time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return fallback
+}
+
+func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc, error) {
+	if timeout <= 0 {
+		return ctx, func() {}, nil
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}, nil
+	}
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
+	return ctxWithTimeout, cancel, nil
 }

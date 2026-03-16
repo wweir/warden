@@ -82,19 +82,29 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 
 配置使用 YAML 格式（唯一支持格式），完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)。
 
-主要配置块：`addr`、`admin_password`、`api_keys`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`、`tool_hooks`。`admin_password`、`api_keys.*` 与 `provider.*.api_key` 都使用 `config.SecretString` 表示，配置文件写回时按 base64 编码保存，读取时同时兼容 base64 和明文。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`；也可配置 `responses_to_chat: true`（仅限 `protocol: "openai"`），将客户端 `responses` 请求转换为 Chat Completions 格式发送到上游 `/chat/completions`。后者仅支持 Chat 兼容子集：字符串/数组 `input`、`function` tools；`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射。MCP 工具可通过 `tools.<name>.disabled` 禁用；`tool_hooks` 可对任意 tool call（注入 MCP 工具名为 `mcp__tool`，客户端工具名为原始 name）配置 exec/ai/http 类型的 pre/post hook。
+主要配置块：`addr`、`admin_password`、`api_keys`、`webhook`、`log`、`ssh`、`provider`、`route`、`mcp`。`admin_password`、`api_keys.*` 与 `provider.*.api_key` 都使用 `config.SecretString` 表示，配置文件写回时按 base64 编码保存，读取时同时兼容 base64 和明文。Provider 支持 openai/anthropic/ollama/qwen/copilot 五种协议，API key 支持 `${ENV_VAR}` 环境变量展开。Provider 只负责连接与协议能力，不再承担模型别名或请求体补丁。Provider 可配置 `chat_to_responses: true`（仅限 `protocol: "openai"`），将客户端 `chat/completions` 请求转换为 Responses API 格式发送到上游 `/responses`；也可配置 `responses_to_chat: true`（仅限 `protocol: "openai"`），将客户端 `responses` 请求转换为 Chat Completions 格式发送到上游 `/chat/completions`。后者仅支持 Chat 兼容子集：字符串/数组 `input`、`function` tools；`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射。MCP 工具可通过 `tools.<name>.disabled` 禁用。路由配置已切到 route-centric：每个 `route` 声明单一 `protocol`、`models` 和 `hooks`；模型支持精确名和 `*` 通配符。精确模型通过 `upstreams` 绑定上游 provider/model，若名称不同则自动开启模型重命名；通配符模型通过 `providers` 指定候选 provider，保持请求模型名原样透传。Tool hook 只从 `route.<prefix>.hooks` 读取。
 
-### provider 多选策略 (internal/gateway/selector.go)
+### route-model 选择策略 (internal/gateway/selector.go)
 
-当 route 配置了多个 providers 时，选择策略如下，优先级从高到低：
+路由选择已从 “`route.providers` 选 provider” 重构为 “先命中 `route.models`，再在该 route-model 的候选链中选 upstream”：
 
-0. **强制指定 Provider**：客户端可通过 `X-Provider` 请求头强制选择特定 provider。若指定了有效的 provider 名称（必须在路由配置的 providers 列表中），则直接使用该 provider，跳过所有自动选择和 failover 逻辑。若指定的 provider 不在路由中，返回 `400 Bad Request`。此功能适用于调试或确保使用特定功能（如 `responses_to_chat`）的 provider。
+0. **强制指定 Provider**：客户端仍可通过 `X-Provider` 请求头强制选择 provider，但约束已收紧到“当前命中的 route-model 候选链”内部。若 provider 不在该模型的候选链里，返回 `400 Bad Request`。
 
-1. **配置顺序**（主要选择逻辑）：按 `RouteConfig.Providers` 的顺序遍历所有 provider（第一个 = 最高优先级）。当请求指定了 model 时，通过 `availableModels`（来自 `GET /models`）过滤不支持该 model 的 provider。跳过被抑制的 provider。
+1. **模型命中**：先精确匹配 `route.models[model]`；若没有，再按通配符模式匹配。精确匹配优先；通配符冲突在配置校验阶段直接报错。
 
-2. **手动抑制**：管理员可通过 Admin API 或管理面板手动抑制某个 provider，被手动抑制的 provider 会被完全跳过，不参与选择。手动抑制是运行时生效的，重启后重置。
+2. **候选链构建**：
+    - 精确模型：候选链来自 `upstreams[]`，每项明确给出 `provider + upstream model`
+    - 通配符模型：候选链来自 `providers[]`，上游模型名直接使用请求里的 model
 
-3. **全部被抑制时的兜底**：如果所有 provider 都被抑制（`suppressUntil > now`），则返回抑制期最早结束的那个，以保证服务可用。注意：手动抑制的 provider 不参与此兜底逻辑；若候选集中只剩手动抑制 provider，则直接返回 `ErrProviderNotFound`，Failover 会停止而不会切回手动抑制节点。
+3. **协议过滤**：候选 provider 必须支持当前 route 暴露的协议。当前内建规则：
+    - `openai/ollama/qwen/copilot` 支持 `chat`、`responses`
+    - `anthropic` 支持 `anthropic`
+
+4. **模型过滤**：如果 provider 已经完成 `/models` 发现，则只保留支持该上游模型的候选；若 provider 模型列表未知，则允许降级直通。
+
+5. **手动抑制与自动抑制**：管理员手动抑制的 provider 会被完全跳过。自动抑制逻辑仍按 provider 维护，failover 只在当前 route-model 候选链内移动。
+
+6. **全部被自动抑制时的兜底**：如果当前 route-model 的所有自动候选都被抑制，则仍返回抑制期最早结束的那个，以维持可用性；手动抑制节点不参与兜底。
 
 #### 失败抑制机制
 
@@ -126,21 +136,14 @@ Warden 是一个 AI 网关，核心能力是作为 LLM API 的反向代理，支
 - 查询使用 30s 固定超时（启动时一次性操作）
 - 并行查询所有 provider（goroutine + WaitGroup）
 
-#### 模型列表聚合端点
+#### 路由模型列表端点
 
-`GET /{prefix}/models` 返回同一 route 下所有 provider 的模型列表合并结果，按 model ID 去重。每个模型的 `owned_by` 字段被设置为对应的 provider 名称。
+`GET /{prefix}/models` 现在返回 route 自己对外暴露的模型视图：
 
-- `Selector.Models(cfg, route)` — 遍历 route 的 providers，收集每个 provider 的 `rawModels`，注入 `owned_by` 字段，按 ID 去重后返回；同时将 `model_aliases` 中定义的别名作为额外的模型条目添加到结果中（包含 `aliased` 字段指向真实模型名）
-- 响应格式为 OpenAI 标准格式：`{"object": "list", "data": [...]}`
-- 如果所有 provider 的模型查询均失败，返回空 data 数组
-
-#### 模型别名 (Model Aliases)
-
-provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.yaml` 中的 `model_aliases` 字段），允许一个模型以别名暴露给客户端：
-
-- 别名出现在 `GET /models` 响应中，客户端可直接使用别名作为 model 名称
-- `Select` 时，别名也参与候选匹配——请求 alias model 会选中定义了该别名的 provider
-- `ResolveModel()` 将别名解析为真实模型名，在发送到上游前调用
+- 精确模型：直接返回 route 中配置的 public model 名称
+- 精确模型若映射到不同上游模型：额外带 `aliased` 字段，指向 upstream model
+- 通配符模型：基于对应 provider 已发现的 `rawModels` 过滤出命中该 pattern 的实际模型，再补充到列表中
+- `owned_by` 字段统一标识 route 前缀，而不是具体 provider，因为 route 才是对外产品面
 
 ## 核心模块实现
 
@@ -150,17 +153,17 @@ provider 可配置 `model_aliases` 映射（配置示例参见 `warden.example.y
 
 - `Validate()` 方法：
     - 校验每个 provider 的 URL 合法性、protocol 为已知值、timeout 可解析
-    - 校验全局 `tool_hooks` 每条规则的 `match` 非空、hook 的 type/when 必填；exec 需 command、ai 需 route+model+prompt、http 需 webhook（引用 `webhook` 配置）；timeout 可解析
+    - 校验 `route.<prefix>.hooks` 每条规则的 `match` 非空、hook 的 type/when 必填；exec 需 command、ai 需 route+model+prompt、http 需 webhook（引用 `webhook` 配置）；timeout 可解析
     - 校验 route 中引用的 providers 名称在 `provider` 配置中存在
     - 校验 route 中引用的 tools 名称在 `mcp` 配置中存在
     - 校验路由前缀格式正确（以 `/` 开头）
 
 ### 2. 网关核心 (`internal/gateway/gateway.go`)
 
-职责：Gateway 结构体，路由注册、MCP 客户端管理、**Selector 集成**、通用代理。
+职责：Gateway 结构体，路由注册、MCP 客户端管理、**route-model Selector 集成**、通用代理。
 
-- `NewGateway()` 初始化时启动所有 MCP 客户端，创建 Selector，注册路由，组装中间件链
-- `selectProvider()` 委托到 `selector.Select`，支持 providers order + model match + 失败抑制
+- `NewGateway()` 初始化时启动所有 MCP 客户端，创建 Selector，注册路由，组装中间件链。显式 `route.protocol` 仅注册对应的主推理端点；空协议保留旧的 chat/responses 双端点兼容模式
+- `selectRouteTarget()` 先命中 route-model，再委托到 `selector.Select` 选定当前请求的 upstream target
 - `recordOutcome()` 辅助函数，用于调用后结果记录
 - `handleProxy()` 对非 chat/responses 请求透明转发：先 clone 请求头，再清洗 hop-by-hop/客户端认证/伪造转发头，随后重建 `X-Forwarded-*` 并覆盖 provider 认证头后转发。该路径会基于客户端 `Accept-Encoding` 协商上游压缩（推理端点优先 `zstd`，其次 `br/gzip`），并在上游返回压缩响应时跳过 body 级错误解析与 token 统计，避免把二进制压缩体当作 JSON 解析。**注意**：透明代理路径不解析请求结构，缺少 MCP 工具注入和 System Prompt 注入能力；Anthropic `/messages` 走此路径
 - `Close()` 优雅关闭所有 MCP 客户端
@@ -520,7 +523,7 @@ MCP Tool.inputSchema → tools[].parameters
 
 ### 8. 工具执行 (`internal/toolexec/tool_exec.go`)
 
-职责：接收统一的 `ToolCallInfo`，对任意 tool call 触发全局 hook；对注入 MCP 工具执行调用并返回结果。工具执行逻辑本身与 API 格式无关，上层（chat.go / responses.go）负责将各自格式的 tool call 提取为统一类型传入。
+职责：接收统一的 `ToolCallInfo`，对命中的 route hook 执行检查；对注入 MCP 工具执行调用并返回结果。工具执行逻辑本身与 API 格式无关，上层（chat.go / responses.go）负责将各自格式的 tool call 提取为统一类型传入。
 
 ```go
 // ToolCallInfo 定义在 pkg/protocol/sse.go 中，是所有协议共享的统一类型
@@ -778,27 +781,27 @@ type Step struct {
 
 **后端 API**（`internal/gateway/admin.go`）：
 
-| 方法 | 路径                                    | 说明                                                              |
-| ---- | --------------------------------------- | ----------------------------------------------------------------- |
-| GET  | `/_admin/`                              | embed 的前端 SPA                                                  |
-| GET  | `/_admin/*filepath`                     | 前端静态资源                                                      |
-| GET  | `/_admin/api/status`                    | provider 状态（含请求统计）+ route + MCP 信息                     |
-| GET  | `/_admin/api/config`                    | 当前配置（api_key 脱敏为 `"***"`）                                |
-| PUT  | `/_admin/api/config`                    | 更新配置（validate + 写入文件 + 还原 `***` 值）                   |
-| POST | `/_admin/api/restart`                   | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启）             |
-| POST | `/_admin/api/providers/health`          | Provider 探活（调用 fetchModels 测试连通性）                      |
-| GET  | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表）                           |
-| POST | `/_admin/api/providers/suppress`        | 手动抑制/解除抑制 Provider（运行时生效）                          |
-| POST | `/_admin/api/config/validate`           | 配置验证（不保存）                                                |
-| GET  | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
-| GET  | `/_admin/api/mcp/detail?name=xxx`       | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态）    |
-| POST | `/_admin/api/mcp/tool-call`             | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时）         |
-| POST | `/_admin/api/mcp/tool-toggle`           | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置）      |
-| GET  | `/_admin/api/logs/stream`               | SSE 实时日志推送                                                  |
-| GET  | `/_admin/api/metrics/stream`            | SSE 仪表盘指标推送（聚合快照 + 滚动时序点）                       |
-| GET  | `/_admin/api/apikeys`                   | 列出已配置 API Key 名称（不返回明文值）                          |
-| POST | `/_admin/api/apikeys`                   | 生成新 API Key，写入运行时配置，并仅在创建响应里返回一次明文值   |
-| DELETE | `/_admin/api/apikeys`                 | 按名称删除运行时 API Key                                         |
+| 方法   | 路径                                    | 说明                                                              |
+| ------ | --------------------------------------- | ----------------------------------------------------------------- |
+| GET    | `/_admin/`                              | embed 的前端 SPA                                                  |
+| GET    | `/_admin/*filepath`                     | 前端静态资源                                                      |
+| GET    | `/_admin/api/status`                    | provider 状态（含请求统计）+ route + MCP 信息                     |
+| GET    | `/_admin/api/config`                    | 当前配置（api_key 脱敏为 `"***"`）                                |
+| PUT    | `/_admin/api/config`                    | 更新配置（validate + 写入文件 + 还原 `***` 值）                   |
+| POST   | `/_admin/api/restart`                   | 发送 SIGTERM 触发进程优雅退出（由外部进程管理器重启）             |
+| POST   | `/_admin/api/providers/health`          | Provider 探活（调用 fetchModels 测试连通性）                      |
+| GET    | `/_admin/api/providers/detail?name=xxx` | Provider 详情（配置 + 统计 + 模型列表）                           |
+| POST   | `/_admin/api/providers/suppress`        | 手动抑制/解除抑制 Provider（运行时生效）                          |
+| POST   | `/_admin/api/config/validate`           | 配置验证（不保存）                                                |
+| GET    | `/_admin/api/routes/detail?prefix=/xxx` | Route 详情（关联 providers 统计 + MCP 工具状态 + system prompts） |
+| GET    | `/_admin/api/mcp/detail?name=xxx`       | MCP 详情（命令、工具列表含 disabled 状态、路由引用、连接状态）    |
+| POST   | `/_admin/api/mcp/tool-call`             | MCP 工具调用（指定 mcp、tool、arguments，返回结果和耗时）         |
+| POST   | `/_admin/api/mcp/tool-toggle`           | 运行时 enable/disable 单个工具（内存生效，持久化需保存配置）      |
+| GET    | `/_admin/api/logs/stream`               | SSE 实时日志推送                                                  |
+| GET    | `/_admin/api/metrics/stream`            | SSE 仪表盘指标推送（聚合快照 + 滚动时序点）                       |
+| GET    | `/_admin/api/apikeys`                   | 列出已配置 API Key 名称（不返回明文值）                           |
+| POST   | `/_admin/api/apikeys`                   | 生成新 API Key，写入运行时配置，并仅在创建响应里返回一次明文值    |
+| DELETE | `/_admin/api/apikeys`                   | 按名称删除运行时 API Key                                          |
 
 - 认证：HTTP Basic Auth，用户名 `admin`，密码 `cfg.AdminPassword`
 - 配置更新：写入前检查文件 hash 防止并发冲突
@@ -828,8 +831,8 @@ type Step struct {
 - RouteDetail：Route 基本信息、system prompts、关联 providers 统计表格、MCP 工具状态表格、请求发送面板（支持 chat/completions 和 responses 端点、stream 开关、JSON 编辑、响应展示）
 - McpDetail：MCP 基本信息（命令、SSH、连接状态）、引用此 MCP 的路由列表、工具列表（点击进入工具详情页）
 - McpToolDetail：工具详情（名称、描述、input schema）、enabled/disabled toggle 开关（运行时生效）、JSON 参数输入、调用按钮、结果展示（状态 + 耗时 + 输出）
-- ToolHooks：全局 hook 规则管理（增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply），并通过 `/_admin/api/tool-hooks/suggestions` 基于最近日志里的 OpenAI Chat / Responses / Anthropic `tool call` 聚合候选 match、route、model；建议卡片按 route 直接生成/填充 AI 规则，并支持一键补全 Exec/HTTP 规则骨架。AI/Exec/HTTP 建议按钮统一复用同一套“新增或填充已有规则”的判定逻辑；页面还提供可折叠的参数快速上手说明、可折叠的日志建议区块、MCP/工具拆分展示，以及偏向命令执行与隐私保护的默认 AI 安全提示词。AI hook 的 `route`/`model` 字段基于当前配置生成下拉项，其中 `model` 选项按 route 绑定的 providers 和 `system_prompts` 键动态收敛
-- Config：通用配置编辑器除 provider/route/mcp/webhook 外，也提供 `tool_hooks` 的可视化编辑，支持 `exec` / `ai` / `http` 三种规则字段
+- ToolHooks：按 route 维护 hook 规则（路由切换、增删规则、match 通配符、exec/ai/http hook 完整字段配置、Save & Apply），并通过 `/_admin/api/tool-hooks/suggestions` 基于最近日志里的 OpenAI Chat / Responses / Anthropic `tool call` 聚合候选 match、route、model；建议卡片会自动切到命中的 route 再生成/填充规则。AI/Exec/HTTP 建议按钮统一复用同一套“新增或填充已有规则”的判定逻辑；页面还提供可折叠的参数快速上手说明、可折叠的日志建议区块、MCP/工具拆分展示，以及偏向命令执行与隐私保护的默认 AI 安全提示词。AI hook 的 `route`/`model` 字段基于当前配置生成下拉项，其中 `model` 选项按 route 绑定的精确模型、upstream 映射和 wildcard provider 的模型列表动态收敛
+- Config：通用配置编辑器覆盖 provider/route/mcp/webhook；route 的 `hooks` 通过 route 配置本身或 ToolHooks 页面维护
 - Config：结构化分区编辑器（General / SSH / Providers / Routes / MCP），每个 map 条目可折叠，敏感字段（api_key、admin_password）使用 password input + Configured/Not set 徽章，支持 Add/Delete 条目，全局 Save + Validate + Restart Gateway
 - ApiKeys：独立 API Key 管理页，支持列出名称、创建新密钥、一次性展示新生成密钥、删除现有密钥
 - Logs：SSE 实时日志表格，最多 500 条，自动滚动，可暂停；会话分组采用“指纹优先 + 回退哈希”策略：优先按 `model + sys_hash + FSM 严格前缀` 连续性聚合，无指纹时回退到“用户消息 hash + 10 分钟时间窗”启发式；前端在 `Logs.vue` 内对 request 解析、preview、user-hash、fingerprint、timestamp 使用 per-log WeakMap 缓存，并按 `(model, sys_hash)` 与 `lastUserHash` 建立候选链索引，减少重复解析与全量回扫开销；耗时展示使用动态单位格式化，短时保留 `ms`，长时自动切换到 `s` / `m` / `h`。

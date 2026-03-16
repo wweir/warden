@@ -68,12 +68,24 @@ provider:
 
 route:
     /openai:
-        providers: ["openai"]
+        protocol: "chat"
         tools: ["web-search"]
+        models:
+            gpt-4o:
+                upstreams:
+                    - provider: "openai"
+                      model: "gpt-4o"
+            "gpt-*":
+                providers: ["openai"]
 
     /anthropic:
-        providers: ["anthropic"]
+        protocol: "anthropic"
         tools: ["web-search", "filesystem"]
+        models:
+            claude-sonnet-4:
+                upstreams:
+                    - provider: "anthropic"
+                      model: "claude-sonnet-4"
 
 mcp:
     web-search:
@@ -87,7 +99,7 @@ mcp:
         args: ["-y", "@modelcontextprotocol/server-filesystem"]
 ```
 
-支持的 Provider 协议：`openai`、`anthropic`、`ollama`、`qwen`（OAuth 自动刷新）、`copilot`（GitHub Copilot OAuth）。API Key 支持 `${ENV_VAR}` 环境变量展开。
+支持的 Provider 协议：`openai`、`anthropic`、`ollama`、`qwen`（OAuth 自动刷新）、`copilot`（GitHub Copilot OAuth）。API Key 支持 `${ENV_VAR}` 环境变量展开。路由配置以 `route.protocol + route.models` 为核心：精确模型使用 `upstreams` 做 provider/model 映射，若 `upstreams[].model` 与公开模型名不同则自动完成模型 alias；通配符模型使用 `providers` 做候选 provider 列表。
 
 ### Web 管理面板
 
@@ -97,7 +109,7 @@ mcp:
 - Providers — 详情、模型列表、探活
 - Routes — 关联 Provider 统计、MCP 工具状态、请求测试
 - MCP Tools — 工具详情、参数调试、enable/disable 开关
-- Tool Hooks — 全局 hook 规则管理
+- Tool Hooks — 按 route 维护 hook 规则
 - Logs — SSE 实时请求日志流
 - Config — 结构化在线编辑、验证、重启
 
@@ -144,6 +156,7 @@ curl http://localhost:8080/codex/responses \
 ```
 
 此功能适用于：
+
 - 调试特定 provider 行为
 - 确保请求使用支持特定功能（如 `responses_to_chat`）的 provider
 - 避免 failover 导致的意外 provider 切换

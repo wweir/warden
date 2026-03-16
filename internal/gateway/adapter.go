@@ -3,7 +3,7 @@ package gateway
 import (
 	"encoding/json"
 
-	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -44,11 +44,9 @@ func marshalProtocolRequest(protocol string, req openai.ChatCompletionRequest) (
 	}
 }
 
-// resolveModelRaw replaces the "model" field in raw JSON request bytes
-// with the resolved real model name if the requested model is an alias.
-func resolveModelRaw(rawBody []byte, provCfg *config.ProviderConfig, model string) []byte {
-	resolved := provCfg.ResolveModel(model)
-	if resolved == model {
+// rewriteModelRaw replaces the "model" field in raw JSON request bytes when needed.
+func rewriteModelRaw(rawBody []byte, model string) []byte {
+	if model == "" {
 		return rawBody
 	}
 
@@ -57,7 +55,7 @@ func resolveModelRaw(rawBody []byte, provCfg *config.ProviderConfig, model strin
 		return rawBody
 	}
 
-	body["model"], _ = json.Marshal(resolved)
+	body["model"], _ = json.Marshal(model)
 	result, err := json.Marshal(body)
 	if err != nil {
 		return rawBody
@@ -65,10 +63,12 @@ func resolveModelRaw(rawBody []byte, provCfg *config.ProviderConfig, model strin
 	return result
 }
 
-// prepareRawBody resolves the model alias and applies request patches for the provider.
-func prepareRawBody(rawBody []byte, provCfg *config.ProviderConfig, model string) []byte {
-	rawBody = resolveModelRaw(rawBody, provCfg, model)
-	return provCfg.ApplyRequestPatch(rawBody)
+// prepareRawBody rewrites the public route model to the selected upstream model.
+func prepareRawBody(rawBody []byte, target *sel.RouteTarget) []byte {
+	if target != nil {
+		rawBody = rewriteModelRaw(rawBody, target.UpstreamModel)
+	}
+	return rawBody
 }
 
 // marshalProtocolRaw converts raw OpenAI-format request bytes to the target protocol.

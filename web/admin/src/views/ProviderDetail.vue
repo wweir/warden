@@ -103,31 +103,6 @@
 				</table>
 			</section>
 
-			<section
-				v-if="detail.model_aliases && Object.keys(detail.model_aliases).length > 0"
-				class="info-section"
-			>
-				<h3>{{ $t("providerDetail.modelAliases") }}</h3>
-				<table class="data-table">
-					<thead>
-						<tr>
-							<th>{{ $t("providerDetail.alias") }}</th>
-							<th>{{ $t("providerDetail.realModel") }}</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="(real, alias) in detail.model_aliases" :key="alias">
-							<td>
-								<code>{{ alias }}</code>
-							</td>
-							<td>
-								<code>{{ real }}</code>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</section>
-
 			<section class="info-section">
 				<h3>{{ $t("providerDetail.availableModels", { n: detail.models.length }) }}</h3>
 				<div v-if="detail.models.length === 0" class="empty">

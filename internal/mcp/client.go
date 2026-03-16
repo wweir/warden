@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,20 +28,6 @@ type Tool struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-// Validate checks required fields of Tool.
-func (t *Tool) Validate() error {
-	if t.Name == "" {
-		return fmt.Errorf("tool name is required")
-	}
-	if t.Description == "" {
-		return fmt.Errorf("tool description is required")
-	}
-	if t.InputSchema == nil {
-		return fmt.Errorf("tool input schema is required")
-	}
-	return nil
-}
-
 // Client manages MCP server connections and tool invocations.
 type Client struct {
 	name   string
@@ -52,19 +40,11 @@ type Client struct {
 	reqID atomic.Int64
 }
 
-// Validate checks required fields of Client.
-func (c *Client) Validate() error {
-	if c.name == "" {
-		return fmt.Errorf("client name is required")
-	}
-	return nil
-}
-
 // NewClient creates a new MCP client.
-func NewClient(cfg *config.MCPConfig) (*Client, error) {
+func NewClient(cfg *config.MCPConfig) *Client {
 	return &Client{
 		name: cfg.Name,
-	}, nil
+	}
 }
 
 // Start launches the MCP server subprocess and completes the initialize handshake.
@@ -113,14 +93,14 @@ func (c *Client) Start(ctx context.Context, cfg *config.MCPConfig) error {
 
 	// complete MCP handshake
 	if err = c.initialize(ctx); err != nil {
-		cmd.Process.Kill()
+		_ = c.stopProcess()
 		return fmt.Errorf("initialize: %w", err)
 	}
 
 	// fetch tool list
 	c.tools, err = c.ListTools(ctx)
 	if err != nil {
-		cmd.Process.Kill()
+		_ = c.stopProcess()
 		return fmt.Errorf("list tools: %w", err)
 	}
 
@@ -169,7 +149,7 @@ func (c *Client) initialize(ctx context.Context) error {
 
 // CachedTools returns the cached tool list from the initial ListTools call during Start.
 func (c *Client) CachedTools() []Tool {
-	return c.tools
+	return slices.Clone(c.tools)
 }
 
 // ListTools fetches the available tool list from the MCP server.
@@ -303,24 +283,9 @@ func (c *Client) nextID() int64 {
 
 // Close terminates the MCP server subprocess.
 func (c *Client) Close() error {
-	if c.cmd == nil {
-		return nil
+	if err := c.stopProcess(); err != nil {
+		return err
 	}
-
-	// close stdin to signal EOF to the child process
-	if c.stdin != nil {
-		c.stdin.Close()
-	}
-
-	if err := c.cmd.Process.Kill(); err != nil {
-		return fmt.Errorf("kill process: %w", err)
-	}
-
-	if err := c.cmd.Wait(); err != nil {
-		slog.Warn("MCP server failed to stop cleanly", "name", c.name, "error", err)
-	}
-
-	c.cmd = nil
 	return nil
 }
 
@@ -332,4 +297,31 @@ func (c *Client) IsRunning() bool {
 
 	err := c.cmd.Process.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+func (c *Client) stopProcess() error {
+	if c.cmd == nil {
+		return nil
+	}
+
+	if c.stdin != nil {
+		_ = c.stdin.Close()
+		c.stdin = nil
+	}
+
+	if c.cmd.Process != nil {
+		if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("kill process: %w", err)
+		}
+	}
+
+	if err := c.cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("wait process: %w", err)
+		}
+	}
+
+	c.cmd = nil
+	return nil
 }

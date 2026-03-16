@@ -124,12 +124,36 @@
 
     <section class="info-section">
       <div class="section-header">
-        <h3>{{ $t('hooks.hookRules', { n: rules.length }) }}</h3>
-        <button class="btn btn-primary btn-sm" @click="addRule">{{ $t('hooks.addRule') }}</button>
+        <div>
+          <h3>{{ $t('hooks.hookRules', { n: rules.length }) }}</h3>
+          <p class="section-subtitle">
+            {{ selectedRoute ? $t('hooks.routeScopeDesc', { route: selectedRoute }) : $t('hooks.noRoutesConfigured') }}
+          </p>
+        </div>
+        <div class="rules-toolbar">
+          <div class="field-row route-selector">
+            <label class="field-label">{{ $t('hooks.editRouteLabel') }}</label>
+            <select
+              :value="selectedRoute"
+              class="form-input"
+              :disabled="routeOptions.length === 0"
+              @change="selectEditingRoute($event.target.value)"
+            >
+              <option value="">
+                {{ routeOptions.length === 0 ? $t('hooks.noRoutesOption') : $t('hooks.selectEditRoute') }}
+              </option>
+              <option v-for="route in routeOptions" :key="route" :value="route">{{ route }}</option>
+            </select>
+          </div>
+          <button class="btn btn-primary btn-sm" @click="addRule" :disabled="!selectedRoute">{{ $t('hooks.addRule') }}</button>
+        </div>
       </div>
 
-      <div v-if="rules.length === 0" class="empty" style="margin-top:12px">
-        {{ $t('hooks.noRules') }}
+      <div v-if="!selectedRoute" class="empty" style="margin-top:12px">
+        {{ $t('hooks.noRoutesConfigured') }}
+      </div>
+      <div v-else-if="rules.length === 0" class="empty" style="margin-top:12px">
+        {{ $t('hooks.noRulesForRoute', { route: selectedRoute }) }}
       </div>
 
       <div v-for="(rule, idx) in rules" :key="idx" class="rule-card">
@@ -299,10 +323,13 @@ const saveMsg = ref(null)
 const webhookOptions = ref([])
 const routeConfigMap = ref({})
 const providerConfigMap = ref({})
+const routeHookRulesMap = ref({})
+const selectedRoute = ref('')
 const quickStartOpen = ref(true)
 const suggestionsOpen = ref(true)
 
 const routeModelMap = computed(() => buildRouteModelMap(routeConfigMap.value, providerConfigMap.value))
+const routeOptions = computed(() => sortTextValues(Object.keys(routeConfigMap.value || {})))
 
 const quickStartOverview = computed(() => ({
   title: t('hooks.about'),
@@ -376,7 +403,65 @@ function normalizeRule(rule) {
   }
 }
 
+function cloneRules(list) {
+  return (list || []).map(normalizeRule)
+}
+
+function serializeRules(list) {
+  return (list || []).map(rule => {
+    const hook = {
+      type: rule.hook.type,
+      when: rule.hook.when,
+    }
+    if (rule.hook.timeout && rule.hook.timeout !== '5s') hook.timeout = rule.hook.timeout
+    if (rule.hook.type === 'exec') {
+      hook.command = rule.hook.command
+      if (rule.hook.args && rule.hook.args.length > 0) hook.args = rule.hook.args
+    } else if (rule.hook.type === 'ai') {
+      hook.route = rule.hook.route
+      hook.model = rule.hook.model
+      hook.prompt = rule.hook.prompt
+    } else if (rule.hook.type === 'http') {
+      hook.webhook = rule.hook.webhook
+    }
+    return { match: rule.match, hook }
+  })
+}
+
+function persistSelectedRouteRules(route = selectedRoute.value) {
+  const normalizedRoute = normalizeText(route)
+  if (!normalizedRoute) return
+  routeHookRulesMap.value = {
+    ...routeHookRulesMap.value,
+    [normalizedRoute]: cloneRules(rules.value),
+  }
+}
+
+function syncRulesFromSelectedRoute(route = selectedRoute.value) {
+  const normalizedRoute = normalizeText(route)
+  rules.value = cloneRules(routeHookRulesMap.value[normalizedRoute] || [])
+}
+
+function selectEditingRoute(route) {
+  const normalizedRoute = normalizeText(route)
+  if (normalizedRoute === normalizeText(selectedRoute.value)) {
+    syncRulesFromSelectedRoute(normalizedRoute)
+    return
+  }
+  persistSelectedRouteRules()
+  selectedRoute.value = normalizedRoute
+  syncRulesFromSelectedRoute(normalizedRoute)
+  saveMsg.value = null
+}
+
+function ensureSelectedRoute(messageKey = 'hooks.selectRouteToEdit') {
+  if (normalizeText(selectedRoute.value)) return true
+  saveMsg.value = { type: 'msg-error', text: t(messageKey) }
+  return false
+}
+
 function addRule() {
+  if (!ensureSelectedRoute()) return
   rules.value.push(emptyRule())
 }
 
@@ -396,20 +481,23 @@ function buildRouteModelMap(routes, providers) {
   const result = {}
   for (const [route, cfg] of Object.entries(routes || {})) {
     const models = new Set()
-    for (const model of Object.keys(cfg?.system_prompts || {})) {
-      if (model) models.add(model)
+    for (const model of Object.keys(cfg?.models || {})) {
+      if (model && !model.includes('*')) models.add(model)
     }
-    for (const providerName of cfg?.providers || []) {
+    const wildcardProviders = new Set()
+    for (const modelCfg of Object.values(cfg?.models || {})) {
+      for (const upstream of modelCfg?.upstreams || []) {
+        if (upstream?.model) models.add(upstream.model)
+      }
+      for (const providerName of modelCfg?.providers || []) {
+        wildcardProviders.add(providerName)
+      }
+    }
+    for (const providerName of wildcardProviders) {
       const provider = providers?.[providerName]
       if (!provider) continue
       for (const model of provider.models || []) {
         if (model) models.add(model)
-      }
-      for (const alias of Object.keys(provider.model_aliases || {})) {
-        if (alias) models.add(alias)
-      }
-      for (const realModel of Object.values(provider.model_aliases || {})) {
-        if (realModel) models.add(realModel)
       }
     }
     result[route] = sortTextValues(models)
@@ -506,6 +594,7 @@ function buildSuggestedRule(suggestion, type, routeHint = null) {
         route: hint?.route || '',
         model: hint?.primary_model || '',
         prompt: defaultAiPrompt(),
+        webhook: '',
       },
     }
   }
@@ -541,8 +630,25 @@ function buildSuggestedRule(suggestion, type, routeHint = null) {
   }
 }
 
+function resolveSuggestionRoute(type, suggestion, routeHint = null) {
+  if (type === 'ai') {
+    return normalizeText((routeHint || findRouteHint(suggestion, suggestion.primary_route, suggestion.primary_model))?.route)
+  }
+  if (normalizeText(selectedRoute.value)) return normalizeText(selectedRoute.value)
+  return normalizeText(findRouteHint(suggestion, suggestion.primary_route, suggestion.primary_model)?.route)
+}
+
+function rulesForRoute(route) {
+  const normalizedRoute = normalizeText(route)
+  if (!normalizedRoute) return []
+  if (normalizedRoute === normalizeText(selectedRoute.value)) return rules.value
+  return cloneRules(routeHookRulesMap.value[normalizedRoute] || [])
+}
+
 function hasSuggestedRule(type, suggestion, routeHint = null) {
-  return findSuggestedRuleIndex(buildSuggestedRule(suggestion, type, routeHint)) >= 0
+  const targetRoute = resolveSuggestionRoute(type, suggestion, routeHint)
+  const nextRule = buildSuggestedRule(suggestion, type, routeHint)
+  return findSuggestedRuleIndex(nextRule, rulesForRoute(targetRoute)) >= 0
 }
 
 function suggestionActionLabel(type, suggestion, routeHint = null) {
@@ -552,12 +658,12 @@ function suggestionActionLabel(type, suggestion, routeHint = null) {
   return fill ? t('hooks.fillExecRule') : t('hooks.addExecRule')
 }
 
-function findSuggestedRuleIndex(nextRule) {
+function findSuggestedRuleIndex(nextRule, ruleList = rules.value) {
   const normalizedMatch = normalizeText(nextRule.match)
   const normalizedRoute = normalizeText(nextRule.hook.route)
   const normalizedModel = normalizeText(nextRule.hook.model)
 
-  const exactIdx = rules.value.findIndex(rule => {
+  const exactIdx = ruleList.findIndex(rule => {
     if (normalizeText(rule.match) !== normalizedMatch) return false
     if (rule.hook.type !== nextRule.hook.type || rule.hook.when !== nextRule.hook.when) return false
     if (nextRule.hook.type !== 'ai') return true
@@ -568,7 +674,7 @@ function findSuggestedRuleIndex(nextRule) {
 
   if (nextRule.hook.type !== 'ai') return -1
 
-  return rules.value.findIndex(rule => {
+  return ruleList.findIndex(rule => {
     if (normalizeText(rule.match) !== normalizedMatch) return false
     if (rule.hook.type !== nextRule.hook.type || rule.hook.when !== nextRule.hook.when) return false
     const route = normalizeText(rule.hook.route)
@@ -598,8 +704,8 @@ function mergeSuggestedRule(target, nextRule) {
     return
   }
 
-  if (target.hook.type === 'http') {
-    if (!target.hook.webhook) target.hook.webhook = nextRule.hook.webhook
+  if (target.hook.type === 'http' && !target.hook.webhook) {
+    target.hook.webhook = nextRule.hook.webhook
   }
 }
 
@@ -616,29 +722,55 @@ function upsertSuggestedRule(nextRule) {
   saveMsg.value = { type: 'msg-success', text: t('hooks.addedSuggestedRule') }
 }
 
+function ensureSuggestionRoute(route = '') {
+  const normalizedRoute = normalizeText(route)
+  if (normalizedRoute) {
+    if (!routeConfigMap.value[normalizedRoute]) {
+      saveMsg.value = { type: 'msg-error', text: t('hooks.routeNotFound', { route: normalizedRoute }) }
+      return false
+    }
+    selectEditingRoute(normalizedRoute)
+    return true
+  }
+  return ensureSelectedRoute('hooks.selectRouteForSuggestion')
+}
+
 function addSuggestedAIRule(suggestion, routeHint = null) {
   const hint = routeHint || findRouteHint(suggestion, suggestion.primary_route, suggestion.primary_model)
   if (!hint?.route) {
     saveMsg.value = { type: 'msg-error', text: t('hooks.noRouteHint') }
     return
   }
+  if (!ensureSuggestionRoute(hint.route)) return
   upsertSuggestedRule(buildSuggestedRule(suggestion, 'ai', hint))
 }
 
 function addSuggestedExecRule(suggestion) {
+  const hintedRoute = findRouteHint(suggestion, suggestion.primary_route, suggestion.primary_model)?.route || selectedRoute.value
+  if (!ensureSuggestionRoute(hintedRoute)) return
   upsertSuggestedRule(buildSuggestedRule(suggestion, 'exec'))
 }
 
 function addSuggestedHTTPRule(suggestion) {
+  const hintedRoute = findRouteHint(suggestion, suggestion.primary_route, suggestion.primary_model)?.route || selectedRoute.value
+  if (!ensureSuggestionRoute(hintedRoute)) return
   upsertSuggestedRule(buildSuggestedRule(suggestion, 'http'))
 }
 
 async function loadConfig() {
   const cfg = await fetchConfig()
-  rules.value = (cfg.tool_hooks || []).map(normalizeRule)
   webhookOptions.value = Object.keys(cfg.webhook || {}).sort()
   routeConfigMap.value = cfg.route || {}
   providerConfigMap.value = cfg.provider || {}
+  routeHookRulesMap.value = Object.fromEntries(
+    Object.entries(cfg.route || {}).map(([route, routeCfg]) => [route, cloneRules(routeCfg?.hooks || [])]),
+  )
+
+  const nextRoute = routeConfigMap.value[selectedRoute.value]
+    ? selectedRoute.value
+    : routeOptions.value[0] || ''
+  selectedRoute.value = nextRoute
+  syncRulesFromSelectedRoute(nextRoute)
 }
 
 async function loadSuggestions() {
@@ -665,30 +797,23 @@ async function load() {
 }
 
 async function save() {
+  if (!ensureSelectedRoute()) return
+
   saving.value = true
   saveMsg.value = null
   try {
+    persistSelectedRouteRules()
     const cfg = await fetchConfig()
-    cfg.tool_hooks = rules.value.map(rule => {
-      const hook = {
-        type: rule.hook.type,
-        when: rule.hook.when,
-      }
-      if (rule.hook.timeout && rule.hook.timeout !== '5s') hook.timeout = rule.hook.timeout
-      if (rule.hook.type === 'exec') {
-        hook.command = rule.hook.command
-        if (rule.hook.args && rule.hook.args.length > 0) hook.args = rule.hook.args
-      } else if (rule.hook.type === 'ai') {
-        hook.route = rule.hook.route
-        hook.model = rule.hook.model
-        hook.prompt = rule.hook.prompt
-      } else if (rule.hook.type === 'http') {
-        hook.webhook = rule.hook.webhook
-      }
-      return { match: rule.match, hook }
-    })
+    cfg.route = cfg.route || {}
+    delete cfg.tool_hooks
+
+    for (const [route, routeCfg] of Object.entries(cfg.route)) {
+      routeCfg.hooks = serializeRules(routeHookRulesMap.value[route] || [])
+    }
+
     await saveConfig(cfg)
-    saveMsg.value = { type: 'msg-success', text: t('hooks.savedMsg') }
+    routeConfigMap.value = cfg.route || {}
+    saveMsg.value = { type: 'msg-success', text: t('hooks.savedMsg', { route: selectedRoute.value }) }
   } catch (e) {
     saveMsg.value = { type: 'msg-error', text: t('hooks.saveFailed', { error: e.message }) }
   } finally {
@@ -714,6 +839,20 @@ onMounted(load)
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.rules-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.route-selector {
+  min-width: 240px;
+}
+
+.route-selector .form-input {
+  min-width: 240px;
 }
 
 .section-header h3 {
@@ -985,6 +1124,7 @@ onMounted(load)
 
 @media (max-width: 768px) {
   .section-header,
+  .rules-toolbar,
   .field-headline,
   .guide-overview-head,
   .route-hint,

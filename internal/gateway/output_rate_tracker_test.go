@@ -3,13 +3,16 @@ package gateway
 import (
 	"testing"
 	"time"
+
+	"github.com/wweir/warden/config"
 )
 
 func TestOutputRateTrackerSnapshotDropsStaleEntries(t *testing.T) {
 	tracker := newOutputRateTracker(2 * time.Second)
 	base := time.Unix(1700000000, 0)
+	labels := requestMetricLabels{Route: "/openai", Protocol: config.RouteProtocolChat, Provider: "p1", RouteModel: "gpt", ProviderModel: "gpt", Endpoint: "chat/completions"}
 
-	tracker.Record("/openai", "p1", "gpt", "chat/completions", "completion", 12, base)
+	tracker.Record(labels, "completion", 12, base)
 
 	entries := tracker.Snapshot(base.Add(2 * time.Second))
 	if len(entries) != 1 {
@@ -25,17 +28,18 @@ func TestOutputRateTrackerSnapshotDropsStaleEntries(t *testing.T) {
 func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
 	g := &Gateway{outputRates: newOutputRateTracker(2 * time.Second)}
 	now := time.Now()
+	labels := requestMetricLabels{Route: "/openai", Protocol: config.RouteProtocolChat, Provider: "p1", RouteModel: "gpt", ProviderModel: "gpt", Endpoint: "chat/completions"}
 
-	g.outputRates.Record("/openai", "p1", "gpt", "chat/completions", "completion", 18, now)
-	g.outputRates.Record("/openai", "p1", "gpt", "chat/completions", "prompt", 9, now)
+	g.outputRates.Record(labels, "completion", 18, now)
+	g.outputRates.Record(labels, "prompt", 9, now)
 
 	sample := g.collectDashboardCounters()
 	assertApprox(t, sample.OutputRate, 18)
 	assertApprox(t, sample.OutputByProv["p1"], 18)
 	assertApprox(t, sample.RouteOutput["/openai"], 18)
 
-	g.outputRates.Record("/openai", "p1", "gpt", "chat/completions", "completion", 18, now.Add(-3*time.Second))
-	g.outputRates.Record("/openai", "p1", "gpt", "chat/completions", "prompt", 9, now.Add(-3*time.Second))
+	g.outputRates.Record(labels, "completion", 18, now.Add(-3*time.Second))
+	g.outputRates.Record(labels, "prompt", 9, now.Add(-3*time.Second))
 
 	sample = g.collectDashboardCounters()
 	assertApprox(t, sample.OutputRate, 0)

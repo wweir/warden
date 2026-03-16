@@ -4,7 +4,7 @@
 
 ## 职责
 
-- 根据 `tool_hooks` 规则匹配 tool 名称（`MatchHooks`）
+- 根据命中的 `route.<prefix>.hooks` 规则匹配 tool 名称（`MatchHooks`）
 - 并发执行 `pre`/`post` hook（`RunPre` / `RunPost`）
 - 支持三种 hook 类型：
     - `exec`: 子进程执行，`stdin` 传入 JSON 上下文
@@ -28,6 +28,7 @@ Hook 收到的 JSON 为 `CallContext`：
 - Hook 运行错误（超时/崩溃/网络）采用 fail-open（放行）
 - 仅当 hook 明确返回 `{"allow": false, "reason": "..."}` 时才视为拒绝
 - `pre` 拒绝会返回错误；`post` 拒绝仅记录日志（审计语义）
+- `ai` hook 使用 `hook.timeout` 作为请求超时；`http` hook 使用 `webhook.timeout`，未配置时默认 `5s`
 
 ## 返回格式
 

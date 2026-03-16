@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/base64"
-	"strings"
 )
 
 // SecretString is a string that may be stored as base64 in config files.
@@ -54,13 +53,6 @@ func (s SecretString) String() string {
 		return ""
 	}
 	return "***"
-}
-
-// IsBase64 checks if a string is valid base64 encoding.
-// Used to determine if a value needs decoding.
-func IsBase64(s string) bool {
-	_, err := base64.StdEncoding.DecodeString(s)
-	return err == nil && strings.HasSuffix(s, "==") || strings.Contains(s, "+") || strings.Contains(s, "/")
 }
 
 // EncodeSecret encodes a plaintext secret to base64.

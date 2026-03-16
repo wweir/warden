@@ -13,17 +13,34 @@
         <h3>{{ $t('routeDetail.basicInfo') }}</h3>
         <table class="info-table">
           <tr><td>{{ $t('routeDetail.prefix') }}</td><td><code>{{ detail.prefix }}</code></td></tr>
+          <tr><td>{{ $t('routeDetail.protocol') }}</td><td><code>{{ detail.protocol || 'legacy' }}</code></td></tr>
+          <tr><td>{{ $t('routeDetail.hookCount') }}</td><td>{{ detail.hook_count || 0 }}</td></tr>
         </table>
       </section>
 
-      <section v-if="detail.system_prompts && Object.keys(detail.system_prompts).length > 0" class="info-section">
-        <h3>{{ $t('routeDetail.systemPrompts') }}</h3>
+      <section v-if="(detail.exact_models || []).length > 0" class="info-section">
+        <h3>{{ $t('routeDetail.exactModels') }}</h3>
         <table class="data-table">
-          <thead><tr><th>{{ $t('routeDetail.modelCol') }}</th><th>{{ $t('routeDetail.promptCol') }}</th></tr></thead>
+          <thead><tr><th>{{ $t('routeDetail.modelCol') }}</th><th>{{ $t('routeDetail.upstreamsCol') }}</th><th>{{ $t('routeDetail.promptCol') }}</th></tr></thead>
           <tbody>
-            <tr v-for="(prompt, model) in detail.system_prompts" :key="model">
-              <td><code>{{ model }}</code></td>
-              <td><pre class="prompt-text">{{ prompt }}</pre></td>
+            <tr v-for="model in detail.exact_models" :key="model.name">
+              <td><code>{{ model.name }}</code></td>
+              <td>{{ (model.upstreams || []).join(', ') || '-' }}</td>
+              <td><pre class="prompt-text">{{ model.system_prompt || '-' }}</pre></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section v-if="(detail.wildcard_models || []).length > 0" class="info-section">
+        <h3>{{ $t('routeDetail.wildcardModels') }}</h3>
+        <table class="data-table">
+          <thead><tr><th>{{ $t('routeDetail.patternCol') }}</th><th>{{ $t('routeDetail.providersCol') }}</th><th>{{ $t('routeDetail.promptCol') }}</th></tr></thead>
+          <tbody>
+            <tr v-for="model in detail.wildcard_models" :key="model.pattern || model.name">
+              <td><code>{{ model.pattern || model.name }}</code></td>
+              <td>{{ (model.upstreams || []).join(', ') || '-' }}</td>
+              <td><pre class="prompt-text">{{ model.system_prompt || '-' }}</pre></td>
             </tr>
           </tbody>
         </table>
@@ -91,8 +108,7 @@
           <div class="form-row">
             <label>{{ $t('routeDetail.endpoint') }}</label>
             <select v-model="endpoint">
-              <option value="chat/completions">chat/completions</option>
-              <option value="responses">responses</option>
+              <option v-for="ep in endpointOptions" :key="ep" :value="ep">{{ ep }}</option>
             </select>
           </div>
           <div class="form-row">
@@ -172,10 +188,24 @@ const contentRef = ref(null)
 const eventsRef = ref(null)
 
 const routePrefix = computed(() => '/' + props.prefix)
+const endpointOptions = computed(() => {
+  if (detail.value?.protocol === 'anthropic') return ['messages']
+  if (detail.value?.protocol === 'responses') return ['responses']
+  if (detail.value?.protocol === 'chat') return ['chat/completions']
+  return ['chat/completions', 'responses']
+})
 
 function buildTemplate() {
   const m = modelQuery.value
   const s = stream.value
+  if (endpoint.value === 'messages') {
+    return JSON.stringify({
+      model: m,
+      messages: [{ role: 'user', content: 'Hello' }],
+      stream: s,
+      max_tokens: 1024,
+    }, null, 2)
+  }
   if (endpoint.value === 'responses') {
     return JSON.stringify({ model: m, input: 'Hello', stream: s }, null, 2)
   }
@@ -192,6 +222,11 @@ function updateTemplate() {
 
 watch(endpoint, updateTemplate)
 watch(modelQuery, updateTemplate)
+watch(endpointOptions, (options) => {
+  if (!options.includes(endpoint.value)) {
+    endpoint.value = options[0] || 'chat/completions'
+  }
+})
 
 async function loadDetail() {
   try {

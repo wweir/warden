@@ -7,21 +7,27 @@ import (
 )
 
 type outputRateKey struct {
-	route    string
-	provider string
-	model    string
-	endpoint string
-	typ      string
+	route          string
+	protocol       string
+	provider       string
+	routeModel     string
+	providerModel  string
+	matchedPattern string
+	endpoint       string
+	typ            string
 }
 
 type outputRateEntry struct {
-	Route     string
-	Provider  string
-	Model     string
-	Endpoint  string
-	Type      string
-	Value     float64
-	UpdatedAt time.Time
+	Route          string
+	Protocol       string
+	Provider       string
+	RouteModel     string
+	ProviderModel  string
+	MatchedPattern string
+	Endpoint       string
+	Type           string
+	Value          float64
+	UpdatedAt      time.Time
 }
 
 type outputRateTracker struct {
@@ -37,7 +43,7 @@ func newOutputRateTracker(staleAfter time.Duration) *outputRateTracker {
 	}
 }
 
-func (t *outputRateTracker) Record(route, provider, model, endpoint, typ string, value float64, updatedAt time.Time) {
+func (t *outputRateTracker) Record(labels requestMetricLabels, typ string, value float64, updatedAt time.Time) {
 	if t == nil {
 		return
 	}
@@ -46,24 +52,30 @@ func (t *outputRateTracker) Record(route, provider, model, endpoint, typ string,
 	}
 
 	key := outputRateKey{
-		route:    route,
-		provider: provider,
-		model:    model,
-		endpoint: endpoint,
-		typ:      typ,
+		route:          labels.Route,
+		protocol:       labels.Protocol,
+		provider:       labels.Provider,
+		routeModel:     labels.RouteModel,
+		providerModel:  labels.ProviderModel,
+		matchedPattern: labels.MatchedPattern,
+		endpoint:       labels.Endpoint,
+		typ:            typ,
 	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	t.entries[key] = outputRateEntry{
-		Route:     route,
-		Provider:  provider,
-		Model:     model,
-		Endpoint:  endpoint,
-		Type:      typ,
-		Value:     value,
-		UpdatedAt: updatedAt,
+		Route:          labels.Route,
+		Protocol:       labels.Protocol,
+		Provider:       labels.Provider,
+		RouteModel:     labels.RouteModel,
+		ProviderModel:  labels.ProviderModel,
+		MatchedPattern: labels.MatchedPattern,
+		Endpoint:       labels.Endpoint,
+		Type:           typ,
+		Value:          value,
+		UpdatedAt:      updatedAt,
 	}
 }
 
@@ -99,8 +111,11 @@ func (t *outputRateTracker) Snapshot(now time.Time) []outputRateEntry {
 		if entries[i].Provider != entries[j].Provider {
 			return entries[i].Provider < entries[j].Provider
 		}
-		if entries[i].Model != entries[j].Model {
-			return entries[i].Model < entries[j].Model
+		if entries[i].RouteModel != entries[j].RouteModel {
+			return entries[i].RouteModel < entries[j].RouteModel
+		}
+		if entries[i].ProviderModel != entries[j].ProviderModel {
+			return entries[i].ProviderModel < entries[j].ProviderModel
 		}
 		return entries[i].Endpoint < entries[j].Endpoint
 	})
