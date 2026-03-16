@@ -15,7 +15,6 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
-	"github.com/wweir/warden/internal/mcp"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
@@ -29,7 +28,6 @@ type Gateway struct {
 	configHash string
 	selector   *sel.Selector
 
-	mcpClients     map[string]*mcp.Client
 	logger         reqlog.Logger
 	broadcaster    *reqlog.Broadcaster
 	dashboardStore *dashboardMetricsStore
@@ -57,22 +55,11 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	mcpClients := make(map[string]*mcp.Client)
-	for name, mcpCfg := range cfg.MCP {
-		client := mcp.NewClient(mcpCfg)
-		if err := client.Start(ctx, mcpCfg); err != nil {
-			slog.Warn("Failed to start MCP client", "name", name, "error", err)
-			continue
-		}
-		mcpClients[name] = client
-	}
-
 	g := &Gateway{
 		cfg:            cfg,
 		configPath:     configPath,
 		configHash:     configHash,
 		selector:       sel.NewSelector(cfg),
-		mcpClients:     mcpClients,
 		broadcaster:    reqlog.NewBroadcaster(),
 		dashboardStore: newDashboardMetricsStore(dashboardMetricsSampleInterval, dashboardMetricsHistoryLimit),
 		outputRates:    newOutputRateTracker(dashboardMetricsSampleInterval),
@@ -140,6 +127,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	g.handler = Chain(
 		&RecoveryMiddleware{},
 		&CORS{},
+		&APIKeyAuthMiddleware{cfg: g.cfg},
 		&PromMiddleware{gateway: g},
 	).Process(router)
 
@@ -151,15 +139,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.handler.ServeHTTP(w, r)
 }
 
-// Close shuts down all MCP clients and the request logger.
+// Close shuts down the gateway runtime and the request logger.
 func (g *Gateway) Close() {
 	g.cancel()
-	for name, c := range g.mcpClients {
-		slog.Info("Stopping MCP client", "name", name)
-		if err := c.Close(); err != nil {
-			slog.Warn("Failed to stop MCP client", "name", name, "error", err)
-		}
-	}
 	if g.logger != nil {
 		g.logger.Close()
 	}
@@ -253,6 +235,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 	}
 
 	metricLabels := buildMetricLabels(route, serviceProtocol, endpoint, target)
+	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	if target == nil {
 		metricLabels.Provider = provCfg.Name
 	}
@@ -405,39 +388,6 @@ func assembleProxyResponse(protocol string, body []byte) []byte {
 		return assembled
 	}
 	return body
-}
-
-// --- tool collection ---
-
-// collectTools gathers all enabled MCP tools for a route using cached tool list.
-func (g *Gateway) collectTools(_ context.Context, route *config.RouteConfig) ([]mcp.Tool, []string) {
-	var available []mcp.Tool
-	for _, toolName := range route.Tools {
-		if !route.IsToolEnabled(toolName) {
-			continue
-		}
-		client, exists := g.mcpClients[toolName]
-		if !exists {
-			continue
-		}
-		mcpCfg := g.cfg.MCP[toolName]
-		for _, t := range client.CachedTools() {
-			// skip tools explicitly disabled in per-tool config
-			if mcpCfg != nil {
-				if tc, ok := mcpCfg.Tools[t.Name]; ok && tc.Disabled {
-					continue
-				}
-			}
-			t.Name = toolName + "__" + t.Name
-			available = append(available, t)
-		}
-	}
-
-	names := make([]string, len(available))
-	for i, t := range available {
-		names[i] = t.Name
-	}
-	return available, names
 }
 
 // --- models ---

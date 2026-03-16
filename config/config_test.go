@@ -225,3 +225,64 @@ func TestValidateProviderRejectsUnsupportedProxyScheme(t *testing.T) {
 		t.Fatalf("expected proxy scheme error, got %v", err)
 	}
 }
+
+func TestValidateRouteConfigExplicitModelSections(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: "chat",
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4.1"}},
+					},
+				},
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"gpt-*": {
+						Providers: []string{"openai"},
+					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.Route["/test"].MatchModel("gpt-4.2") == nil {
+		t.Fatal("expected wildcard model to be compiled")
+	}
+}
+
+func TestValidateRouteConfigRejectsMixedLegacyAndExplicitModelFields(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: "chat",
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
+					},
+				},
+				Models: map[string]*RouteModelConfig{
+					"gpt-*": {
+						Providers: []string{"openai"},
+					},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "cannot mix exact_models/wildcard_models") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

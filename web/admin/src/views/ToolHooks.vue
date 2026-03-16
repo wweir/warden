@@ -308,10 +308,13 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { fetchConfig, fetchToolHookSuggestions, saveConfig } from '../api.js'
 import { DEFAULT_AI_HOOK_PROMPT } from '../utils.js'
 
 const { t } = useI18n()
+const router = useRouter()
+const route = useRoute()
 
 const rules = ref([])
 const suggestions = ref([])
@@ -451,6 +454,10 @@ function selectEditingRoute(route) {
   persistSelectedRouteRules()
   selectedRoute.value = normalizedRoute
   syncRulesFromSelectedRoute(normalizedRoute)
+  router.replace({
+    path: '/tool-hooks',
+    query: normalizedRoute ? { route: normalizedRoute } : {},
+  })
   saveMsg.value = null
 }
 
@@ -481,14 +488,16 @@ function buildRouteModelMap(routes, providers) {
   const result = {}
   for (const [route, cfg] of Object.entries(routes || {})) {
     const models = new Set()
-    for (const model of Object.keys(cfg?.models || {})) {
-      if (model && !model.includes('*')) models.add(model)
+    for (const model of Object.keys(cfg?.exact_models || {})) {
+      if (model) models.add(model)
     }
     const wildcardProviders = new Set()
-    for (const modelCfg of Object.values(cfg?.models || {})) {
+    for (const modelCfg of Object.values(cfg?.exact_models || {})) {
       for (const upstream of modelCfg?.upstreams || []) {
         if (upstream?.model) models.add(upstream.model)
       }
+    }
+    for (const modelCfg of Object.values(cfg?.wildcard_models || {})) {
       for (const providerName of modelCfg?.providers || []) {
         wildcardProviders.add(providerName)
       }
@@ -766,9 +775,12 @@ async function loadConfig() {
     Object.entries(cfg.route || {}).map(([route, routeCfg]) => [route, cloneRules(routeCfg?.hooks || [])]),
   )
 
-  const nextRoute = routeConfigMap.value[selectedRoute.value]
-    ? selectedRoute.value
-    : routeOptions.value[0] || ''
+  const routeFromQuery = normalizeText(route.query.route)
+  const nextRoute = routeConfigMap.value[routeFromQuery]
+    ? routeFromQuery
+    : routeConfigMap.value[selectedRoute.value]
+      ? selectedRoute.value
+      : routeOptions.value[0] || ''
   selectedRoute.value = nextRoute
   syncRulesFromSelectedRoute(nextRoute)
 }

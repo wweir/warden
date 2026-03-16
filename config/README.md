@@ -1,26 +1,30 @@
 # config
 
-`config` 包负责三类事情：
+`config` 包负责三件事：
 
-- 定义网关配置结构体和运行时派生字段
-- 校验并规范化配置输入
-- 提供路由模型匹配和敏感字段封装
+- 定义网关配置结构与少量运行时派生字段
+- 在 `Validate()` 中做静态校验与规范化
+- 编译 route 模型匹配结构，供运行时快速查找
 
-当前文件分工：
+## File Roles
 
-- `config.go`：核心配置类型定义、运行时访问方法
+- `config.go`：核心配置类型定义与运行时访问方法
 - `validate.go`：配置校验与规范化逻辑
-- `route_runtime.go`：路由模型编译、通配符匹配、协议能力判断
+- `route_runtime.go`：route 模型编译、通配符匹配、协议能力判断
 - `secret.go`：`SecretString` 的安全序列化与显示
 
-校验原则：
+## Validation Rules
 
 - 只做本地可判定的静态校验，不做启动期网络探测
-- provider/webhook URL 必须是绝对 `http/https` URL
-- proxy URL 只接受 `http`、`https`、`socks5`、`socks5h`
-- `~` 路径在校验阶段统一展开，避免运行期重复分支
+- `provider.*.url` / `webhook.*.url` 必须是绝对 `http/https` URL
+- `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
+- `~` 路径在校验阶段统一展开
+- `qwen` / `copilot` 在未设置 `api_key` 时校验本地 `config_dir` 下的凭证可读性
+- `api_keys` 是客户端访问网关的密钥集合；为空时不做客户端鉴权
 
-兼容性约束：
+## Compatibility Notes
 
-- 保留 legacy route 配置到 `models` 的转换逻辑
-- `route` 的运行时派生字段在 `Validate()` 后才可依赖
+- route 配置的主结构是 `exact_models` / `wildcard_models`
+- 保留 legacy `models` / `providers` / `system_prompts` 到新结构的转换逻辑
+- `route` 的运行时派生字段只在 `Validate()` 后可依赖
+- `mcp` 与 `ssh` 配置块已移除，不再参与配置模型

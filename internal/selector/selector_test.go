@@ -2,6 +2,9 @@ package selector
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +28,7 @@ func TestSelector_SelectExactModel(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/test": {
 				Protocol: config.RouteProtocolChat,
-				Models: map[string]*config.RouteModelConfig{
+				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*config.RouteUpstreamConfig{
 							{Provider: "primary", Model: "gpt-4o"},
@@ -64,7 +67,7 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/test": {
 				Protocol: config.RouteProtocolResponses,
-				Models: map[string]*config.RouteModelConfig{
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
 					"gpt-*": {
 						Providers: []string{"first", "second"},
 					},
@@ -105,7 +108,7 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/test": {
 				Protocol: config.RouteProtocolChat,
-				Models: map[string]*config.RouteModelConfig{
+				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*config.RouteUpstreamConfig{
 							{Provider: "primary", Model: "gpt-4o"},
@@ -140,12 +143,14 @@ func TestSelector_Models(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/test": {
 				Protocol: config.RouteProtocolChat,
-				Models: map[string]*config.RouteModelConfig{
+				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*config.RouteUpstreamConfig{
 							{Provider: "primary", Model: "gpt-4.1"},
 						},
 					},
+				},
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
 					"gpt-*": {
 						Providers: []string{"primary"},
 					},
@@ -256,5 +261,28 @@ func TestSelector_RecordFailover(t *testing.T) {
 	}
 	if status.FailoverCount != 2 {
 		t.Fatalf("FailoverCount = %d, want 2", status.FailoverCount)
+	}
+}
+
+func TestFetchModels_SanitizesInternalHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"Panic detected, error: runtime error: index out of range [0] with length 0","type":"new_api_panic"}}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := FetchModels(&config.ProviderConfig{
+		URL:      srv.URL,
+		Protocol: "openai",
+	})
+	if err == nil {
+		t.Fatal("FetchModels() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500 upstream internal error") {
+		t.Fatalf("FetchModels() error = %q, want sanitized internal error", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "panic") {
+		t.Fatalf("FetchModels() error leaked panic detail: %q", err)
 	}
 }

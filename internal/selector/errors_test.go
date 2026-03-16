@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +208,22 @@ func TestParseErrorBody_EmptyBody(t *testing.T) {
 	errType, errMsg := ParseErrorBody("")
 	if errType != "" || errMsg != "" {
 		t.Errorf("ParseErrorBody = (%q, %q), want empty strings", errType, errMsg)
+	}
+}
+
+func TestFormatModelsFetchHTTPError_InternalErrorIsSanitized(t *testing.T) {
+	msg := formatModelsFetchHTTPError(500, []byte(`{"error":{"message":"Panic detected, error: runtime error: index out of range [0] with length 0","type":"new_api_panic"}}`))
+	if msg != "HTTP 500 upstream internal error" {
+		t.Fatalf("formatModelsFetchHTTPError() = %q, want sanitized internal error", msg)
+	}
+	if strings.Contains(strings.ToLower(msg), "panic") {
+		t.Fatalf("formatModelsFetchHTTPError() leaked panic detail: %q", msg)
+	}
+}
+
+func TestFormatModelsFetchHTTPError_UsesParsedMessage(t *testing.T) {
+	msg := formatModelsFetchHTTPError(403, []byte(`{"error":{"message":"invalid api key","type":"auth_error"}}`))
+	if msg != "HTTP 403 invalid api key" {
+		t.Fatalf("formatModelsFetchHTTPError() = %q, want parsed message", msg)
 	}
 }

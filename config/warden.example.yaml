@@ -6,7 +6,9 @@ addr: ":8080"
 
 # API keys for programmatic access (name -> key)
 # Keys are stored as base64 in config file, but accepts plaintext on read.
-# Generate and manage keys via the admin UI at /_admin/api-keys
+# Manage keys in the Config page of the admin UI.
+# When api_keys is empty, the gateway does not validate client API keys.
+# When api_keys is configured, clients can use Authorization: Bearer <key>, Api-Key, or X-Api-Key.
 # api_keys:
 #   my-app: "generated-api-key"
 #   cli-tool: "another-api-key"
@@ -44,13 +46,6 @@ addr: ":8080"
 #     - type: http
 #       webhook: "my-log-sink"              # references webhook above
 
-# SSH connection configurations for remote credential access and MCP execution
-# ssh:
-#   dev-server:
-#     host: "dev-server"                    # ~/.ssh/config Host entry or user@hostname
-#     port: 22                              # optional (default: ssh config)
-#     user: "deploy"                        # optional (default: ssh config)
-#     identity_file: "~/.ssh/id_ed25519"   # optional (default: ssh config)
 
 # Provider 配置 - 上游 LLM API 地址和认证信息
 # timeout: first-token timeout for non-streaming requests (waiting for response headers).
@@ -113,12 +108,10 @@ provider:
       - "o3-mini"
       - "gemini-2.0-flash"
 
-# 路由配置 - route-centric：每个 route 暴露单一协议，并定义公开模型
+# 路由配置 - route-centric：每个 route 暴露单一协议，并定义公开模型；不再绑定 MCP 工具
 route:
   /openai:
     protocol: "chat"
-    tools:
-      - "web-search"
     hooks:
       - match: "filesystem__write_*"
         hook:
@@ -126,7 +119,7 @@ route:
           when: post
           timeout: "5s"
           webhook: "audit-webhook"
-    models:
+    exact_models:
       gpt-4o:
         system_prompt: "You are a helpful assistant."
         upstreams:
@@ -140,6 +133,7 @@ route:
         upstreams:
           - provider: "openai-fast"
             model: "gpt-4.1-mini"
+    wildcard_models:
       "gpt-*":
         providers:
           - "openai-fast"
@@ -147,10 +141,7 @@ route:
 
   /anthropic:
     protocol: "anthropic"
-    tools:
-      - "web-search"
-      - "filesystem"
-    models:
+    exact_models:
       claude-sonnet-4-5-20250929:
         upstreams:
           - provider: "anthropic"
@@ -158,17 +149,13 @@ route:
 
   /ollama:
     protocol: "responses"
-    tools: []
-    models:
+    exact_models:
       llama3.3:
         upstreams:
           - provider: "ollama"
             model: "llama3.3"
 
-# Route hooks 绑定到具体路由。match 匹配的是完整工具名：
-# - 注入 MCP 工具：<mcp_name>__<tool_name>
-# - 客户端工具：<tool_name>
-# 支持 * 通配符，例如 "filesystem__*"、"web_*"、"*"
+# Route hooks 绑定到具体路由。match 匹配的是模型返回的完整工具名；支持 * 通配符，例如 "web_search"、"web_*"、"*"
 # route:
 #   /openai:
 #     hooks:
@@ -200,55 +187,3 @@ route:
 #           when: pre
 #           timeout: "5s"
 #           webhook: "audit-webhook"   # references webhook.<name>; body uses webhook.body_template or default CallContext JSON
-
-# MCP 工具配置 - 启用的 MCP 工具
-mcp:
-  web-search:
-    command: "npx"
-    args:
-      - "-y"
-      - "@anthropic/mcp-server-web-search"
-    env:
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-
-  filesystem:
-    command: "npx"
-    args:
-      - "-y"
-      - "@modelcontextprotocol/server-filesystem"
-    env: {}
-    # Per-tool configuration: disable individual tools
-    # tools:
-    #   write_file:
-    #     hooks:
-    #       # exec hook: stdin receives CallContext JSON; stdout must be {"allow":bool,"reason":"..."}
-    #       # execution errors (timeout, crash) are pass-through; only allow:false blocks the call
-    #       - type: exec
-    #         when: pre
-    #         timeout: "3s"
-    #         command: "/usr/local/bin/check-write-permission"
-    #         args: []
-    #       # ai hook: calls gateway's own LLM to evaluate; {"allow":false} blocks the call
-    #       # execution errors (network, model error) are pass-through (fail-open)
-    #       - type: ai
-    #         when: pre
-    #         timeout: "15s"
-    #         route: "/openai"
-    #         model: "gpt-4o-mini"
-    #         prompt: |
-    #           You are a security guard reviewing MCP tool calls.
-    #           Tool: {{.ToolName}} (full={{.FullName}})
-    #           Arguments (raw): {{.Arguments}}
-    #           Arguments (parsed fields): path={{.Args.path}} content={{.Args.content}}
-    #           Respond ONLY with JSON: {"allow": true, "reason": "ok"} or {"allow": false, "reason": "explain why"}
-    #   delete_file:
-    #     disabled: true  # disable this tool entirely (won't appear in LLM tool list)
-
-  # Remote MCP server via SSH - runs the MCP process on a remote host
-  # remote-filesystem:
-  #   command: "npx"
-  #   args:
-  #     - "-y"
-  #     - "@modelcontextprotocol/server-filesystem"
-  #     - "/data"
-  #   ssh: "dev-server"                     # references ssh.dev-server config above

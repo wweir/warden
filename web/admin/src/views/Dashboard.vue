@@ -21,13 +21,8 @@
           </div>
         </router-link>
 
-        <div class="stat-card">
-          <div class="stat-value">{{ mcpStats.connected }}<span class="stat-denom">/{{ mcpStats.total }}</span></div>
-          <div class="stat-label">{{ $t('dashboard.mcpConnected') }}</div>
-        </div>
-
-        <div class="stat-card">
-          <div class="stat-value">{{ fmtNum(providerStats.totalRequests) }}</div>
+		<div class="stat-card">
+		  <div class="stat-value">{{ fmtNum(providerStats.totalRequests) }}</div>
           <div class="stat-label">{{ $t('dashboard.totalRequests') }}</div>
           <div class="stat-sub" v-if="providerStats.totalRequests > 0">
             <span :class="successRate >= 99 ? 'text-success' : successRate >= 90 ? 'text-warning' : 'text-error'">
@@ -179,32 +174,7 @@
         </div>
       </div>
 
-      <!-- MCP Servers compact table -->
-      <h3 class="section-title">{{ $t('dashboard.mcpServers') }}</h3>
-      <div class="panel" style="padding:18px">
-        <table class="data-table">
-          <thead>
-            <tr><th>{{ $t('dashboard.name') }}</th><th>{{ $t('dashboard.tools') }}</th><th>{{ $t('dashboard.status') }}</th></tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="m in status.mcp"
-              :key="m.name"
-              class="clickable-row"
-              @click="$router.push('/mcp/' + m.name)"
-            >
-              <td class="resource-link">{{ m.name }}</td>
-              <td>{{ m.tool_count }}</td>
-              <td>
-                <span :class="m.connected ? 'badge badge-ok' : 'badge badge-error'">
-                  {{ m.connected ? $t('common.connected') : $t('common.disconnected') }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+	</section>
   </div>
 </template>
 
@@ -251,11 +221,6 @@ const providerStats = computed(() => {
   return { total: providers.length, ok, warn, error: err, totalRequests, successCount, failoverCount, preStreamErrors, inStreamErrors }
 })
 
-const mcpStats = computed(() => {
-  const mcp = status.value?.mcp ?? []
-  return { total: mcp.length, connected: mcp.filter((item) => item.connected).length }
-})
-
 const successRate = computed(() => {
   const { totalRequests, successCount } = providerStats.value
   return totalRequests > 0 ? (successCount / totalRequests) * 100 : 100
@@ -295,18 +260,6 @@ const alerts = computed(() => {
         link: '/providers/' + provider.name,
         msg: t('dashboard.recentErrors', { n: reasons.length }),
         reasons,
-      })
-    }
-  }
-
-  for (const mcp of status.value?.mcp ?? []) {
-    if (!mcp.connected) {
-      items.push({
-        key: 'm-' + mcp.name,
-        level: 'error',
-        name: mcp.name,
-        link: '/mcp/' + mcp.name,
-        msg: t('common.disconnected'),
       })
     }
   }

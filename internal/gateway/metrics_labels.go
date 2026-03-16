@@ -10,6 +10,7 @@ import (
 type requestMetricLabels struct {
 	Route          string
 	Protocol       string
+	APIKey         string
 	Provider       string
 	RouteModel     string
 	ProviderModel  string

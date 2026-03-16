@@ -9,14 +9,10 @@ import (
 	"time"
 
 	"github.com/wweir/warden/pkg/provider"
-	"github.com/wweir/warden/pkg/ssh"
 )
 
 //go:embed warden.example.yaml
 var ExampleConfig string
-
-// SSHConfig holds SSH connection parameters for remote access.
-type SSHConfig = ssh.Config
 
 type ConfigStruct struct {
 	Addr          string                     `json:"addr" usage:"Gateway listening address"`
@@ -26,8 +22,6 @@ type ConfigStruct struct {
 	Webhook       map[string]*WebhookConfig  `json:"webhook" usage:"Reusable HTTP webhook configurations (referenced by log http targets)"`
 	Provider      map[string]*ProviderConfig `json:"provider" usage:"Upstream LLM provider configurations"`
 	Route         map[string]*RouteConfig    `json:"route" usage:"Route prefix configurations"`
-	MCP           map[string]*MCPConfig      `json:"mcp" usage:"MCP server configurations"`
-	SSH           map[string]*SSHConfig      `json:"ssh" usage:"SSH connection configurations"`
 }
 
 type LogConfig struct {
@@ -103,7 +97,7 @@ func (b *ProviderConfig) GetAPIKey() string {
 		return b.APIKey.Value()
 	}
 	if p := provider.Get(b.Protocol); p != nil {
-		token, _ := p.GetAccessToken(b.ConfigDir, nil)
+		token, _ := p.GetAccessToken(b.ConfigDir)
 		return token
 	}
 	return ""
@@ -117,7 +111,7 @@ func (b *ProviderConfig) InvalidateAuth() {
 		return
 	}
 	if p := provider.Get(b.Protocol); p != nil {
-		p.InvalidateAuth(b.ConfigDir, nil)
+		p.InvalidateAuth(b.ConfigDir)
 	}
 }
 
@@ -172,18 +166,28 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 }
 
 type RouteConfig struct {
-	Prefix        string                       `json:"-"` // populated from map key
-	Protocol      string                       `json:"protocol" usage:"Service protocol exposed by this route: chat, responses, anthropic; empty keeps legacy chat+responses behavior"`
-	Providers     []string                     `json:"providers" usage:"Deprecated legacy provider list; converted to wildcard model when models is empty"`
-	Tools         []string                     `json:"tools" usage:"MCP tool names to inject"`
-	SystemPrompts map[string]string            `json:"system_prompts" usage:"Deprecated legacy per-model system prompts; converted to exact model configs when models is empty"`
-	Models        map[string]*RouteModelConfig `json:"models" usage:"Route model definitions; supports exact names and * wildcards"`
-	Hooks         []*HookRuleConfig            `json:"hooks" usage:"Tool hook rules scoped to this route"`
+	Prefix         string                               `json:"-"` // populated from map key
+	Protocol       string                               `json:"protocol" usage:"Service protocol exposed by this route: chat, responses, anthropic; empty keeps legacy chat+responses behavior"`
+	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings; each entry rewrites to ordered upstream provider/model targets"`
+	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings; each pattern selects ordered providers and forwards the requested model unchanged"`
+	Hooks          []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`
 
-	mu           sync.RWMutex
-	EnabledTools map[string]bool `json:"-"` // runtime state for dynamic toggle
-	exactModels  map[string]*CompiledRouteModel
-	wildcards    []*CompiledRouteModel
+	Providers     []string                     `json:"providers,omitempty" usage:"Deprecated legacy provider list; converted to wildcard models when explicit model fields are empty"`
+	SystemPrompts map[string]string            `json:"system_prompts,omitempty" usage:"Deprecated legacy per-model system prompts; converted to exact model configs when explicit model fields are empty"`
+	Models        map[string]*RouteModelConfig `json:"models,omitempty" usage:"Deprecated mixed route model map; split into exact_models and wildcard_models during validation"`
+
+	exactModels map[string]*CompiledRouteModel
+	wildcards   []*CompiledRouteModel
+}
+
+type ExactRouteModelConfig struct {
+	SystemPrompt string                 `json:"system_prompt" usage:"System prompt injected for this exact route model"`
+	Upstreams    []*RouteUpstreamConfig `json:"upstreams" usage:"Ordered upstream provider/model mappings for this exact public model"`
+}
+
+type WildcardRouteModelConfig struct {
+	SystemPrompt string   `json:"system_prompt" usage:"System prompt injected for this wildcard route model"`
+	Providers    []string `json:"providers" usage:"Ordered upstream providers for this wildcard route model; requested model is forwarded unchanged"`
 }
 
 type RouteModelConfig struct {
@@ -197,30 +201,8 @@ type RouteUpstreamConfig struct {
 	Model    string `json:"model" usage:"Upstream model name"`
 }
 
-// IsToolEnabled checks if a tool is enabled (thread-safe).
-func (r *RouteConfig) IsToolEnabled(name string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.EnabledTools[name]
-}
-
-// SetToolEnabled sets a tool's enabled state (thread-safe).
-func (r *RouteConfig) SetToolEnabled(name string, enabled bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.EnabledTools[name] = enabled
-}
-
-// ToolConfig holds per-tool configuration within an MCPConfig.
-type ToolConfig struct {
-	Disabled bool `json:"disabled" usage:"Disable this tool (default: false = enabled)"`
-}
-
 // HookRuleConfig defines a hook rule that matches tool calls by pattern.
-// Match uses glob-style wildcards and targets the full tool name seen by the model:
-// - injected MCP tools: "<mcp_name>__<tool_name>" (e.g. "fs__write_file")
-// - client/native tools: "<tool_name>" (e.g. "web_search")
-// A bare "*" matches all tool calls.
+// Match uses glob-style wildcards and targets the full tool name seen in model output. Examples: "web_search", "filesystem__write_file", or a bare "*".
 type HookRuleConfig struct {
 	Match string     `json:"match" usage:"Full tool name pattern to match (supports * wildcard)"`
 	Hook  HookConfig `json:"hook" usage:"Hook to run when the pattern matches"`
@@ -240,15 +222,4 @@ type HookConfig struct {
 
 	TimeoutDuration time.Duration  `json:"-"` // parsed from Timeout during Validate
 	WebhookCfg      *WebhookConfig `json:"-"`
-}
-
-type MCPConfig struct {
-	Name    string                 `json:"-"` // populated from map key
-	Command string                 `json:"command" usage:"MCP server command"`
-	Args    []string               `json:"args" usage:"MCP server arguments"`
-	Env     map[string]string      `json:"env" usage:"Environment variables"`
-	SSH     string                 `json:"ssh" usage:"SSH config name for remote MCP execution"`
-	Tools   map[string]*ToolConfig `json:"tools" usage:"Per-tool configuration (disabled flag and hooks)"`
-
-	SSHCfg *SSHConfig `json:"-"` // resolved from SSH during Validate
 }

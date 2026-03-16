@@ -58,6 +58,57 @@
 				</div>
 			</div>
 
+			<div class="subsection-header">
+				<div>
+					<span>{{ $t("config.apiKeysSection") }}</span>
+					<p class="section-note">{{ $t("config.apiKeysHint") }}</p>
+				</div>
+				<button class="btn btn-sm" @click="showAPIKeyCreateModal = true">
+					{{ $t("config.createApiKey") }}
+				</button>
+			</div>
+			<div v-if="apiKeyRows.length === 0" class="empty-state">
+				{{ $t("config.noApiKeys") }}
+			</div>
+			<table v-else class="data-table api-key-table">
+				<thead>
+					<tr>
+						<th>{{ $t("config.apiKeyName") }}</th>
+						<th>{{ $t("config.apiKeyStatus") }}</th>
+						<th>{{ $t("config.apiKeyRequests") }}</th>
+						<th>{{ $t("config.apiKeySuccess") }}</th>
+						<th>{{ $t("config.apiKeyFailure") }}</th>
+						<th>{{ $t("config.apiKeyPromptTokens") }}</th>
+						<th>{{ $t("config.apiKeyCompletionTokens") }}</th>
+						<th>{{ $t("config.apiKeyActions") }}</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr v-for="row in apiKeyRows" :key="row.name">
+						<td><code>{{ row.name }}</code></td>
+						<td>
+							<span :class="['badge', apiKeyConfigured(row.value) ? 'badge-ok' : 'badge-none']">
+								{{
+									apiKeyConfigured(row.value)
+										? $t("common.configured")
+										: $t("common.notSet")
+								}}
+							</span>
+						</td>
+						<td>{{ row.usage.total_requests }}</td>
+						<td>{{ row.usage.success_requests }}</td>
+						<td>{{ row.usage.failure_requests }}</td>
+						<td>{{ row.usage.prompt_tokens }}</td>
+						<td>{{ row.usage.completion_tokens }}</td>
+						<td>
+							<button class="btn btn-danger btn-sm" @click="deleteAPIKey(row.name)">
+								{{ $t("common.delete") }}
+							</button>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+
 			<!-- log targets -->
 			<div class="subsection-header">
 				<span>log.targets</span>
@@ -186,380 +237,51 @@
 				</div>
 			</div>
 		</section>
-		<section class="config-section">
-			<div class="section-header" @click="sshOpen = !sshOpen">
-				<h3>
-					{{ $t("config.ssh") }} <span class="count">({{ sshCount }})</span>
-				</h3>
-				<span class="chevron">{{ sshOpen ? "▼" : "▶" }}</span>
-			</div>
-			<div v-show="sshOpen">
-				<div class="add-row">
-					<template v-if="addingSection === 'ssh'">
-						<input
-							ref="addInputRef"
-							v-model="addingKey"
-							class="form-input add-input"
-							placeholder="Entry name"
-							@keyup.enter="confirmAdd"
-							@keyup.esc="cancelAdd"
-						/>
-						<button class="btn btn-sm" @click="confirmAdd">Confirm</button>
-						<button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
-					</template>
-					<button v-else class="btn btn-sm" @click="startAdd('ssh')">+ Add</button>
+
+		<div
+			v-if="showAPIKeyCreateModal"
+			class="modal-overlay"
+			@click.self="showAPIKeyCreateModal = false"
+		>
+			<div class="modal">
+				<h3>{{ $t("config.createApiKeyModalTitle") }}</h3>
+				<div class="form-group">
+					<label>{{ $t("config.apiKeyName") }}</label>
+					<input
+						v-model="newAPIKeyName"
+						class="form-input"
+						:placeholder="$t('config.apiKeyNamePlaceholder')"
+						@keyup.enter="createAPIKey"
+					/>
 				</div>
-				<div v-for="(cfg, name) in config.ssh" :key="'ssh-' + name" class="card">
-					<div class="card-header" @click="toggleCard('ssh', name)">
-						<strong>{{ name }}</strong>
-						<span class="chevron">{{ isCardOpen("ssh", name) ? "▼" : "▶" }}</span>
-					</div>
-					<div v-show="isCardOpen('ssh', name)" class="card-body">
-						<div class="form-grid">
-							<label>host <span class="req">*</span></label>
-							<input v-model="cfg.host" class="form-input" />
-							<label>port</label>
-							<input
-								v-model.number="cfg.port"
-								class="form-input"
-								type="number"
-								placeholder="22"
-							/>
-							<label>user</label>
-							<input v-model="cfg.user" class="form-input" />
-							<label>identity_file</label>
-							<input v-model="cfg.identity_file" class="form-input" />
-						</div>
-						<button class="btn btn-danger btn-sm" @click="deleteMapEntry('ssh', name)">
-							Delete
-						</button>
-					</div>
+				<div class="modal-actions">
+					<button class="btn btn-secondary" @click="showAPIKeyCreateModal = false">
+						{{ $t("common.cancel") }}
+					</button>
+					<button class="btn btn-primary" @click="createAPIKey" :disabled="!newAPIKeyName.trim()">
+						{{ $t("common.confirm") }}
+					</button>
 				</div>
 			</div>
-		</section>
+		</div>
 
-		<!-- Providers -->
-		<section class="config-section">
-			<div class="section-header" @click="providersOpen = !providersOpen">
-				<h3>
-					{{ $t("config.providersSection") }}
-					<span class="count">({{ providerCount }})</span>
-				</h3>
-				<span class="chevron">{{ providersOpen ? "▼" : "▶" }}</span>
-			</div>
-			<div v-show="providersOpen">
-				<div class="add-row">
-					<template v-if="addingSection === 'provider'">
-						<input
-							ref="addInputRef"
-							v-model="addingKey"
-							class="form-input add-input"
-							placeholder="Provider name"
-							@keyup.enter="confirmAdd"
-							@keyup.esc="cancelAdd"
-						/>
-						<button class="btn btn-sm" @click="confirmAdd">Confirm</button>
-						<button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
-					</template>
-					<button v-else class="btn btn-sm" @click="startAdd('provider')">+ Add</button>
+		<div v-if="showAPIKeyModal" class="modal-overlay" @click.self="showAPIKeyModal = false">
+			<div class="modal">
+				<h3>{{ $t("config.apiKeyCreatedTitle") }}</h3>
+				<p class="warning-text">{{ $t("config.apiKeyCreatedHint") }}</p>
+				<div class="key-display">
+					<code>{{ generatedAPIKey }}</code>
+					<button class="btn btn-sm" @click="copyGeneratedAPIKey">
+						{{ $t("common.copy") }}
+					</button>
 				</div>
-				<div v-for="(cfg, name) in config.provider" :key="'prov-' + name" class="card">
-					<div class="card-header" @click="toggleCard('provider', name)">
-						<strong>{{ name }}</strong>
-						<span class="tag-proto">{{ cfg.protocol || "openai" }}</span>
-						<span class="chevron">{{ isCardOpen("provider", name) ? "▼" : "▶" }}</span>
-					</div>
-					<div v-show="isCardOpen('provider', name)" class="card-body">
-						<div class="form-grid">
-							<!-- protocol always first -->
-							<label>protocol <span class="req">*</span></label>
-							<select v-model="cfg.protocol" class="form-input">
-								<option value="openai">openai</option>
-								<option value="anthropic">anthropic</option>
-								<option value="ollama">ollama</option>
-								<option value="qwen">qwen</option>
-								<option value="copilot">copilot</option>
-							</select>
-
-							<!-- url + proxy: only for openai/anthropic/ollama -->
-							<template
-								v-if="!['qwen', 'copilot'].includes(cfg.protocol || 'openai')"
-							>
-								<label>url <span class="req">*</span></label>
-								<div class="url-field">
-									<input
-										v-model="cfg.url"
-										class="form-input"
-										:placeholder="providerUrlPlaceholder(cfg.protocol)"
-									/>
-									<input
-										v-model="cfg.proxy"
-										class="form-input url-proxy"
-										placeholder="proxy (socks5://...)"
-									/>
-								</div>
-
-								<label>api_key</label>
-								<div class="secret-field">
-									<input
-										:type="
-											isSecretVisible('prov-apikey-' + name)
-												? 'text'
-												: 'password'
-										"
-										:value="secretDisplay(cfg.api_key)"
-										@input="cfg.api_key = $event.target.value"
-										class="form-input"
-										placeholder="(not set)"
-									/>
-									<button
-										class="btn-icon"
-										@click="toggleSecret('prov-apikey-' + name)"
-										type="button"
-									>
-										{{ isSecretVisible("prov-apikey-" + name) ? "🙈" : "👁" }}
-									</button>
-									<span
-										:class="[
-											'badge',
-											isSecretConfigured(cfg.api_key)
-												? 'badge-ok'
-												: 'badge-none',
-										]"
-									>
-										{{
-											isSecretConfigured(cfg.api_key)
-												? "Configured"
-												: "Not set"
-										}}
-									</span>
-								</div>
-							</template>
-
-							<!-- config_dir + ssh: for qwen/copilot OAuth credentials -->
-							<template v-if="['qwen', 'copilot'].includes(cfg.protocol)">
-								<label>config_dir</label>
-								<input
-									v-model="cfg.config_dir"
-									class="form-input"
-									:placeholder="
-										cfg.protocol === 'qwen'
-											? '~/.qwen'
-											: '~/.config/github-copilot'
-									"
-								/>
-
-								<label>ssh</label>
-								<select v-model="cfg.ssh" class="form-input">
-									<option value="">(none)</option>
-									<option v-for="s in sshNames" :key="s" :value="s">
-										{{ s }}
-									</option>
-								</select>
-
-								<label>proxy</label>
-								<input
-									v-model="cfg.proxy"
-									class="form-input"
-									placeholder="socks5://127.0.0.1:1080"
-								/>
-							</template>
-
-							<label>timeout</label>
-							<input v-model="cfg.timeout" class="form-input" placeholder="60s" />
-
-							<!-- chat_to_responses: only for openai protocol -->
-							<template v-if="cfg.protocol === 'openai'">
-								<label>chat_to_responses</label>
-								<div class="form-hint-row">
-									<input
-										type="checkbox"
-										v-model="cfg.chat_to_responses"
-										class="form-checkbox"
-									/>
-									<span class="hint">{{ $t("config.chatToResponsesHint") }}</span>
-								</div>
-
-								<label>responses_to_chat</label>
-								<div class="form-hint-row">
-									<input
-										type="checkbox"
-										v-model="cfg.responses_to_chat"
-										class="form-checkbox"
-									/>
-									<span class="hint">{{ $t("config.responsesToChatHint") }}</span>
-								</div>
-							</template>
-
-							<!-- headers: for openai/anthropic/ollama only -->
-							<template
-								v-if="!['qwen', 'copilot'].includes(cfg.protocol || 'openai')"
-							>
-								<label>headers</label>
-								<KeyValueEditor
-									v-model="cfg.headers"
-									keyPlaceholder="Header name"
-									valuePlaceholder="Value"
-								/>
-							</template>
-
-							<label>models</label>
-							<TagListEditor v-model="cfg.models" placeholder="Model ID" />
-						</div>
-						<button
-							class="btn btn-danger btn-sm"
-							@click="deleteMapEntry('provider', name)"
-						>
-							Delete
-						</button>
-					</div>
+				<div class="modal-actions">
+					<button class="btn btn-primary" @click="showAPIKeyModal = false">
+						{{ $t("common.close") }}
+					</button>
 				</div>
 			</div>
-		</section>
-
-		<!-- Routes -->
-		<section class="config-section">
-			<div class="section-header" @click="routesOpen = !routesOpen">
-				<h3>
-					{{ $t("config.routesSection") }} <span class="count">({{ routeCount }})</span>
-				</h3>
-				<span class="chevron">{{ routesOpen ? "▼" : "▶" }}</span>
-			</div>
-			<div v-show="routesOpen">
-				<div class="add-row">
-					<template v-if="addingSection === 'route'">
-						<input
-							ref="addInputRef"
-							v-model="addingKey"
-							class="form-input add-input"
-							placeholder="Route prefix"
-							@keyup.enter="confirmAdd"
-							@keyup.esc="cancelAdd"
-						/>
-						<button class="btn btn-sm" @click="confirmAdd">Confirm</button>
-						<button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
-					</template>
-					<button v-else class="btn btn-sm" @click="startAdd('route')">+ Add</button>
-				</div>
-				<div v-for="(cfg, prefix) in config.route" :key="'route-' + prefix" class="card">
-					<div class="card-header" @click="toggleCard('route', prefix)">
-						<strong>{{ prefix }}</strong>
-						<span class="chevron">{{ isCardOpen("route", prefix) ? "▼" : "▶" }}</span>
-					</div>
-					<div v-show="isCardOpen('route', prefix)" class="card-body">
-						<div class="form-grid">
-							<label>prefix</label>
-							<input :value="prefix" class="form-input" readonly />
-
-							<label>protocol</label>
-							<select v-model="cfg.protocol" class="form-input">
-								<option value="">legacy</option>
-								<option value="chat">chat</option>
-								<option value="responses">responses</option>
-								<option value="anthropic">anthropic</option>
-							</select>
-
-							<label>providers</label>
-							<TagListEditor
-								v-model="cfg.providers"
-								:suggestions="providerNames"
-								placeholder="Provider name"
-							/>
-
-							<label>tools</label>
-							<TagListEditor
-								v-model="cfg.tools"
-								:suggestions="mcpNames"
-								placeholder="MCP name"
-							/>
-
-							<label>models</label>
-							<textarea
-								class="form-input form-textarea"
-								:value="formatJSONValue(cfg.models)"
-								@change="updateJSONValue(cfg, 'models', $event.target.value)"
-								placeholder='{"gpt-4o":{"upstreams":[{"provider":"openai","model":"gpt-4o"}]}}'
-								spellcheck="false"
-							/>
-
-							<label>hooks</label>
-							<textarea
-								class="form-input form-textarea"
-								:value="formatJSONValue(cfg.hooks)"
-								@change="updateJSONValue(cfg, 'hooks', $event.target.value)"
-								placeholder='[{"match":"filesystem__*","hook":{"type":"http","when":"post","webhook":"audit"}}]'
-								spellcheck="false"
-							/>
-						</div>
-						<button
-							class="btn btn-danger btn-sm"
-							@click="deleteMapEntry('route', prefix)"
-						>
-							Delete
-						</button>
-					</div>
-				</div>
-			</div>
-		</section>
-
-
-		<!-- MCP -->
-		<section class="config-section">
-			<div class="section-header" @click="mcpOpen = !mcpOpen">
-				<h3>
-					{{ $t("config.mcp") }} <span class="count">({{ mcpCount }})</span>
-				</h3>
-				<span class="chevron">{{ mcpOpen ? "▼" : "▶" }}</span>
-			</div>
-			<div v-show="mcpOpen">
-				<div class="add-row">
-					<template v-if="addingSection === 'mcp'">
-						<input
-							ref="addInputRef"
-							v-model="addingKey"
-							class="form-input add-input"
-							placeholder="MCP name"
-							@keyup.enter="confirmAdd"
-							@keyup.esc="cancelAdd"
-						/>
-						<button class="btn btn-sm" @click="confirmAdd">Confirm</button>
-						<button class="btn btn-secondary btn-sm" @click="cancelAdd">Cancel</button>
-					</template>
-					<button v-else class="btn btn-sm" @click="startAdd('mcp')">+ Add</button>
-				</div>
-				<div v-for="(cfg, name) in config.mcp" :key="'mcp-' + name" class="card">
-					<div class="card-header" @click="toggleCard('mcp', name)">
-						<strong>{{ name }}</strong>
-						<span class="chevron">{{ isCardOpen("mcp", name) ? "▼" : "▶" }}</span>
-					</div>
-					<div v-show="isCardOpen('mcp', name)" class="card-body">
-						<div class="form-grid">
-							<label>command <span class="req">*</span></label>
-							<input v-model="cfg.command" class="form-input" />
-
-							<label>ssh</label>
-							<select v-model="cfg.ssh" class="form-input">
-								<option value="">(none)</option>
-								<option v-for="s in sshNames" :key="s" :value="s">{{ s }}</option>
-							</select>
-
-							<label>args</label>
-							<TagListEditor v-model="cfg.args" placeholder="Argument" />
-
-							<label>env</label>
-							<KeyValueEditor
-								v-model="cfg.env"
-								keyPlaceholder="Variable"
-								valuePlaceholder="Value"
-							/>
-						</div>
-						<button class="btn btn-danger btn-sm" @click="deleteMapEntry('mcp', name)">
-							Delete
-						</button>
-					</div>
-				</div>
-			</div>
-		</section>
+		</div>
 
 	</div>
 </template>
@@ -570,13 +292,13 @@ import { useI18n } from "vue-i18n";
 import {
 	fetchConfig,
 	fetchConfigSource,
+	fetchAPIKeys,
 	saveConfig,
 	validateConfig,
 	restartGateway,
 	fetchStatus,
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
-import TagListEditor from "../components/TagListEditor.vue";
 
 const { t } = useI18n();
 
@@ -601,32 +323,28 @@ watch(
 	{ deep: true },
 );
 
-// section collapse state
-const sshOpen = ref(false);
 const webhookOpen = ref(false);
-const providersOpen = ref(true);
-const routesOpen = ref(true);
-const mcpOpen = ref(false);
 const showAdminPw = ref(false);
+const showAPIKeyCreateModal = ref(false);
+const showAPIKeyModal = ref(false);
+const newAPIKeyName = ref("");
+const generatedAPIKey = ref("");
+const apiKeyUsage = ref({});
 
 // per-card collapse state
 const openCards = reactive({});
 
-// secret visibility toggles
-const visibleSecrets = reactive({});
-
-// counts
-const sshCount = computed(() => Object.keys(config.value.ssh || {}).length);
 const webhookCount = computed(() => Object.keys(config.value.webhook || {}).length);
-const providerCount = computed(() => Object.keys(config.value.provider || {}).length);
-const routeCount = computed(() => Object.keys(config.value.route || {}).length);
-const mcpCount = computed(() => Object.keys(config.value.mcp || {}).length);
-
-// names for cross-references
-const sshNames = computed(() => Object.keys(config.value.ssh || {}));
 const webhookNames = computed(() => Object.keys(config.value.webhook || {}));
-const providerNames = computed(() => Object.keys(config.value.provider || {}));
-const mcpNames = computed(() => Object.keys(config.value.mcp || {}));
+const apiKeyRows = computed(() =>
+	Object.keys(config.value.api_keys || {})
+		.sort()
+		.map((name) => ({
+			name,
+			value: config.value.api_keys[name],
+			usage: apiKeyUsage.value[name] || emptyAPIKeyUsage(),
+		})),
+);
 
 // admin password handling
 const adminPwEdited = ref(false);
@@ -647,6 +365,79 @@ function onAdminPwInput(val) {
 	adminPwEdited.value = true;
 	adminPwValue.value = val;
 	config.value.admin_password = val;
+}
+
+function emptyAPIKeyUsage() {
+	return {
+		total_requests: 0,
+		success_requests: 0,
+		failure_requests: 0,
+		prompt_tokens: 0,
+		completion_tokens: 0,
+	};
+}
+
+function apiKeyConfigured(value) {
+	return value === REDACTED || (typeof value === "string" && value !== "");
+}
+
+function generateAPIKeyValue() {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+	const bytes = new Uint8Array(32);
+	if (globalThis.crypto?.getRandomValues) {
+		globalThis.crypto.getRandomValues(bytes);
+	} else {
+		for (let i = 0; i < bytes.length; i += 1) {
+			bytes[i] = Math.floor(Math.random() * 256);
+		}
+	}
+	return (
+		"wk_" +
+		Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")
+	);
+}
+
+function createAPIKey() {
+	const name = newAPIKeyName.value.trim();
+	if (!name) return;
+	if (!config.value.api_keys) config.value.api_keys = {};
+	if (name in config.value.api_keys) {
+		error.value = t("config.apiKeyExists", { name });
+		return;
+	}
+
+	const key = generateAPIKeyValue()
+	config.value.api_keys = {
+		...config.value.api_keys,
+		[name]: key,
+	};
+	apiKeyUsage.value = {
+		...apiKeyUsage.value,
+		[name]: apiKeyUsage.value[name] || emptyAPIKeyUsage(),
+	};
+	newAPIKeyName.value = "";
+	generatedAPIKey.value = key;
+	showAPIKeyCreateModal.value = false;
+	showAPIKeyModal.value = true;
+	message.value = t("config.apiKeyPendingApply", { name });
+	messageType.value = "success";
+	error.value = "";
+}
+
+function deleteAPIKey(name) {
+	if (!confirm(t("config.confirmDeleteApiKey", { name }))) return;
+	const next = { ...(config.value.api_keys || {}) };
+	delete next[name];
+	config.value.api_keys = next;
+	message.value = t("config.apiKeyDeletePendingApply", { name });
+	messageType.value = "success";
+	error.value = "";
+}
+
+function copyGeneratedAPIKey() {
+	navigator.clipboard.writeText(generatedAPIKey.value);
+	message.value = t("config.apiKeyCopied");
+	messageType.value = "success";
 }
 
 // log targets helpers
@@ -672,58 +463,6 @@ function isCardOpen(section, key) {
 	return !!openCards[section + "/" + key];
 }
 
-// secret helpers
-function isSecretVisible(id) {
-	return !!visibleSecrets[id];
-}
-function toggleSecret(id) {
-	visibleSecrets[id] = !visibleSecrets[id];
-}
-function secretDisplay(val) {
-	return val === REDACTED ? REDACTED : val || "";
-}
-function isSecretConfigured(val) {
-	return val && val !== "";
-}
-
-function formatJSONValue(value) {
-	if (value == null) return "";
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return "";
-	}
-}
-
-function updateJSONValue(target, key, raw) {
-	const text = String(raw || "").trim();
-	if (!text) {
-		target[key] = Array.isArray(target[key]) ? [] : {};
-		return;
-	}
-	try {
-		target[key] = JSON.parse(text);
-	} catch (e) {
-		error.value = `Invalid JSON for ${key}: ${e.message}`;
-	}
-}
-
-// provider url placeholder by protocol
-function providerUrlPlaceholder(protocol) {
-	switch (protocol) {
-		case "anthropic":
-			return "https://api.anthropic.com";
-		case "ollama":
-			return "http://localhost:11434";
-		case "qwen":
-			return "(defaults to dashscope or portal.qwen.ai)";
-		case "copilot":
-			return "(defaults to api.githubcopilot.com)";
-		default:
-			return "https://api.openai.com/v1";
-	}
-}
-
 // add/delete map entries
 const addingSection = ref("");
 const addingKey = ref("");
@@ -733,11 +472,7 @@ function startAdd(section) {
 	addingSection.value = section;
 	addingKey.value = "";
 	// open the section and focus input after render
-	if (section === "ssh") sshOpen.value = true;
-	else if (section === "webhook") webhookOpen.value = true;
-	else if (section === "provider") providersOpen.value = true;
-	else if (section === "route") routesOpen.value = true;
-	else if (section === "mcp") mcpOpen.value = true;
+	if (section === "webhook") webhookOpen.value = true;
 	nextTick(() => addInputRef.value?.focus());
 }
 
@@ -752,11 +487,7 @@ function confirmAdd() {
 	}
 	if (!config.value[section]) config.value[section] = {};
 	const defaults = {
-		ssh: { host: "" },
 		webhook: { url: "", method: "POST" },
-		provider: { url: "", protocol: "openai" },
-		route: { providers: [], tools: [] },
-		mcp: { command: "" },
 	};
 	config.value[section][key] = defaults[section] || {};
 	openCards[section + "/" + key] = true;
@@ -803,13 +534,25 @@ function cleanConfig(obj) {
 async function load() {
 	loading.value = true;
 	try {
-		const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()]);
+		const [cfg, source, keyData] = await Promise.all([
+			fetchConfig(),
+			fetchConfigSource(),
+			fetchAPIKeys(),
+		]);
 		config.value = {
 			...cfg,
+			api_keys: { ...(cfg.api_keys || {}) },
 		};
 		configSource.value = source;
+		apiKeyUsage.value = Object.fromEntries(
+			(keyData.keys || []).map((item) => [item.name, item.usage || emptyAPIKeyUsage()]),
+		);
 		adminPwEdited.value = false;
 		adminPwValue.value = "";
+		showAPIKeyCreateModal.value = false;
+		showAPIKeyModal.value = false;
+		newAPIKeyName.value = "";
+		generatedAPIKey.value = "";
 		error.value = "";
 		message.value = "";
 		configFileChanged.value = false;
@@ -1076,6 +819,80 @@ h3 {
 	font-size: 12px;
 	color: var(--c-text-2);
 	font-family: var(--font-mono);
+}
+
+.section-note {
+	margin: 4px 0 0;
+	font-family: inherit;
+	font-size: 12px;
+	color: var(--c-text-3);
+}
+
+.empty-state {
+	color: var(--c-text-3);
+	padding: 16px 0;
+}
+
+.api-key-table {
+	margin-bottom: 10px;
+}
+
+.modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(15, 23, 42, 0.45);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 100;
+}
+
+.modal {
+	background: var(--c-surface);
+	border-radius: var(--radius);
+	padding: 24px;
+	max-width: 460px;
+	width: min(92vw, 460px);
+	box-shadow: var(--shadow-md);
+}
+
+.form-group {
+	margin-top: 16px;
+}
+
+.form-group label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--c-text-2);
+	margin-bottom: 6px;
+}
+
+.modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	margin-top: 20px;
+}
+
+.warning-text {
+	color: var(--c-warning);
+	font-size: 13px;
+	margin: 12px 0;
+}
+
+.key-display {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	background: var(--c-border-light);
+	padding: 12px;
+	border-radius: var(--radius-sm);
+}
+
+.key-display code {
+	flex: 1;
+	word-break: break-all;
 }
 
 .form-textarea {

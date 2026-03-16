@@ -2,8 +2,6 @@ package provider
 
 import (
 	"time"
-
-	"github.com/wweir/warden/pkg/ssh"
 )
 
 const (
@@ -13,9 +11,9 @@ const (
 
 // TokenProvider manages OAuth token lifecycle for a specific protocol.
 type TokenProvider interface {
-	GetAccessToken(configDir string, sshCfg *ssh.Config) (string, error)
-	InvalidateAuth(configDir string, sshCfg *ssh.Config)
-	CheckCredsReadable(configDir string, sshCfg *ssh.Config) error
+	GetAccessToken(configDir string) (string, error)
+	InvalidateAuth(configDir string)
+	CheckCredsReadable(configDir string) error
 }
 
 var providers = map[string]TokenProvider{

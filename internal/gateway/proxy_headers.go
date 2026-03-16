@@ -56,9 +56,7 @@ func sanitizeProxyRequestHeaders(headers http.Header) {
 	for _, headerName := range hopByHopRequestHeaders {
 		headers.Del(headerName)
 	}
-	for _, headerName := range upstreamOverrideHeaders {
-		headers.Del(headerName)
-	}
+	removeUpstreamOverrideHeaders(headers)
 }
 
 func removeConnectionSpecificHeaders(headers http.Header) {
@@ -90,6 +88,24 @@ func setForwardedHeaders(headers http.Header, in *http.Request) {
 		headers.Set("X-Forwarded-Host", in.Host)
 	} else {
 		headers.Del("X-Forwarded-Host")
+	}
+}
+
+func removeClientCredentialHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	for _, headerName := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
+		headers.Del(headerName)
+	}
+}
+
+func removeUpstreamOverrideHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	for _, headerName := range upstreamOverrideHeaders {
+		headers.Del(headerName)
 	}
 }
 

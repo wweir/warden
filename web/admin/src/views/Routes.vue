@@ -1,7 +1,12 @@
 <template>
 	<div>
 		<div class="page-header">
-			<h2 class="page-title">{{ $t("routes.title") }}</h2>
+			<div class="page-header-main">
+				<h2 class="page-title">{{ $t("routes.title") }}</h2>
+				<router-link to="/routes/new" class="btn btn-primary btn-sm">
+					{{ $t("routes.addRoute") }}
+				</router-link>
+			</div>
 			<input
 				v-model="search"
 				class="form-input search-input"
@@ -119,7 +124,6 @@
 						<th>{{ $t("routes.protocol") }}</th>
 						<th>{{ $t("routes.models") }}</th>
 						<th>{{ $t("routes.providers") }}</th>
-						<th>{{ $t("routes.tools") }}</th>
 						<th>{{ $t("routes.requests") }}</th>
 						<th>{{ $t("routes.failures") }}</th>
 						<th>{{ $t("routes.successRate") }}</th>
@@ -147,17 +151,6 @@
 									:to="'/providers/' + encodeURIComponent(p)"
 									class="resource-link"
 									>{{ p }}</router-link
-								>
-							</template>
-						</td>
-						<td>
-							<span v-if="!(r.tools || []).length" class="text-muted">-</span>
-							<template v-for="(t, i) in r.tools || []" :key="t">
-								<span v-if="i > 0">, </span>
-								<router-link
-									:to="'/mcp/' + encodeURIComponent(t)"
-									class="resource-link"
-									>{{ t }}</router-link
 								>
 							</template>
 						</td>
@@ -223,8 +216,7 @@ const filtered = computed(() => {
 			r.prefix.toLowerCase().includes(q) ||
 			(r.protocol || "").toLowerCase().includes(q) ||
 			(r.models || []).some((m) => m.toLowerCase().includes(q)) ||
-			(r.providers || []).some((p) => p.toLowerCase().includes(q)) ||
-			(r.tools || []).some((t) => t.toLowerCase().includes(q)),
+			(r.providers || []).some((p) => p.toLowerCase().includes(q)),
 	);
 });
 
@@ -580,10 +572,19 @@ onUnmounted(() => {
 <style scoped>
 .page-header {
 	display: flex;
-	align-items: center;
-	gap: 16px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
 	margin-bottom: 20px;
 }
+
+.page-header-main {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+}
+
 .page-header .page-title {
 	margin-bottom: 0;
 	flex-shrink: 0;
@@ -684,7 +685,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-	.page-header {
+	.page-header-main {
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 10px;

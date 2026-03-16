@@ -16,8 +16,8 @@
 Hook 收到的 JSON 为 `CallContext`：
 
 - `tool_name`: 原始工具名（如 `write_file` 或 `weather`）
-- `full_name`: 完整工具名（如注入 MCP 工具 `filesystem__write_file`）
-- `mcp_name`: MCP 名称（仅注入 MCP 工具时有值）
+- `full_name`: 完整工具名（如 `web_search` 或 `filesystem__write_file`）
+- `mcp_name`: 当工具名使用 `<prefix>__<name>` 形式时会拆出前缀；当前 route 不再自动注入 MCP 工具
 - `call_id`: 本次工具调用 ID
 - `arguments`: 工具参数原始 JSON
 - `result`: 工具结果（仅 post）

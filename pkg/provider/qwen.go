@@ -1,10 +1,8 @@
 package provider
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/wweir/warden/pkg/ssh"
 )
 
 const (
@@ -33,7 +29,6 @@ type oauthCreds struct {
 type oauthManager struct {
 	mu        sync.Mutex
 	configDir string
-	sshCfg    *ssh.Config
 	creds     *oauthCreds
 }
 
@@ -43,36 +38,31 @@ type qwenProvider struct {
 	managers map[string]*oauthManager
 }
 
-func (p *qwenProvider) getManager(configDir string, sshCfg *ssh.Config) *oauthManager {
+func (p *qwenProvider) getManager(configDir string) *oauthManager {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	key := configDir
-	if sshCfg != nil {
-		key = configDir + "@" + sshCfg.Host
-	}
-
-	if m, ok := p.managers[key]; ok {
+	if m, ok := p.managers[configDir]; ok {
 		return m
 	}
-	m := &oauthManager{configDir: configDir, sshCfg: sshCfg}
-	p.managers[key] = m
+	m := &oauthManager{configDir: configDir}
+	p.managers[configDir] = m
 	return m
 }
 
-func (p *qwenProvider) GetAccessToken(configDir string, sshCfg *ssh.Config) (string, error) {
-	return p.getManager(configDir, sshCfg).getAccessToken()
+func (p *qwenProvider) GetAccessToken(configDir string) (string, error) {
+	return p.getManager(configDir).getAccessToken()
 }
 
-func (p *qwenProvider) InvalidateAuth(configDir string, sshCfg *ssh.Config) {
-	m := p.getManager(configDir, sshCfg)
+func (p *qwenProvider) InvalidateAuth(configDir string) {
+	m := p.getManager(configDir)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.creds = nil
 }
 
-func (p *qwenProvider) CheckCredsReadable(configDir string, sshCfg *ssh.Config) error {
-	_, err := readOAuthCreds(configDir, sshCfg)
+func (p *qwenProvider) CheckCredsReadable(configDir string) error {
+	_, err := readOAuthCreds(configDir)
 	return err
 }
 
@@ -82,7 +72,7 @@ func (m *oauthManager) getAccessToken() (string, error) {
 	defer m.mu.Unlock()
 
 	if m.creds == nil {
-		creds, err := readOAuthCreds(m.configDir, m.sshCfg)
+		creds, err := readOAuthCreds(m.configDir)
 		if err != nil {
 			return "", err
 		}
@@ -148,29 +138,18 @@ func (m *oauthManager) refreshQwenToken() error {
 		m.creds.RefreshToken = tokenResp.RefreshToken
 	}
 
-	// persist updated credentials (skip in SSH mode)
-	if m.sshCfg != nil {
-		slog.Warn("SSH mode: skipping oauth creds persistence", "config_dir", m.configDir, "host", m.sshCfg.Host)
-	} else if err := writeOAuthCreds(m.configDir, m.creds); err != nil {
+	if err := writeOAuthCreds(m.configDir, m.creds); err != nil {
 		return fmt.Errorf("persist refreshed creds: %w", err)
 	}
 
 	return nil
 }
 
-// readOAuthCreds reads the full OAuth credentials from disk or remote host.
-func readOAuthCreds(configDir string, sshCfg *ssh.Config) (*oauthCreds, error) {
+// readOAuthCreds reads the full OAuth credentials from disk.
+func readOAuthCreds(configDir string) (*oauthCreds, error) {
 	path := filepath.Join(configDir, "oauth_creds.json")
 
-	var data []byte
-	var err error
-	if sshCfg != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		data, err = ssh.ReadFile(ctx, sshCfg, path)
-	} else {
-		data, err = os.ReadFile(path)
-	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read oauth creds %s: %w", path, err)
 	}

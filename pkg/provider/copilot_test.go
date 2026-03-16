@@ -20,7 +20,7 @@ func TestReadGitHubToken(t *testing.T) {
 		data, _ := json.Marshal(hosts)
 		os.WriteFile(filepath.Join(dir, "hosts.json"), data, 0644)
 
-		token, err := readGitHubToken(dir, nil)
+		token, err := readGitHubToken(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -41,7 +41,7 @@ func TestReadGitHubToken(t *testing.T) {
 		data, _ := json.Marshal(apps)
 		os.WriteFile(filepath.Join(appsDir, "apps.json"), data, 0644)
 
-		token, err := readGitHubToken(appsDir, nil)
+		token, err := readGitHubToken(appsDir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestReadGitHubToken(t *testing.T) {
 		emptyDir := filepath.Join(dir, "empty")
 		os.MkdirAll(emptyDir, 0755)
 
-		_, err := readGitHubToken(emptyDir, nil)
+		_, err := readGitHubToken(emptyDir)
 		if err == nil {
 			t.Fatal("expected error for missing files")
 		}
@@ -65,7 +65,7 @@ func TestReadGitHubToken(t *testing.T) {
 		os.MkdirAll(badDir, 0755)
 		os.WriteFile(filepath.Join(badDir, "hosts.json"), []byte("not json"), 0644)
 
-		_, err := readGitHubToken(badDir, nil)
+		_, err := readGitHubToken(badDir)
 		if err == nil {
 			t.Fatal("expected error for invalid json")
 		}
@@ -83,7 +83,7 @@ func TestReadGitHubToken(t *testing.T) {
 		data, _ := json.Marshal(hosts)
 		os.WriteFile(filepath.Join(emptyTokenDir, "hosts.json"), data, 0644)
 
-		_, err := readGitHubToken(emptyTokenDir, nil)
+		_, err := readGitHubToken(emptyTokenDir)
 		if err == nil {
 			t.Fatal("expected error for empty oauth_token")
 		}
@@ -148,7 +148,7 @@ func TestCopilotGetAccessToken(t *testing.T) {
 		data, _ := json.Marshal(hosts)
 		os.WriteFile(filepath.Join(dir, "hosts.json"), data, 0644)
 
-		mgr := p.getManager(dir, nil)
+		mgr := p.getManager(dir)
 		mgr.mu.Lock()
 		mgr.ghToken = "gho_test_exchange"
 		mgr.token = &copilotToken{
@@ -157,7 +157,7 @@ func TestCopilotGetAccessToken(t *testing.T) {
 		}
 		mgr.mu.Unlock()
 
-		token, err := p.GetAccessToken(dir, nil)
+		token, err := p.GetAccessToken(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

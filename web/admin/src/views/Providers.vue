@@ -2,11 +2,16 @@
   <div>
     <div class="page-header">
       <h2 class="page-title">{{ $t('providers.title') }}</h2>
-      <input
-        v-model="search"
-        class="form-input search-input"
-        :placeholder="$t('providers.searchPlaceholder')"
-      />
+      <div class="page-actions">
+        <input
+          v-model="search"
+          class="form-input search-input"
+          :placeholder="$t('providers.searchPlaceholder')"
+        />
+        <router-link to="/providers/new" class="btn btn-primary">
+          {{ $t('providers.createProvider') }}
+        </router-link>
+      </div>
     </div>
     <div v-if="error" class="msg msg-error">{{ error }}</div>
     <div v-if="status">
@@ -156,6 +161,12 @@ onUnmounted(() => {
   max-width: 280px;
   font-family: inherit;
 }
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -200,6 +211,12 @@ onUnmounted(() => {
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
+  }
+  .page-actions {
+    width: 100%;
+    margin-left: 0;
+    flex-direction: column;
+    align-items: stretch;
   }
   .search-input {
     max-width: 100%;

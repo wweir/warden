@@ -78,7 +78,7 @@ func (r *RouteConfig) PublicModels() []string {
 	return models
 }
 
-func (r *RouteConfig) WildcardModels() []*CompiledRouteModel {
+func (r *RouteConfig) CompiledWildcardModels() []*CompiledRouteModel {
 	return r.wildcards
 }
 
@@ -129,18 +129,30 @@ func buildPatternSpecificity(pattern string) routePatternSpecificity {
 	return spec
 }
 
-func compileLegacyRouteModels(route *RouteConfig) map[string]*RouteModelConfig {
-	models := make(map[string]*RouteModelConfig, len(route.SystemPrompts)+1)
+func compileLegacyRouteModels(route *RouteConfig) (map[string]*ExactRouteModelConfig, map[string]*WildcardRouteModelConfig) {
+	exactModels := make(map[string]*ExactRouteModelConfig, len(route.SystemPrompts))
+	wildcardModels := make(map[string]*WildcardRouteModelConfig)
 	if len(route.Providers) > 0 {
-		models["*"] = &RouteModelConfig{Providers: append([]string(nil), route.Providers...)}
-	}
-	for model, prompt := range route.SystemPrompts {
-		models[model] = &RouteModelConfig{
-			SystemPrompt: prompt,
-			Providers:    append([]string(nil), route.Providers...),
+		wildcardModels["*"] = &WildcardRouteModelConfig{
+			Providers: append([]string(nil), route.Providers...),
 		}
 	}
-	return models
+	for model, prompt := range route.SystemPrompts {
+		exactModels[model] = &ExactRouteModelConfig{
+			SystemPrompt: prompt,
+			Upstreams:    nil,
+		}
+		if len(route.Providers) > 0 {
+			exactModels[model].Upstreams = make([]*RouteUpstreamConfig, 0, len(route.Providers))
+			for _, providerName := range route.Providers {
+				exactModels[model].Upstreams = append(exactModels[model].Upstreams, &RouteUpstreamConfig{
+					Provider: providerName,
+					Model:    model,
+				})
+			}
+		}
+	}
+	return exactModels, wildcardModels
 }
 
 func hasWildcardPattern(model string) bool {

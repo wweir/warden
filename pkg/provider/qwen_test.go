@@ -23,7 +23,7 @@ func TestQwenGetAccessToken(t *testing.T) {
 		data, _ := json.Marshal(creds)
 		os.WriteFile(filepath.Join(subDir, "oauth_creds.json"), data, 0644)
 
-		token, err := p.GetAccessToken(subDir, nil)
+		token, err := p.GetAccessToken(subDir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -35,7 +35,7 @@ func TestQwenGetAccessToken(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		p2 := &qwenProvider{managers: make(map[string]*oauthManager)}
 		nonexistent := filepath.Join(dir, "nonexistent")
-		_, err := p2.GetAccessToken(nonexistent, nil)
+		_, err := p2.GetAccessToken(nonexistent)
 		if err == nil {
 			t.Fatal("expected error for missing file")
 		}
@@ -47,7 +47,7 @@ func TestQwenGetAccessToken(t *testing.T) {
 		os.MkdirAll(badDir, 0755)
 		os.WriteFile(filepath.Join(badDir, "oauth_creds.json"), []byte(`not json`), 0644)
 
-		_, err := p2.GetAccessToken(badDir, nil)
+		_, err := p2.GetAccessToken(badDir)
 		if err == nil {
 			t.Fatal("expected error for invalid json")
 		}
@@ -59,7 +59,7 @@ func TestQwenGetAccessToken(t *testing.T) {
 		os.MkdirAll(emptyDir, 0755)
 		os.WriteFile(filepath.Join(emptyDir, "oauth_creds.json"), []byte(`{"access_token":""}`), 0644)
 
-		_, err := p2.GetAccessToken(emptyDir, nil)
+		_, err := p2.GetAccessToken(emptyDir)
 		if err == nil {
 			t.Fatal("expected error for empty access_token")
 		}
@@ -134,7 +134,7 @@ func TestQwenWriteReadCreds(t *testing.T) {
 		t.Fatalf("write creds: %v", err)
 	}
 
-	read, err := readOAuthCreds(writeDir, nil)
+	read, err := readOAuthCreds(writeDir)
 	if err != nil {
 		t.Fatalf("read creds: %v", err)
 	}

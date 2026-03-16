@@ -32,6 +32,14 @@ var (
 		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "status"},
 	)
 
+	apiKeyRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_apikey_requests_total",
+			Help: "Total number of requests processed by client API key",
+		},
+		[]string{"api_key", "route", "protocol", "route_model", "matched_pattern", "endpoint", "status"},
+	)
+
 	routeRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "warden_route_request_duration_ms",
@@ -82,6 +90,14 @@ var (
 			Help: "Total tokens processed by provider model",
 		},
 		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "type"},
+	)
+
+	apiKeyTokenCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warden_apikey_tokens_total",
+			Help: "Total tokens processed by client API key",
+		},
+		[]string{"api_key", "route", "protocol", "route_model", "matched_pattern", "type"},
 	)
 
 	routeTokenRate = prometheus.NewGaugeVec(
@@ -189,10 +205,10 @@ var (
 
 func init() {
 	prometheus.MustRegister(
-		routeRequestCounter, providerRequestCounter,
+		routeRequestCounter, providerRequestCounter, apiKeyRequestCounter,
 		routeRequestDuration, providerRequestDuration,
 		providerHealth, providerSuppressed,
-		routeTokenCounter, providerTokenCounter,
+		routeTokenCounter, providerTokenCounter, apiKeyTokenCounter,
 		routeTokenRate, providerTokenRate,
 		routeStreamTTFT, providerStreamTTFT,
 		routeCompletionThroughput, providerCompletionThroughput,
@@ -215,6 +231,9 @@ func (g *Gateway) recordRequestMetrics(labels requestMetricLabels, success bool,
 	}
 	routeRequestCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
 	providerRequestCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
+	if labels.APIKey != "" {
+		apiKeyRequestCounter.WithLabelValues(labels.APIKey, labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
+	}
 	routeRequestDuration.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
 	providerRequestDuration.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
 }
@@ -268,6 +287,9 @@ func (g *Gateway) RecordTokenMetrics(labels requestMetricLabels, usage TokenUsag
 		}
 		routeTokenCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
 		providerTokenCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
+		if labels.APIKey != "" {
+			apiKeyTokenCounter.WithLabelValues(labels.APIKey, labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
+		}
 		if durationMs > 0 {
 			value := float64(count) / (float64(durationMs) / 1000.0)
 			routeTokenRate.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
@@ -402,6 +424,7 @@ func (g *Gateway) promMiddleware(next http.Handler) http.Handler {
 
 		// Read route/provider/model/endpoint from headers set by business handlers
 		labels := metricLabelsFromHeader(wrapped.Header())
+		labels.APIKey = apiKeyNameFromContext(r.Context())
 		if labels.Route == "" {
 			return
 		}

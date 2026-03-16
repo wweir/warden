@@ -3,7 +3,6 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/wweir/warden/pkg/protocol"
@@ -12,7 +11,7 @@ import (
 // StreamParser parses SSE events from Anthropic Messages API streaming responses.
 type StreamParser struct{}
 
-func (p *StreamParser) Parse(events []protocol.Event, injectedTools []string) ([]protocol.ToolCallInfo, bool, error) {
+func (p *StreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, error) {
 	type toolBlock struct {
 		ID        string
 		Name      string
@@ -89,11 +88,10 @@ func (p *StreamParser) Parse(events []protocol.Event, injectedTools []string) ([
 	}
 
 	if stopReason != "tool_use" || len(blocks) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	var infos []protocol.ToolCallInfo
-	hasInjected := false
 	for i := range len(blocks) {
 		block, ok := blocks[i]
 		if !ok {
@@ -104,58 +102,9 @@ func (p *StreamParser) Parse(events []protocol.Event, injectedTools []string) ([
 			Name:      block.Name,
 			Arguments: block.Arguments,
 		})
-		if slices.Contains(injectedTools, block.Name) {
-			hasInjected = true
-		}
 	}
 
-	return infos, hasInjected, nil
-}
-
-func (p *StreamParser) Filter(events []protocol.Event, injectedTools []string) []protocol.Event {
-	injectedIndices := make(map[int]bool)
-
-	for _, evt := range events {
-		var msg struct {
-			Type         string `json:"type"`
-			Index        int    `json:"index"`
-			ContentBlock struct {
-				Type string `json:"type"`
-				Name string `json:"name"`
-			} `json:"content_block"`
-		}
-		if err := json.Unmarshal([]byte(evt.Data), &msg); err != nil {
-			continue
-		}
-		if msg.Type == "content_block_start" && msg.ContentBlock.Type == "tool_use" {
-			if slices.Contains(injectedTools, msg.ContentBlock.Name) {
-				injectedIndices[msg.Index] = true
-			}
-		}
-	}
-
-	var filtered []protocol.Event
-	for _, evt := range events {
-		var msg struct {
-			Type  string `json:"type"`
-			Index int    `json:"index"`
-		}
-		if err := json.Unmarshal([]byte(evt.Data), &msg); err != nil {
-			filtered = append(filtered, evt)
-			continue
-		}
-
-		switch msg.Type {
-		case "content_block_start", "content_block_delta", "content_block_stop":
-			if injectedIndices[msg.Index] {
-				continue
-			}
-		}
-
-		filtered = append(filtered, evt)
-	}
-
-	return filtered
+	return infos, nil
 }
 
 // ConvertStreamToOpenAI converts Anthropic Messages API SSE bytes to OpenAI

@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	"github.com/wweir/warden/pkg/ssh"
 )
 
 const (
@@ -33,7 +30,6 @@ type copilotHostsFile map[string]struct {
 type tokenManager struct {
 	mu        sync.Mutex
 	configDir string
-	sshCfg    *ssh.Config
 	ghToken   string        // GitHub OAuth token from hosts.json
 	token     *copilotToken // cached Copilot API token
 }
@@ -44,37 +40,32 @@ type copilotProvider struct {
 	managers map[string]*tokenManager
 }
 
-func (p *copilotProvider) getManager(configDir string, sshCfg *ssh.Config) *tokenManager {
+func (p *copilotProvider) getManager(configDir string) *tokenManager {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	key := configDir
-	if sshCfg != nil {
-		key = configDir + "@" + sshCfg.Host
-	}
-
-	if m, ok := p.managers[key]; ok {
+	if m, ok := p.managers[configDir]; ok {
 		return m
 	}
-	m := &tokenManager{configDir: configDir, sshCfg: sshCfg}
-	p.managers[key] = m
+	m := &tokenManager{configDir: configDir}
+	p.managers[configDir] = m
 	return m
 }
 
-func (p *copilotProvider) GetAccessToken(configDir string, sshCfg *ssh.Config) (string, error) {
-	return p.getManager(configDir, sshCfg).getAccessToken()
+func (p *copilotProvider) GetAccessToken(configDir string) (string, error) {
+	return p.getManager(configDir).getAccessToken()
 }
 
-func (p *copilotProvider) InvalidateAuth(configDir string, sshCfg *ssh.Config) {
-	m := p.getManager(configDir, sshCfg)
+func (p *copilotProvider) InvalidateAuth(configDir string) {
+	m := p.getManager(configDir)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ghToken = ""
 	m.token = nil
 }
 
-func (p *copilotProvider) CheckCredsReadable(configDir string, sshCfg *ssh.Config) error {
-	_, err := readGitHubToken(configDir, sshCfg)
+func (p *copilotProvider) CheckCredsReadable(configDir string) error {
+	_, err := readGitHubToken(configDir)
 	return err
 }
 
@@ -85,7 +76,7 @@ func (m *tokenManager) getAccessToken() (string, error) {
 
 	// load GitHub OAuth token from hosts.json on first call
 	if m.ghToken == "" {
-		token, err := readGitHubToken(m.configDir, m.sshCfg)
+		token, err := readGitHubToken(m.configDir)
 		if err != nil {
 			return "", err
 		}
@@ -145,19 +136,11 @@ func (m *tokenManager) refreshCopilotToken() error {
 }
 
 // readGitHubToken reads the GitHub OAuth token from hosts.json or apps.json.
-func readGitHubToken(configDir string, sshCfg *ssh.Config) (string, error) {
+func readGitHubToken(configDir string) (string, error) {
 	for _, filename := range []string{"hosts.json", "apps.json"} {
 		path := filepath.Join(configDir, filename)
 
-		var data []byte
-		var err error
-		if sshCfg != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			data, err = ssh.ReadFile(ctx, sshCfg, path)
-			cancel()
-		} else {
-			data, err = os.ReadFile(path)
-		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}

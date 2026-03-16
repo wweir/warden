@@ -108,6 +108,35 @@ func ParseErrorBody(body string) (errorType, errorMsg string) {
 	return "", ""
 }
 
+func formatModelsFetchHTTPError(statusCode int, body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" || strings.HasPrefix(msg, "<") {
+		return fmt.Sprintf("HTTP %d %s", statusCode, http.StatusText(statusCode))
+	}
+
+	errType, errMsg := ParseErrorBody(msg)
+	if isInternalUpstreamError(errType, errMsg, msg) {
+		return fmt.Sprintf("HTTP %d upstream internal error", statusCode)
+	}
+	if errMsg != "" {
+		return fmt.Sprintf("HTTP %d %s", statusCode, truncateErrorMessage(errMsg))
+	}
+	return fmt.Sprintf("HTTP %d %s", statusCode, truncateErrorMessage(msg))
+}
+
+func isInternalUpstreamError(errorType, errorMsg, rawBody string) bool {
+	text := strings.ToLower(strings.Join([]string{errorType, errorMsg, rawBody}, "\n"))
+	return strings.Contains(text, "panic") || strings.Contains(text, "runtime error:")
+}
+
+func truncateErrorMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if len(msg) > 200 {
+		return msg[:200] + "..."
+	}
+	return msg
+}
+
 // IsRetryableError determines if an error should trigger failover to another provider.
 // It handles three categories:
 //  1. UpstreamError: uses UpstreamError.IsRetryable()

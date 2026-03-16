@@ -426,7 +426,7 @@ func (s *Selector) Models(cfg *config.ConfigStruct, route *config.RouteConfig) [
 		result = append(result, mustMarshal(entry))
 	}
 
-	for _, wildcard := range route.WildcardModels() {
+	for _, wildcard := range route.CompiledWildcardModels() {
 		for _, upstream := range wildcard.Upstreams {
 			st := s.states[upstream.Provider]
 			if st == nil {
@@ -644,13 +644,7 @@ func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMes
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			msg := strings.TrimSpace(string(body))
-			if msg == "" || strings.HasPrefix(msg, "<") {
-				msg = http.StatusText(resp.StatusCode)
-			} else if len(msg) > 200 {
-				msg = msg[:200] + "..."
-			}
-			return nil, nil, fmt.Errorf("fetch models: HTTP %d %s", resp.StatusCode, msg)
+			return nil, nil, fmt.Errorf("fetch models: %s", formatModelsFetchHTTPError(resp.StatusCode, body))
 		}
 
 		ct := resp.Header.Get("Content-Type")

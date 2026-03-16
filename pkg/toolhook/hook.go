@@ -20,7 +20,7 @@ var jsonObjectRe = regexp.MustCompile(`\{[\s\S]*\}`)
 type CallContext struct {
 	ToolName  string          `json:"tool_name"` // original tool name from model output
 	FullName  string          `json:"full_name"` // normalized full name, e.g. mcp__tool
-	MCPName   string          `json:"mcp_name"`  // optional: only for MCP injected tools
+	MCPName   string          `json:"mcp_name"`  // optional: parsed from names like prefix__tool
 	CallID    string          `json:"call_id"`
 	Arguments json.RawMessage `json:"arguments"`
 	Result    string          `json:"result,omitempty"`   // post hook only

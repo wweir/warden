@@ -9,6 +9,7 @@ import (
 
 type clientRequestContextKey struct{}
 type routeHooksContextKey struct{}
+type apiKeyNameContextKey struct{}
 
 func withClientRequest(ctx context.Context, req *http.Request) context.Context {
 	if ctx == nil || req == nil {
@@ -38,4 +39,19 @@ func routeHooksFromContext(ctx context.Context) []*config.HookRuleConfig {
 	}
 	hooks, _ := ctx.Value(routeHooksContextKey{}).([]*config.HookRuleConfig)
 	return hooks
+}
+
+func withAPIKeyName(ctx context.Context, name string) context.Context {
+	if ctx == nil || name == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, apiKeyNameContextKey{}, name)
+}
+
+func apiKeyNameFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	name, _ := ctx.Value(apiKeyNameContextKey{}).(string)
+	return name
 }

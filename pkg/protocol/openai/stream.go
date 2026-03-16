@@ -2,7 +2,6 @@ package openai
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 
 	"github.com/wweir/warden/pkg/protocol"
@@ -11,7 +10,7 @@ import (
 // ChatStreamParser parses SSE events from OpenAI Chat Completions streaming responses.
 type ChatStreamParser struct{}
 
-func (p *ChatStreamParser) Parse(events []protocol.Event, injectedTools []string) ([]protocol.ToolCallInfo, bool, error) {
+func (p *ChatStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, error) {
 	type deltaToolCall struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id,omitempty"`
@@ -68,11 +67,10 @@ func (p *ChatStreamParser) Parse(events []protocol.Event, injectedTools []string
 	}
 
 	if finishReason != "tool_calls" || len(toolCallMap) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	var infos []protocol.ToolCallInfo
-	hasInjected := false
 	for i := range len(toolCallMap) {
 		tc, ok := toolCallMap[i]
 		if !ok {
@@ -83,24 +81,15 @@ func (p *ChatStreamParser) Parse(events []protocol.Event, injectedTools []string
 			Name:      tc.Function.Name,
 			Arguments: tc.Function.Arguments,
 		})
-		if slices.Contains(injectedTools, tc.Function.Name) {
-			hasInjected = true
-		}
 	}
 
-	return infos, hasInjected, nil
-}
-
-func (p *ChatStreamParser) Filter(events []protocol.Event, _ []string) []protocol.Event {
-	// For OpenAI Chat Completions, the final round has no injected tool calls,
-	// so no filtering is needed — the buffered events can be replayed as-is.
-	return events
+	return infos, nil
 }
 
 // ResponsesStreamParser parses SSE events from OpenAI Responses API streaming responses.
 type ResponsesStreamParser struct{}
 
-func (p *ResponsesStreamParser) Parse(events []protocol.Event, injectedTools []string) ([]protocol.ToolCallInfo, bool, error) {
+func (p *ResponsesStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, error) {
 	// find the response.completed event and extract function_call items
 	for _, evt := range events {
 		if evt.EventType != "response.completed" {
@@ -111,11 +100,10 @@ func (p *ResponsesStreamParser) Parse(events []protocol.Event, injectedTools []s
 			Response ResponsesResponse `json:"response"`
 		}
 		if err := json.Unmarshal([]byte(evt.Data), &wrapper); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 
 		var infos []protocol.ToolCallInfo
-		hasInjected := false
 		for _, raw := range wrapper.Response.Output {
 			var typeCheck struct {
 				Type string `json:"type"`
@@ -134,98 +122,12 @@ func (p *ResponsesStreamParser) Parse(events []protocol.Event, injectedTools []s
 				Name:      fc.Name,
 				Arguments: fc.Arguments,
 			})
-			if slices.Contains(injectedTools, fc.Name) {
-				hasInjected = true
-			}
 		}
 
-		return infos, hasInjected, nil
+		return infos, nil
 	}
 
-	return nil, false, nil
-}
-
-func (p *ResponsesStreamParser) Filter(events []protocol.Event, injectedTools []string) []protocol.Event {
-	var filtered []protocol.Event
-	for _, evt := range events {
-		switch evt.EventType {
-		case "response.output_item.added", "response.output_item.done":
-			var item struct {
-				Item struct {
-					Type string `json:"type"`
-					Name string `json:"name"`
-				} `json:"item"`
-			}
-			if err := json.Unmarshal([]byte(evt.Data), &item); err == nil {
-				if item.Item.Type == "function_call" && slices.Contains(injectedTools, item.Item.Name) {
-					continue
-				}
-			}
-			filtered = append(filtered, evt)
-
-		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
-			filtered = append(filtered, evt)
-
-		case "response.completed":
-			var wrapper struct {
-				Response json.RawMessage `json:"response"`
-			}
-			if err := json.Unmarshal([]byte(evt.Data), &wrapper); err != nil {
-				filtered = append(filtered, evt)
-				continue
-			}
-
-			var resp ResponsesResponse
-			if err := json.Unmarshal(wrapper.Response, &resp); err != nil {
-				filtered = append(filtered, evt)
-				continue
-			}
-
-			resp.Output = FilterResponsesOutput(resp.Output, injectedTools)
-
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				filtered = append(filtered, evt)
-				continue
-			}
-
-			newData, err := json.Marshal(map[string]json.RawMessage{"response": respBytes})
-			if err != nil {
-				filtered = append(filtered, evt)
-				continue
-			}
-
-			filtered = append(filtered, protocol.Event{
-				EventType: evt.EventType,
-				Data:      string(newData),
-				Raw:       "event: response.completed\ndata: " + string(newData) + "\n",
-			})
-
-		default:
-			filtered = append(filtered, evt)
-		}
-	}
-	return filtered
-}
-
-// FilterResponsesOutput removes injected function_call items from the final output.
-func FilterResponsesOutput(output []json.RawMessage, injectedTools []string) []json.RawMessage {
-	var filtered []json.RawMessage
-	for _, raw := range output {
-		var typeCheck struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &typeCheck); err != nil {
-			filtered = append(filtered, raw)
-			continue
-		}
-
-		if typeCheck.Type != "function_call" || !slices.Contains(injectedTools, typeCheck.Name) {
-			filtered = append(filtered, raw)
-		}
-	}
-	return filtered
+	return nil, nil
 }
 
 // AssembleChatStream merges streaming SSE chunks into a single JSON object

@@ -16,15 +16,13 @@
 route:
   /openai:
     protocol: chat
-    tools:
-      - web-search
     hooks:
       - match: "filesystem__write_*"
         hook:
           type: http
           when: post
           webhook: audit-webhook
-    models:
+    exact_models:
       gpt-4o:
         system_prompt: "You are a helpful assistant."
         upstreams:
@@ -32,6 +30,7 @@ route:
             model: gpt-4o
           - provider: anthropic-fallback
             model: claude-sonnet-4
+    wildcard_models:
       "gpt-*":
         providers:
           - openai
@@ -40,8 +39,8 @@ route:
 
 ## Matching Semantics
 
-- Exact model keys do not contain `*` and must use `upstreams` or legacy `providers`.
-- Wildcard model keys contain `*` and must use `providers`.
+- `exact_models` keys do not contain `*` and must use `upstreams`.
+- `wildcard_models` keys contain `*` and must use `providers`.
 - Exact match wins over wildcard match.
 - If multiple wildcard patterns match, the winner is the one with more literal characters and fewer `*`.
 - If two wildcard patterns still have equal precedence and overlap, configuration validation fails.
@@ -58,10 +57,10 @@ route:
 
 ## Compatibility
 
-- Legacy `route.providers` and `route.system_prompts` are still accepted temporarily.
+- Legacy `route.models`, `route.providers`, and `route.system_prompts` are still accepted temporarily.
 - Validation compiles legacy routes into:
-  - exact route models for `system_prompts`
-  - a fallback wildcard model `*` for `providers`
+  - `exact_models`
+  - `wildcard_models`
 - Tool hooks are only loaded from `route.<prefix>.hooks`.
 
 ## Status
@@ -70,9 +69,10 @@ route:
 - Completed: `selector` route-model candidate selection and route-facing `/models`.
 - Completed: `gateway` route-model selection, protocol-aware route registration, exact-model rename, wildcard passthrough, and route-scoped hooks.
 - Completed: admin UI editors for route models/hooks and route/provider split metrics.
+- Completed: `Routes` page now edits route config directly with separate exact/wildcard model sections; `Tool Hooks` remains the dedicated hook editor.
 - Completed: tool hooks now load only from `route.<prefix>.hooks`; no global `tool_hooks` compatibility remains.
 
 ## Deferred Follow-Up
 
-- Removal of legacy `route.providers` and `route.system_prompts`.
+- Removal of legacy `route.models`, `route.providers`, and `route.system_prompts`.
 - Further UI polish for large route-model maps if configuration scale grows.

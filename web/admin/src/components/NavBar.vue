@@ -18,7 +18,6 @@
         <router-link to="/routes" @click="menuOpen = false">{{ $t('nav.routes') }}</router-link>
         <router-link to="/providers" @click="menuOpen = false">{{ $t('nav.providers') }}</router-link>
         <router-link to="/tool-hooks" @click="menuOpen = false">{{ $t('nav.hooks') }}</router-link>
-        <router-link to="/api-keys" @click="menuOpen = false">{{ $t('nav.apiKeys') }}</router-link>
         <router-link to="/logs" @click="menuOpen = false">{{ $t('nav.logs') }}</router-link>
       </div>
       <div class="nav-right">

@@ -2,9 +2,10 @@
 
 ## 概述
 
-本方案实现两个需求：
-1. 支持在 admin 页面生成、管理 API Key，并保存到配置文件
-2. 配置文件中的敏感信息（api_key、admin_password、api_keys）写入时 base64 编码，读取时兼容 base64 和明文
+当前实现覆盖三类需求：
+1. `api_keys` 作为通用配置的一部分，在 `Config` 页面内生成、删除并随整份配置保存
+2. 网关在 `api_keys` 非空时校验客户端 API Key；为空时不做客户端鉴权
+3. 配置文件中的敏感信息（`api_key`、`admin_password`、`api_keys`）写入时 base64 编码，读取时兼容 base64 和明文
 
 ## 已实现内容
 
@@ -38,186 +39,49 @@ type ProviderConfig struct {
 }
 ```
 
-### 3. API 端点 (`internal/gateway/api_admin.go`)
+### 3. 管理 API (`internal/gateway/api_admin.go`)
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | /_admin/api/apikeys | 列出所有密钥名称 |
-| POST | /_admin/api/apikeys | 创建新密钥，返回明文密钥（仅此一次） |
-| DELETE | /_admin/api/apikeys | 删除密钥 |
+| GET | /_admin/api/apikeys | 返回当前密钥名称与按密钥聚合的用量统计 |
+| GET | /_admin/api/config | 返回脱敏后的整份配置，其中 `api_keys` value 为 `__REDACTED__` |
+| PUT | /_admin/api/config | 保存整份配置；`api_keys` 由配置页统一提交 |
 
-### 4. 前端页面 (`web/admin/src/views/ApiKeys.vue`)
+### 4. 前端页面 (`web/admin/src/views/Config.vue`)
 
-- 密钥列表展示
-- 创建密钥弹窗，显示生成的密钥（提示复制）
-- 删除密钥确认
+- API Key 区块直接放在通用配置页
+- 支持本地生成新密钥、删除密钥、展示按密钥聚合的请求与 token 用量
+- 新生成的明文密钥只在前端生成当次展示；保存后重新加载时只返回脱敏值
 
 ---
 
-## 待完善内容
+## 当前实现边界
 
-### 1. 密钥持久化到配置文件
+### 1. 客户端 API Key 与 Provider API Key 分离
 
-**问题**：当前实现中，API Key 仅保存在内存中，服务重启后丢失。
+- 客户端 API Key 只用于进入网关时认证
+- 认证成功后会立即移除 `Authorization` / `Api-Key` / `X-Api-Key`
+- 上游 Provider 的认证仍由 `selector.SetAuthHeaders` 基于 `provider.*.api_key` 或 OAuth 凭证注入
 
-**方案**：创建/删除密钥时同步更新配置文件。
+这条边界是必须的；否则客户端密钥会污染上游 Provider 鉴权链路。
 
-```go
-// handleAPIKeysCreate 中添加：
-func (g *Gateway) handleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-    // ... 生成密钥后 ...
+### 2. 用量统计粒度
 
-    // 持久化到配置文件
-    if g.configPath != "" {
-        if err := g.saveConfigFile(); err != nil {
-            // 回滚内存中的更改
-            delete(g.cfg.APIKeys, body.Name)
-            http.Error(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
-            return
-        }
-    }
-}
+当前按密钥维护两类指标：
 
-// 新增 saveConfigFile 方法
-func (g *Gateway) saveConfigFile() error {
-    // marshal config to YAML, inject secrets, write to g.configPath
-}
-```
+- 请求数：总数、成功数、失败数
+- token：输入 token、输出 token
 
-**修改位置**：`internal/gateway/api_admin.go`
+统计标签仍保留 route / route_model / endpoint 维度，管理端按密钥聚合展示。
 
-### 2. 密钥认证中间件
+### 3. 暂未实现
 
-**问题**：当前仅支持 admin 密码认证，API Key 未实际用于认证。
+以下能力不是当前实现目标：
 
-**方案**：新增认证中间件支持 API Key。
-
-```go
-// internal/gateway/auth.go
-
-// AuthMethod 认证方式
-type AuthMethod int
-const (
-    AuthNone AuthMethod = iota
-    AuthAdminPassword
-    AuthAPIKey
-)
-
-// Authenticate 检查请求认证
-func (g *Gateway) Authenticate(r *http.Request) (AuthMethod, string, bool) {
-    // 1. 检查 Bearer token (API Key)
-    auth := r.Header.Get("Authorization")
-    if strings.HasPrefix(auth, "Bearer ") {
-        token := strings.TrimPrefix(auth, "Bearer ")
-        for name, key := range g.cfg.APIKeys {
-            if subtle.ConstantTimeCompare([]byte(token), []byte(key.Value())) == 1 {
-                return AuthAPIKey, name, true
-            }
-        }
-    }
-
-    // 2. 检查 Basic Auth (Admin)
-    user, pass, ok := r.BasicAuth()
-    if ok && user == "admin" {
-        if subtle.ConstantTimeCompare([]byte(pass), []byte(g.cfg.AdminPassword.Value())) == 1 {
-            return AuthAdminPassword, "admin", true
-        }
-    }
-
-    return AuthNone, "", false
-}
-```
-
-### 3. API Key 权限控制
-
-**问题**：API Key 应该有更细粒度的权限控制。
-
-**方案**：扩展 API Key 结构支持权限字段。
-
-```go
-type APIKeyConfig struct {
-    Key         SecretString   `json:"key"`
-    Permissions []string       `json:"permissions"` // "read", "write", "admin"
-    CreatedAt   time.Time      `json:"created_at"`
-    LastUsedAt  time.Time      `json:"last_used_at,omitempty"`
-    Description string         `json:"description,omitempty"`
-}
-
-type ConfigStruct struct {
-    // ...
-    APIKeys map[string]*APIKeyConfig `json:"api_keys"`
-}
-```
-
-**权限级别**：
-- `read`：只读访问（GET 端点）
-- `write`：读写访问（GET/POST/PUT/DELETE 配置相关）
-- `admin`：完全访问（包括重启、密钥管理）
-
-### 4. 配置文件保存时的敏感信息处理
-
-**问题**：当前配置保存逻辑在 `handleAdminConfigPut` 中，需要确保敏感字段正确处理。
-
-**方案**：统一敏感字段处理逻辑。
-
-```go
-// config/secrets.go
-
-// SensitiveFields 定义所有敏感字段路径
-var SensitiveFields = []string{
-    "admin_password",
-    "api_keys.*",
-    "provider.*.api_key",
-}
-
-// MaskSensitiveFields 用于 API 返回时脱敏
-func MaskSensitiveFields(cfgMap map[string]any) {
-    // 递归处理，将敏感字段替换为 "***"
-}
-
-// EncodeSensitiveFields 用于保存时 base64 编码
-func EncodeSensitiveFields(cfgMap map[string]any) {
-    // 递归处理，对敏感字段进行 base64 编码
-}
-```
-
-### 5. 前端密钥管理增强
-
-**问题**：当前前端功能较简单。
-
-**方案**：
-
-1. **显示密钥元数据**：
-   - 创建时间
-   - 最后使用时间
-   - 权限级别
-
-2. **密钥使用统计**：
-   - 各密钥的请求次数
-   - 最近使用的端点
-
-3. **批量操作**：
-   - 批量删除
-   - 导出/导入密钥列表
-
-### 6. 安全增强
-
-**方案**：
-
-1. **密钥格式验证**：
-   ```go
-   func IsValidAPIKey(key string) bool {
-       // 格式：wk_ + 32字符 base62
-       if !strings.HasPrefix(key, "wk_") {
-           return false
-       }
-       if len(key) != 35 {
-           return false
-       }
-       // 检查字符集
-       return true
-   }
-   ```
+- 权限分级
+- 创建时间 / 最后使用时间
+- 密钥导入导出
+- 单独的 API Key 管理页面
 
 2. **密钥轮换**：
    - 支持重新生成密钥

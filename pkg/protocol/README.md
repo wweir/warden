@@ -12,7 +12,6 @@ protocol/
 │   ├── responses.go    # Responses API 请求/响应类型
 │   ├── convert.go      # Chat ↔ Responses 双向转换
 │   ├── stream.go       # SSE 流式解析器（Chat + Responses）
-│   ├── inject.go       # 工具注入
 │   └── prompt.go       # 系统提示词注入
 └── anthropic/          # Anthropic 协议实现
     ├── anthropic.go    # OpenAI ↔ Anthropic 格式转换
@@ -35,11 +34,26 @@ SSE 事件结构：
 
 ```go
 type Event struct {
-    EventType string // 事件类型（如 "message"、"content_block_delta"）
-    Data      string // 事件数据（JSON）
-    Raw       string // 原始 SSE 行
+    EventType string   // 事件类型（如 "message"、"content_block_delta"）
+    Data      string   // data 字段按 SSE 规则拼接后的结果
+    HasData   bool     // 是否显式出现过 data 字段
+    ID        string   // id 字段
+    HasID     bool     // 是否显式出现过 id 字段
+    Retry     *int     // retry 字段（仅在值合法时设置）
+    Comments  []string // 注释行内容（不含前导冒号）
+    Raw       string   // 原始 SSE 帧，重放时优先使用
 }
 ```
+
+解析器支持标准 SSE 帧字段：
+
+- `event`
+- `data`
+- `id`
+- `retry`
+- `:` 注释行
+
+并兼容 `LF`、`CRLF`、`CR` 三种行结束符。`ReplayEvents` 默认优先使用 `Raw` 重放原始帧内容；若事件是代码构造的，则按标准字段重新编码。
 
 ### ToolCallInfo
 
@@ -60,9 +74,7 @@ type ToolCallInfo struct {
 ```go
 type StreamParser interface {
     // Parse extracts tool call infos from SSE events
-    Parse(events []Event, injectedTools []string) ([]ToolCallInfo, bool, error)
-    // Filter removes injected tool calls from events
-    Filter(events []Event, injectedTools []string) []Event
+    Parse(events []Event) ([]ToolCallInfo, error)
 }
 ```
 

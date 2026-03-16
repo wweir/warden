@@ -16,13 +16,6 @@ export default defineConfig({
 	build: {
 		outDir: "dist",
 		emptyOutDir: true,
-		rollupOptions: {
-			output: {
-				manualChunks: {
-					codemirror: ["codemirror", "@codemirror/lang-json"],
-				},
-			},
-		},
 	},
 	server: {
 		proxy: {

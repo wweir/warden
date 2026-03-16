@@ -1,199 +1,164 @@
-# Warden - AI Gateway
+# Warden
 
-Warden 是一个轻量级 AI Gateway，提供统一的 OpenAI 兼容接口，将请求路由到多个上游 LLM Provider（OpenAI、Anthropic、Ollama、Qwen、GitHub Copilot），并透明注入 MCP 工具。
+Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的 OpenAI 兼容入口，把请求按路由和模型映射到不同 provider，并在请求链路上提供协议转换、System Prompt 注入、工具调用 Hook、日志与管理面板。
 
-## 核心功能
+## 当前能力
 
-- **多协议适配** — 统一 OpenAI 格式入口，自动转换 Anthropic/Ollama/Qwen/Copilot 协议
-- **Provider 路由与容错** — 按前缀路由，配置顺序决定优先级，失败自动指数退避抑制，支持多 Provider Failover；手动抑制的 provider 会在常规选择与 failover 中被跳过
-- **MCP 工具注入** — 自动注入 MCP 工具到请求，拦截并执行工具调用后继续对话，支持多轮递归和混合工具调用
-- **MCP 工具 Hook** — 支持 exec/ai/http 类型的 pre/post hook，可对工具调用进行安全审查或增强
-- **模型别名** — Provider 级别的模型别名映射，别名在 `/models` 中可见，请求时自动解析为真实模型名
-- **模型发现** — 自动查询上游 `/models` 端点，聚合多 Provider 模型列表，按模型名智能路由
-- **System Prompt 注入** — 按路由和模型精确匹配，自动注入自定义 system 提示词
-- **请求日志** — 支持文件和 HTTP 双后端，记录完整请求/响应和工具调用步骤，HTTP 后端支持 Go 模板渲染
-- **Web 管理面板** — 内置 Web UI，实时监控 Provider 状态、查看请求日志流、在线编辑配置、MCP 工具调试；监控卡片优先展示用量/速率/出错与退化压力，支持 5s 采样的用量/错误折线趋势，并提供 P95 TTFT、P99 Throughput 组合热点定位性能问题
-- **SSH 远程 MCP** — MCP Server 可通过 SSH 在远程主机执行，自动继承 `~/.ssh/config`
-- **请求补丁** — Provider 级别的 JSON Patch (RFC 6902)，可在转发前修改请求体
-- **Prometheus 指标** — 请求计数、延迟、TTFT、Throughput、Token 用量、Provider 健康状态（支持 route/provider/model 维度）
-- **同时支持 Chat Completions 和 Responses API**
-- **流式响应支持** — 包括流式场景下的工具调用拦截
+- 统一接入 `openai`、`anthropic`、`ollama`、`qwen`、`copilot`
+- 路由中心化配置：`route.protocol + route.exact_models + route.wildcard_models + route.hooks`
+- 精确模型 `upstreams` 映射与通配符模型 `providers` 选择
+- OpenAI `chat/completions` 与 `responses` 双接口
+- OpenAI `chat ↔ responses` 协议桥接
+- route-scoped 工具调用 Hook：`exec` / `ai` / `http`
+- Provider 健康探测、抑制、failover 与 Prometheus 指标
+- 可选客户端 API Key 鉴权；按密钥统计请求与 token 用量
+- Provider `/models` 发现失败不会阻塞启动，且会上游内部错误脱敏后再记录日志
+- 文件 / HTTP 请求日志
+- 内置管理面板：Dashboard、Providers、Routes、Tool Hooks、Logs、Config
 
-## 快速开始
+## 不再支持
 
-### 构建
+- 内置 MCP client 运行时
+- SSH 远程执行与 SSH 配置块
+
+如果你看到旧文档、旧配置或旧前端缓存里还提到 `mcp` / `ssh` 配置，那是历史残留，不是当前实现。
+
+## 构建与运行
 
 ```bash
-make build        # 前端构建 + Go 编译，输出到 bin/warden
+make build        # 前端构建 + Go 编译，输出 bin/warden
 make test         # go vet + go test
 make web          # 仅构建前端
+
+./bin/warden
+./bin/warden -c /path/to/warden.yaml
+./bin/warden -i   # 安装 systemd 服务
+./bin/warden -r   # 向运行实例发送 SIGHUP 热重载
 ```
 
-### 运行
+`make build` 通过 `ldflags` 注入版本和构建日期。
 
-```bash
-./bin/warden                     # 默认启动
-./bin/warden -c /path/to.yaml    # 指定配置文件
-./bin/warden -i                  # 安装为 systemd 服务
-./bin/warden -r                  # 向运行中的实例发送 SIGHUP 热重载
-```
+配置文件搜索顺序：`warden.yaml` → `config/warden.yaml` → `/etc/warden.yaml`，同时支持 `.yml` 后缀。
 
-配置文件搜索顺序：`warden.yaml` → `config/warden.yaml` → `/etc/warden.yaml`（同时支持 `.yml` 后缀）
+## 配置示例
 
-### 配置
-
-创建 `warden.yaml`（完整示例参见 [`config/warden.example.yaml`](config/warden.example.yaml)）：
+完整示例见 `config/warden.example.yaml`。
 
 ```yaml
 addr: ":8080"
 # admin_password: "your-secret-password"
+# api_keys:
+#   my-app: "wk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 provider:
-    openai:
-        url: "https://api.openai.com/v1"
-        protocol: "openai"
-        api_key: "${OPENAI_API_KEY}"
-        timeout: "60s"
+  openai:
+    url: "https://api.openai.com/v1"
+    protocol: "openai"
+    api_key: "${OPENAI_API_KEY}"
+    timeout: "60s"
 
-    anthropic:
-        url: "https://api.anthropic.com/v1"
-        protocol: "anthropic"
-        api_key: "${ANTHROPIC_API_KEY}"
-        timeout: "60s"
-
-    ollama:
-        url: "http://localhost:11434/v1"
-        protocol: "ollama"
-        timeout: "300s"
+  anthropic:
+    url: "https://api.anthropic.com/v1"
+    protocol: "anthropic"
+    api_key: "${ANTHROPIC_API_KEY}"
+    timeout: "60s"
 
 route:
-    /openai:
-        protocol: "chat"
-        tools: ["web-search"]
-        models:
-            gpt-4o:
-                upstreams:
-                    - provider: "openai"
-                      model: "gpt-4o"
-            "gpt-*":
-                providers: ["openai"]
+  /openai:
+    protocol: "chat"
+    exact_models:
+      gpt-4o:
+        upstreams:
+          - provider: "openai"
+            model: "gpt-4o"
+    wildcard_models:
+      "gpt-*":
+        providers: ["openai"]
 
-    /anthropic:
-        protocol: "anthropic"
-        tools: ["web-search", "filesystem"]
-        models:
-            claude-sonnet-4:
-                upstreams:
-                    - provider: "anthropic"
-                      model: "claude-sonnet-4"
-
-mcp:
-    web-search:
-        command: "npx"
-        args: ["-y", "@anthropic/mcp-server-web-search"]
-        env:
-            ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-
-    filesystem:
-        command: "npx"
-        args: ["-y", "@modelcontextprotocol/server-filesystem"]
+  /anthropic:
+    protocol: "anthropic"
+    exact_models:
+      claude-sonnet-4:
+        upstreams:
+          - provider: "anthropic"
+            model: "claude-sonnet-4"
 ```
 
-支持的 Provider 协议：`openai`、`anthropic`、`ollama`、`qwen`（OAuth 自动刷新）、`copilot`（GitHub Copilot OAuth）。API Key 支持 `${ENV_VAR}` 环境变量展开。路由配置以 `route.protocol + route.models` 为核心：精确模型使用 `upstreams` 做 provider/model 映射，若 `upstreams[].model` 与公开模型名不同则自动完成模型 alias；通配符模型使用 `providers` 做候选 provider 列表。
+### 配置要点
 
-### Web 管理面板
+- `provider.*.url` / `webhook.*.url` 必须是绝对 `http/https` URL
+- `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
+- `qwen` / `copilot` 在未显式配置 `api_key` 时，会从本地 `config_dir` 读取 OAuth 凭证
+- `api_keys` 为空时，网关不校验客户端 API Key；配置后支持 `Authorization: Bearer ...`、`Api-Key`、`X-Api-Key`
+- `route.exact_models` 只接受 `upstreams`
+- `route.wildcard_models` 只接受 `providers`
+- `route.hooks` 只观察并审计模型返回的工具调用；Warden 不负责执行内置 MCP 工具
 
-设置 `admin_password` 后，访问 `http://localhost:8080/_admin/`（用户名 `admin`）。
+## 管理面板
 
-- Dashboard — Provider 健康状态、路由概览、MCP 连接状态、Tokens（按 provider 聚合的模型输出 token/s）
-- Providers — 详情、模型列表、探活
-- Routes — 关联 Provider 统计、MCP 工具状态、请求测试
-- MCP Tools — 工具详情、参数调试、enable/disable 开关
-- Tool Hooks — 按 route 维护 hook 规则
-- Logs — SSE 实时请求日志流
-- Config — 结构化在线编辑、验证、重启
+设置 `admin_password` 后访问 `http://localhost:8080/_admin/`，用户名固定为 `admin`。
+
+- `Dashboard`：provider 状态、路由概览、实时指标
+- `Providers`：模型、健康状态、抑制控制，以及单个 provider 配置编辑
+- `Routes`：按 route 编辑协议、精确模型、通配符模型并做请求测试
+- `Tool Hooks`：按 route 编辑 hook 规则与建议
+- `Logs`：SSE 请求日志流
+- `Config`：通用配置、客户端 API 密钥、webhook、日志目标编辑与应用
 
 ## 使用
 
-Warden 提供 OpenAI 兼容接口，路由前缀替代原始 `/v1`：
-
 ```bash
-# Chat Completions
 curl http://localhost:8080/openai/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}'
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
 
-# Responses API
 curl http://localhost:8080/openai/responses \
   -H "Content-Type: application/json" \
-  -d '{"model": "gpt-4o", "input": "Hello"}'
+  -d '{"model":"gpt-4o","input":"Hello"}'
 
-# 查看可用模型（聚合所有 Provider）
 curl http://localhost:8080/openai/models
 ```
 
-MCP 工具对客户端完全透明 — Warden 自动注入工具定义、拦截工具调用、执行后将结果回传 LLM 继续生成。客户端只看到最终回复（或仅看到客户端自己定义的工具调用）。
+如果配置了 `api_keys`，客户端请求需要额外携带网关 API Key，例如：
 
-对 `protocol: "openai"` 的 provider，可选开启双向协议桥接：
+```bash
+curl http://localhost:8080/openai/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer wk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+客户端可通过 `X-Provider` 头强制指定 provider：
+
+```bash
+curl http://localhost:8080/openai/responses \
+  -H "Content-Type: application/json" \
+  -H "X-Provider: openai" \
+  -d '{"model":"gpt-4o","input":"Hello"}'
+```
+
+对 `protocol: "openai"` 的 provider：
 
 - `chat_to_responses: true`：本地 `chat/completions` → 上游 `/responses`
 - `responses_to_chat: true`：本地 `responses` → 上游 `/chat/completions`
 
-`responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。`previous_response_id`、`web_search`、`file_search` 等 Responses 原生能力无法映射到 Chat 协议。
-
-所有上游转发请求（包括 `chat/completions`、`responses`、透明代理）统一采用 header 安全转发策略：复制请求头后清洗 hop-by-hop/客户端认证头，重建 `X-Forwarded-*`，最后注入 provider 认证头。
-
-### 强制指定 Provider
-
-客户端可通过 `X-Provider` 请求头强制选择特定 provider，绕过自动选择和 failover 机制：
-
-```bash
-# 强制使用 ali-coding provider
-curl http://localhost:8080/codex/responses \
-  -H "Content-Type: application/json" \
-  -H "X-Provider: ali-coding" \
-  -d '{"model": "gpt-5.4", "input": "Hello"}'
-```
-
-此功能适用于：
-
-- 调试特定 provider 行为
-- 确保请求使用支持特定功能（如 `responses_to_chat`）的 provider
-- 避免 failover 导致的意外 provider 切换
-
-若指定的 provider 不在路由配置中，返回 `400 Bad Request`。
-
-Anthropic 原生 `/messages` 端点也可通过路由前缀访问，但走透明代理路径，**不支持 MCP 工具注入和 System Prompt 注入**：
-
-透明代理会先复制客户端请求头，再清洗 hop-by-hop/客户端认证头并重建 `X-Forwarded-*`，最后注入 provider 认证头。
-
-```bash
-# Anthropic native Messages API（透明代理）
-curl http://localhost:8080/anthropic/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{"model": "claude-opus-4-6", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello"}]}'
-```
-
-如需 MCP 工具注入，改用 `chat/completions` 端点以 OpenAI 格式访问 Anthropic provider，网关自动完成协议转换。
+`responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。
 
 ## 项目结构
 
-```
+```text
 cmd/warden/          # 入口
-config/              # 配置定义、验证、示例
-web/admin/           # Vue 3 前端（embed 到二进制）
+config/              # 配置定义、校验、示例
 internal/
-  gateway/           # 核心网关：路由、选择器、协议适配、工具注入/执行、Admin API、Prometheus 指标
-  mcp/               # MCP 客户端（JSON-RPC stdio）
-  reqlog/            # 请求日志（文件/HTTP 双后端）、SSE 广播器
-  install/           # systemd 服务安装
+  gateway/           # HTTP 网关、管理 API、指标、协议适配
+  install/           # systemd 安装逻辑
+  reqlog/            # 请求日志与 SSE 广播
+  selector/          # provider 选择与状态
 pkg/
-  protocol/          # LLM 协议公共类型（Event、ToolCallInfo、StreamParser）
-    openai/          # OpenAI 类型定义、流式解析、工具/提示词注入
-    anthropic/       # Anthropic 协议转换、流式解析、认证
-  provider/          # OAuth token 管理（Qwen、GitHub Copilot）
-  toolhook/          # 通用 Tool Hook 执行（适用于任意 tool call）
-  ssh/               # SSH 远程执行
+  protocol/          # 协议公共类型与协议实现
+  provider/          # OAuth token 管理（Qwen、Copilot）
+  toolhook/          # 通用工具调用 Hook 执行
+web/admin/           # Vue 3 管理前端（构建产物嵌入二进制）
 ```
 
 ## License

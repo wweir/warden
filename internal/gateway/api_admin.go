@@ -103,15 +103,6 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("GET /api/routes/detail", func(w http.ResponseWriter, r *http.Request) {
 		g.handleRouteDetail(w, r, nil)
 	})
-	mux.HandleFunc("GET /api/mcp/detail", func(w http.ResponseWriter, r *http.Request) {
-		g.handleMcpDetail(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/mcp/tool-call", func(w http.ResponseWriter, r *http.Request) {
-		g.handleMcpToolCall(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/mcp/tool-toggle", func(w http.ResponseWriter, r *http.Request) {
-		g.handleMcpToolToggle(w, r, nil)
-	})
 	mux.HandleFunc("GET /api/metrics/stream", func(w http.ResponseWriter, r *http.Request) {
 		g.handleMetricsStream(w, r, nil)
 	})
@@ -167,7 +158,7 @@ func (g *Gateway) basicAuth(next httprouter.Handle) httprouter.Handle {
 	}
 }
 
-// handleAdminStatus streams provider statuses, routes, and MCP server info via SSE.
+// handleAdminStatus streams provider statuses and route info via SSE.
 func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -198,17 +189,11 @@ func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ ht
 }
 
 func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
-	type mcpStatus struct {
-		Name      string `json:"name"`
-		ToolCount int    `json:"tool_count"`
-		Connected bool   `json:"connected"`
-	}
 	type routeInfo struct {
 		Prefix    string   `json:"prefix"`
 		Protocol  string   `json:"protocol"`
 		Providers []string `json:"providers"`
 		Models    []string `json:"models"`
-		Tools     []string `json:"tools"`
 		HookCount int      `json:"hook_count"`
 	}
 
@@ -221,7 +206,6 @@ func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 			Protocol:  r.Protocol,
 			Providers: r.ProviderNames(),
 			Models:    r.PublicModels(),
-			Tools:     r.Tools,
 			HookCount: len(r.Hooks),
 		})
 	}
@@ -229,22 +213,9 @@ func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 		return strings.Compare(a.Prefix, b.Prefix)
 	})
 
-	var mcps []mcpStatus
-	for name, client := range g.mcpClients {
-		mcps = append(mcps, mcpStatus{
-			Name:      name,
-			ToolCount: len(client.CachedTools()),
-			Connected: client.IsRunning(),
-		})
-	}
-	slices.SortFunc(mcps, func(a, b mcpStatus) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-
 	data, _ := json.Marshal(map[string]any{
 		"providers": providers,
 		"routes":    routes,
-		"mcp":       mcps,
 	})
 	fmt.Fprintf(w, "data: %s\n\n", data)
 }
@@ -286,6 +257,15 @@ func (g *Gateway) handleAdminConfigGet(w http.ResponseWriter, r *http.Request, _
 // maskAPIKeys recursively masks api_key and admin_password fields.
 func maskAPIKeys(m map[string]any) {
 	for k, v := range m {
+		if k == "api_keys" {
+			if keys, ok := v.(map[string]any); ok {
+				for name, raw := range keys {
+					if s, ok := raw.(string); ok && s != "" {
+						keys[name] = redactedPlaceholder
+					}
+				}
+			}
+		}
 		if k == "api_key" || k == "admin_password" {
 			if s, ok := v.(string); ok && s != "" {
 				m[k] = redactedPlaceholder
@@ -598,68 +578,8 @@ func (g *Gateway) handleConfigValidate(w http.ResponseWriter, r *http.Request, _
 	json.NewEncoder(w).Encode(map[string]any{"valid": true})
 }
 
-// handleMcpToolCall invokes a specific tool on an MCP server.
-func (g *Gateway) handleMcpToolCall(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	var body struct {
-		MCP       string          `json:"mcp"`
-		Tool      string          `json:"tool"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if body.MCP == "" || body.Tool == "" {
-		http.Error(w, "mcp and tool are required", http.StatusBadRequest)
-		return
-	}
-
-	client, exists := g.mcpClients[body.MCP]
-	if !exists {
-		http.Error(w, "unknown MCP server: "+body.MCP, http.StatusNotFound)
-		return
-	}
-	if !client.IsRunning() {
-		http.Error(w, "MCP server not connected: "+body.MCP, http.StatusServiceUnavailable)
-		return
-	}
-
-	// validate tool name exists in cached tools
-	toolFound := false
-	for _, t := range client.CachedTools() {
-		if t.Name == body.Tool {
-			toolFound = true
-			break
-		}
-	}
-	if !toolFound {
-		http.Error(w, "unknown tool: "+body.Tool, http.StatusNotFound)
-		return
-	}
-
-	start := time.Now()
-	result, err := client.CallTool(r.Context(), body.Tool, body.Arguments)
-	duration := time.Since(start)
-
-	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":      "error",
-			"error":       err.Error(),
-			"duration_ms": duration.Milliseconds(),
-		})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]any{
-		"status":      "ok",
-		"result":      result,
-		"duration_ms": duration.Milliseconds(),
-	})
-}
-
 // handleRouteDetail returns detailed information about a single route,
-// including associated provider statistics and MCP tool statuses.
+// including associated provider statistics.
 func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	prefix := r.URL.Query().Get("prefix")
 	if prefix == "" {
@@ -683,24 +603,6 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		providers = []sel.ProviderStatus{}
 	}
 
-	type mcpToolStatus struct {
-		Name      string `json:"name"`
-		Connected bool   `json:"connected"`
-		ToolCount int    `json:"tool_count"`
-	}
-	var tools []mcpToolStatus
-	for _, toolName := range route.Tools {
-		ts := mcpToolStatus{Name: toolName}
-		if client, ok := g.mcpClients[toolName]; ok {
-			ts.Connected = client.IsRunning()
-			ts.ToolCount = len(client.CachedTools())
-		}
-		tools = append(tools, ts)
-	}
-	if tools == nil {
-		tools = []mcpToolStatus{}
-	}
-
 	type routeModelDetail struct {
 		Name          string   `json:"name"`
 		SystemPrompt  string   `json:"system_prompt,omitempty"`
@@ -721,7 +623,7 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		exactModels = append(exactModels, row)
 	}
 	var wildcardModels []routeModelDetail
-	for _, wildcard := range route.WildcardModels() {
+	for _, wildcard := range route.CompiledWildcardModels() {
 		row := routeModelDetail{
 			Name:         wildcard.Pattern,
 			SystemPrompt: wildcard.SystemPrompt,
@@ -738,7 +640,6 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		"prefix":          prefix,
 		"protocol":        route.Protocol,
 		"providers":       providers,
-		"tools":           tools,
 		"models":          route.PublicModels(),
 		"exact_models":    exactModels,
 		"wildcard_models": wildcardModels,
@@ -747,121 +648,6 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-}
-
-// handleMcpDetail returns detailed information about a single MCP server.
-func (g *Gateway) handleMcpDetail(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		http.Error(w, "name parameter required", http.StatusBadRequest)
-		return
-	}
-
-	mcpCfg, exists := g.cfg.MCP[name]
-	if !exists {
-		http.Error(w, "unknown MCP server: "+name, http.StatusNotFound)
-		return
-	}
-
-	client := g.mcpClients[name]
-
-	type toolInfo struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		InputSchema any    `json:"input_schema,omitempty"`
-		Disabled    bool   `json:"disabled"`
-	}
-
-	var tools []toolInfo
-	connected := false
-	if client != nil {
-		connected = client.IsRunning()
-		for _, t := range client.CachedTools() {
-			disabled := false
-			if mcpCfg.Tools != nil {
-				if tc, ok := mcpCfg.Tools[t.Name]; ok {
-					disabled = tc.Disabled
-				}
-			}
-			tools = append(tools, toolInfo{
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: t.InputSchema,
-				Disabled:    disabled,
-			})
-		}
-	}
-	if tools == nil {
-		tools = []toolInfo{}
-	}
-
-	// determine which routes use this MCP server
-	var routes []string
-	for prefix, route := range g.cfg.Route {
-		for _, toolName := range route.Tools {
-			if toolName == name {
-				routes = append(routes, prefix)
-				break
-			}
-		}
-	}
-
-	resp := map[string]any{
-		"name":      name,
-		"command":   mcpCfg.Command,
-		"args":      mcpCfg.Args,
-		"connected": connected,
-		"tools":     tools,
-		"routes":    routes,
-	}
-	if mcpCfg.SSH != "" {
-		resp["ssh"] = mcpCfg.SSH
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// handleMcpToolToggle enables or disables a specific tool within an MCP server.
-// The disabled state is persisted in the in-memory MCPConfig.Tools map.
-// To make it permanent, save the config via PUT /api/config.
-func (g *Gateway) handleMcpToolToggle(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	var body struct {
-		MCP      string `json:"mcp"`
-		Tool     string `json:"tool"`
-		Disabled bool   `json:"disabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if body.MCP == "" || body.Tool == "" {
-		http.Error(w, "mcp and tool are required", http.StatusBadRequest)
-		return
-	}
-
-	mcpCfg, exists := g.cfg.MCP[body.MCP]
-	if !exists {
-		http.Error(w, "unknown MCP server: "+body.MCP, http.StatusNotFound)
-		return
-	}
-
-	if mcpCfg.Tools == nil {
-		mcpCfg.Tools = make(map[string]*config.ToolConfig)
-	}
-	tc, ok := mcpCfg.Tools[body.Tool]
-	if !ok {
-		tc = &config.ToolConfig{}
-		mcpCfg.Tools[body.Tool] = tc
-	}
-	tc.Disabled = body.Disabled
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"mcp":      body.MCP,
-		"tool":     body.Tool,
-		"disabled": body.Disabled,
-	})
 }
 
 // handleMetricsStream serves SSE real-time metrics for dashboard charts.
@@ -1218,10 +1004,84 @@ func (g *Gateway) collectDashboardCounters() dashboardCounterSample {
 
 // handleAPIKeysList returns all API keys (masked).
 func (g *Gateway) handleAPIKeysList(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	keys := make([]map[string]string, 0, len(g.cfg.APIKeys))
+	type usageStats struct {
+		TotalRequests    int64 `json:"total_requests"`
+		SuccessRequests  int64 `json:"success_requests"`
+		FailureRequests  int64 `json:"failure_requests"`
+		PromptTokens     int64 `json:"prompt_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
+	}
+
+	usageByKey := map[string]*usageStats{}
+	for _, met := range collectMetrics(apiKeyRequestCounter) {
+		var (
+			key    string
+			status string
+		)
+		for _, label := range met.GetLabel() {
+			switch label.GetName() {
+			case "api_key":
+				key = label.GetValue()
+			case "status":
+				status = label.GetValue()
+			}
+		}
+		if key == "" {
+			continue
+		}
+		row := usageByKey[key]
+		if row == nil {
+			row = &usageStats{}
+			usageByKey[key] = row
+		}
+		value := int64(met.GetCounter().GetValue())
+		row.TotalRequests += value
+		if status == "success" {
+			row.SuccessRequests += value
+		}
+		if status == "failure" {
+			row.FailureRequests += value
+		}
+	}
+	for _, met := range collectMetrics(apiKeyTokenCounter) {
+		var (
+			key string
+			typ string
+		)
+		for _, label := range met.GetLabel() {
+			switch label.GetName() {
+			case "api_key":
+				key = label.GetValue()
+			case "type":
+				typ = label.GetValue()
+			}
+		}
+		if key == "" {
+			continue
+		}
+		row := usageByKey[key]
+		if row == nil {
+			row = &usageStats{}
+			usageByKey[key] = row
+		}
+		value := int64(met.GetCounter().GetValue())
+		switch typ {
+		case "prompt":
+			row.PromptTokens += value
+		case "completion":
+			row.CompletionTokens += value
+		}
+	}
+
+	keys := make([]map[string]any, 0, len(g.cfg.APIKeys))
 	for name := range g.cfg.APIKeys {
-		keys = append(keys, map[string]string{
-			"name": name,
+		usage := usageByKey[name]
+		if usage == nil {
+			usage = &usageStats{}
+		}
+		keys = append(keys, map[string]any{
+			"name":  name,
+			"usage": usage,
 		})
 	}
 
