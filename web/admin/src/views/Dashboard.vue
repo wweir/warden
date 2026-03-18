@@ -1,14 +1,22 @@
 <template>
   <div>
-    <h2 class="page-title">{{ $t('dashboard.title') }}</h2>
+    <div class="page-header">
+      <div class="page-header-main">
+        <h2 class="page-title">{{ $t('dashboard.title') }}</h2>
+        <p v-if="routeCount === 0" class="page-hint">{{ $t('dashboard.emptyRoutesHint') }}</p>
+      </div>
+    </div>
     <div v-if="error" class="msg msg-error">{{ error }}</div>
 
     <section v-if="status">
       <!-- Summary stats -->
       <div class="stat-grid">
         <router-link to="/routes" class="stat-card">
-          <div class="stat-value">{{ status.routes?.length ?? 0 }}</div>
+          <div class="stat-value">{{ routeCount }}</div>
           <div class="stat-label">{{ $t('dashboard.routes') }}</div>
+          <div class="stat-sub">
+            <span class="text-success">{{ activeRoutesCount }} {{ $t('dashboard.active') }}</span>
+          </div>
         </router-link>
 
         <router-link to="/providers" class="stat-card">
@@ -31,6 +39,14 @@
             <template v-if="providerStats.failoverCount > 0"> · <span class="text-warning">{{ providerStats.failoverCount }} {{ $t('dashboard.failover', providerStats.failoverCount) }}</span></template>
             <template v-if="providerStats.preStreamErrors > 0"> · <span class="text-error">{{ providerStats.preStreamErrors }} {{ $t('dashboard.preStream') }}</span></template>
             <template v-if="providerStats.inStreamErrors > 0"> · <span class="text-error">{{ providerStats.inStreamErrors }} {{ $t('dashboard.inStream') }}</span></template>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-value">{{ fmtNum(tokenStats.promptTotal + tokenStats.completionTotal) }}</div>
+          <div class="stat-label">{{ $t('dashboard.totalTokens') }}</div>
+          <div class="stat-sub">
+            <span class="text-success">{{ usageLatest.tok_per_min > 0 ? fmtNum(Math.round(usageLatest.tok_per_min)) : 0 }}/min</span>
           </div>
         </div>
       </div>
@@ -195,6 +211,8 @@ const chartGroup = 'dashboard-time'
 let statusStop = null
 let metricsStop = null
 
+const routeCount = computed(() => status.value?.routes?.length ?? 0)
+
 const providerStats = computed(() => {
   const providers = status.value?.providers ?? []
   let ok = 0
@@ -224,6 +242,11 @@ const providerStats = computed(() => {
 const successRate = computed(() => {
   const { totalRequests, successCount } = providerStats.value
   return totalRequests > 0 ? (successCount / totalRequests) * 100 : 100
+})
+
+const activeRoutesCount = computed(() => {
+  const routes = status.value?.routes ?? []
+  return routes.filter(r => (r.total_requests ?? 0) > 0).length
 })
 
 const alerts = computed(() => {
@@ -487,6 +510,27 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-header .page-title {
+  margin-bottom: 0;
+}
+
+.page-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-3);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

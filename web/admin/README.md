@@ -5,9 +5,10 @@
 `web/admin` 是嵌入式 Vue 3 管理端，负责展示和编辑当前后端真实支持的能力：
 
 - Dashboard：provider 状态、路由概览、实时指标
-- Providers / Routes：详情、调试与配置编辑
+- Providers / Routes：详情与配置编辑
 - Tool Hooks：route-scoped hook 编辑与建议
 - Logs：SSE 请求日志流
+- Logs 页面整合会话时，支持 Responses API 的无状态输入展开和有状态 `previous_response_id` 续接两种模式
 - Config：结构化配置编辑、客户端 API 密钥、验证、应用
 
 约束：
@@ -19,8 +20,11 @@
 当前配置页中的 route 编辑约束：
 
 - `Routes` 页面负责 route 配置编辑，显式区分 `exact_models` 和 `wildcard_models`
+- `Routes` 页面中的 exact model upstream 与 wildcard provider 都以列表顺序表达优先级，并支持在 UI 中调整前后顺序
+- `Routes` 页面中的 exact upstream model 建议值会合并 `provider.models` 静态配置与运行时 `/models` 已发现结果，减少手工抄写
+- `Providers` 页面卡片支持直接跳到“基于该 provider 模型创建 route”的新建入口；新 route 会默认生成该 provider 已配置/已发现模型的 `exact_models`，并把每个 public model 绑定回同名 upstream model
 - `Tool Hooks` 页面负责 route hooks 编辑
-- `Providers` 页面负责单个 provider 配置编辑
+- `Providers` 页面负责单个 provider 配置编辑；`provider.models` 在 UI 中被明确当作“静态模型基线/兜底”，并复用运行时已发现模型作为录入建议，不等同于 route 对外暴露模型定义
 - `Config` 页面保留通用配置、客户端 API 密钥、webhook 和日志目标
 
 ## Dashboard Data Flow

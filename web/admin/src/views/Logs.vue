@@ -823,10 +823,13 @@ const EMPTY_HASHES = Object.freeze([]);
 
 // per-log caches to avoid repeated parse work in session grouping/filtering
 const parsedRequestCache = new WeakMap();
+const parsedResponseCache = new WeakMap();
 const previewCache = new WeakMap();
 const userHashesCache = new WeakMap();
 const fingerprintCache = new WeakMap();
 const timestampCache = new WeakMap();
+const previousResponseIDCache = new WeakMap();
+const responseIDCache = new WeakMap();
 
 // djb2 string hash (kept for fallback path)
 function hashStr(s) {
@@ -891,6 +894,45 @@ function parseRequest(log) {
 	}
 	parsedRequestCache.set(log, req);
 	return req;
+}
+
+function parseResponse(log) {
+	if (!log || typeof log !== "object") return null;
+	if (parsedResponseCache.has(log)) return parsedResponseCache.get(log);
+
+	let resp = log.response;
+	if (!resp) {
+		parsedResponseCache.set(log, null);
+		return null;
+	}
+	if (typeof resp === "string") {
+		try {
+			resp = JSON.parse(resp);
+		} catch {
+			parsedResponseCache.set(log, null);
+			return null;
+		}
+	}
+	parsedResponseCache.set(log, resp);
+	return resp;
+}
+
+function getPreviousResponseID(log) {
+	if (!log || typeof log !== "object") return "";
+	if (previousResponseIDCache.has(log)) return previousResponseIDCache.get(log);
+	const req = parseRequest(log);
+	const id = req && typeof req.previous_response_id === "string" ? req.previous_response_id : "";
+	previousResponseIDCache.set(log, id);
+	return id;
+}
+
+function getResponseID(log) {
+	if (!log || typeof log !== "object") return "";
+	if (responseIDCache.has(log)) return responseIDCache.get(log);
+	const resp = parseResponse(log);
+	const id = resp && typeof resp.id === "string" ? resp.id : "";
+	responseIDCache.set(log, id);
+	return id;
 }
 
 // extract a short preview of the last user message in a request
@@ -1021,14 +1063,16 @@ function toggleChain(chainId) {
 }
 
 // group all logs into conversation chains.
-// If fingerprint is present, use FSM prefix matching for session continuity.
-// Falls back to legacy user-message hash + time-gap heuristic for logs without fingerprint.
+// Prefer explicit Responses stateful links (previous_response_id -> response.id),
+// then fingerprint FSM prefix matching, then the legacy user-hash + time-gap heuristic.
 const chainedLogs = computed(() => {
 	const items = logs.value;
 	if (!items.length) return [];
 
 	const sorted = [...items].sort((a, b) => getTimestampMs(a) - getTimestampMs(b));
 
+	// key = response.id -> chain index
+	const statefulChainsByResponseID = new Map();
 	// key = "{model}\0{sysHash}" -> chain indexes
 	const fpChainsByKey = new Map();
 	// key = "{lastUserHash}" -> chain indexes
@@ -1090,12 +1134,28 @@ const chainedLogs = computed(() => {
 		chain.lastModel = model;
 	}
 
+	function maybeUpgradeFingerprintIndex(chain, parsed, model) {
+		if (!parsed || parsed.fsm.length === 0) return;
+		if (!chain.lastParsed) {
+			upgradeFingerprintIndex(chain, parsed, model);
+			return;
+		}
+		if (chain.fpKey && chain.fpKey !== fpKey(model, parsed.sysHash)) {
+			return;
+		}
+		if (isFSMPrefix(chain.lastParsed.fsm, parsed.fsm)) {
+			upgradeFingerprintIndex(chain, parsed, model);
+		}
+	}
+
 	function appendToChain(chain, log, parsed, hashes) {
 		reindexFallback(chain, null);
 		chain.logs.push(log);
-		if (parsed) {
-			upgradeFingerprintIndex(chain, parsed, log.model);
+		const responseID = getResponseID(log);
+		if (responseID) {
+			statefulChainsByResponseID.set(responseID, chain.idx);
 		}
+		maybeUpgradeFingerprintIndex(chain, parsed, log.model);
 		const nextHash = hashes.length > 0 ? hashes[hashes.length - 1] : null;
 		reindexFallback(chain, nextHash);
 	}
@@ -1104,9 +1164,19 @@ const chainedLogs = computed(() => {
 		const parsed = getParsedFingerprint(log);
 		const ts = getTimestampMs(log);
 		const hashes = extractUserHashes(log);
+		const previousResponseID = getPreviousResponseID(log);
 		let matched = false;
 
-		if (parsed) {
+		if (previousResponseID) {
+			const chainIdx = statefulChainsByResponseID.get(previousResponseID);
+			const chain = chainIdx == null ? null : chains[chainIdx];
+			if (chain) {
+				appendToChain(chain, log, parsed, hashes);
+				matched = true;
+			}
+		}
+
+		if (!matched && parsed) {
 			// fingerprint path: match by (model + sys_hash, FSM prefix)
 			const candidates = fpChainsByKey.get(fpKey(log.model, parsed.sysHash)) || EMPTY_HASHES;
 			for (let i = candidates.length - 1; i >= 0; i--) {
@@ -1159,11 +1229,13 @@ const chainedLogs = computed(() => {
 				fpKey: "",
 			};
 			chains.push(chain);
-			if (parsed) {
-				upgradeFingerprintIndex(chain, parsed, log.model);
-			}
+			maybeUpgradeFingerprintIndex(chain, parsed, log.model);
 			const nextHash = hashes.length > 0 ? hashes[hashes.length - 1] : null;
 			reindexFallback(chain, nextHash);
+			const responseID = getResponseID(log);
+			if (responseID) {
+				statefulChainsByResponseID.set(responseID, chain.idx);
+			}
 		}
 	}
 

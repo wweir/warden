@@ -182,7 +182,47 @@
 					</template>
 
 					<label>models</label>
-					<TagListEditor v-model="providerConfig.models" placeholder="Model ID" />
+					<div class="models-editor">
+						<div class="models-toolbar">
+							<div class="models-copy">
+								<p class="models-guide">{{ $t("providerDetail.modelsGuide") }}</p>
+								<div class="models-meta">
+									<span class="badge badge-none">
+										{{ $t("providerDetail.modelsOptional") }}
+									</span>
+									<span class="hint">
+										{{ $t("providerDetail.modelsConfiguredCount", { n: providerConfig.models.length }) }}
+									</span>
+									<span v-if="!create" class="hint">
+										{{ $t("providerDetail.modelsDiscoveredCount", { n: discoveredModelIds.length }) }}
+									</span>
+								</div>
+							</div>
+							<button
+								v-if="missingDiscoveredModelIds.length > 0"
+								type="button"
+								class="btn btn-secondary btn-sm"
+								@click="appendDiscoveredModels"
+							>
+								{{ $t("providerDetail.addDiscoveredModels", { n: missingDiscoveredModelIds.length }) }}
+							</button>
+						</div>
+						<p class="hint models-hint">
+							{{
+								discoveredModelIds.length > 0
+									? $t("providerDetail.modelsSuggestionHint", { n: discoveredModelIds.length })
+									: $t("providerDetail.modelsNoSuggestionHint")
+							}}
+						</p>
+						<TagListEditor
+							v-model="providerConfig.models"
+							:suggestions="discoveredModelIds"
+							:placeholder="$t('providerDetail.modelsPlaceholder')"
+						/>
+						<p class="hint models-hint">
+							{{ $t("providerDetail.modelsBehaviorHint") }}
+						</p>
+					</div>
 				</div>
 			</section>
 
@@ -421,6 +461,20 @@ const parsedModels = computed(() => {
 	});
 });
 
+const discoveredModelIds = computed(() => {
+	const ids = [];
+	for (const model of parsedModels.value) {
+		const id = typeof model?.id === "string" ? model.id.trim() : "";
+		if (!id || ids.includes(id)) continue;
+		ids.push(id);
+	}
+	return ids;
+});
+
+const missingDiscoveredModelIds = computed(() =>
+	discoveredModelIds.value.filter((id) => !(providerConfig.value.models || []).includes(id)),
+);
+
 function cloneData(value) {
 	return JSON.parse(JSON.stringify(value ?? {}));
 }
@@ -454,6 +508,14 @@ function providerUrlPlaceholder(protocol) {
 		default:
 			return "https://api.openai.com/v1";
 	}
+}
+
+function appendDiscoveredModels() {
+	if (missingDiscoveredModelIds.value.length === 0) return;
+	providerConfig.value.models = [
+		...(providerConfig.value.models || []),
+		...missingDiscoveredModelIds.value,
+	];
 }
 
 function formatTime(timeValue) {
@@ -827,6 +889,43 @@ async function unsuppressProvider() {
 	min-height: 34px;
 }
 
+.models-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.models-toolbar {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.models-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.models-guide {
+	margin: 0;
+	font-size: 13px;
+	color: var(--c-text);
+}
+
+.models-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.models-hint {
+	display: block;
+	margin: 0;
+}
+
 .form-checkbox {
 	width: 16px;
 	height: 16px;
@@ -852,7 +951,8 @@ async function unsuppressProvider() {
 	}
 
 	.url-field,
-	.secret-field {
+	.secret-field,
+	.models-toolbar {
 		flex-direction: column;
 		align-items: stretch;
 	}

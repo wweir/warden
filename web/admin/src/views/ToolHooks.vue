@@ -5,32 +5,36 @@
     <div v-if="saveMsg" :class="['msg', saveMsg.type]">{{ saveMsg.text }}</div>
 
     <section class="info-section" style="margin-bottom:20px">
-      <div class="section-header section-toggle" @click="quickStartOpen = !quickStartOpen">
+      <div class="section-header">
         <div>
-          <h3>{{ $t('hooks.quickStartTitle') }}</h3>
-          <p class="section-subtitle">{{ $t('hooks.quickStartDesc') }}</p>
+          <h3>{{ $t('hooks.logicTitle') }}</h3>
+          <p class="section-subtitle">{{ $t('hooks.logicDesc') }}</p>
         </div>
-        <span class="chevron">{{ quickStartOpen ? '▼' : '▶' }}</span>
+        <button class="btn btn-secondary btn-sm" type="button" @click="quickStartOpen = !quickStartOpen">
+          {{ quickStartOpen ? $t('hooks.hideExamples') : $t('hooks.showExamples') }}
+        </button>
+      </div>
+
+      <div class="logic-flow">
+        <article v-for="(step, idx) in logicSteps" :key="step.key" class="logic-step">
+          <div class="logic-step-index">{{ idx + 1 }}</div>
+          <div>
+            <div class="guide-card-title">{{ step.title }}</div>
+            <p class="guide-card-desc">{{ step.desc }}</p>
+          </div>
+        </article>
       </div>
 
       <div v-show="quickStartOpen" class="quick-start-stack">
-        <article class="guide-overview">
-          <div class="guide-overview-head">
-            <div class="guide-card-title">{{ quickStartOverview.title }}</div>
-            <code class="guide-overview-example">{{ quickStartOverview.example }}</code>
-          </div>
-          <p class="guide-card-desc">{{ quickStartOverview.desc }}</p>
-        </article>
-
         <div class="guide-grid">
-        <article v-for="card in quickStartCards" :key="card.key" class="guide-card">
-          <div class="guide-card-title">{{ card.title }}</div>
-          <p class="guide-card-desc">{{ card.desc }}</p>
-          <div class="guide-example">
-            <span class="guide-label">{{ $t('hooks.exampleLabel') }}</span>
-            <code>{{ card.example }}</code>
-          </div>
-        </article>
+          <article v-for="card in quickStartCards" :key="card.key" class="guide-card">
+            <div class="guide-card-title">{{ card.title }}</div>
+            <p class="guide-card-desc">{{ card.desc }}</p>
+            <div class="guide-example">
+              <span class="guide-label">{{ $t('hooks.exampleLabel') }}</span>
+              <code>{{ card.example }}</code>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -44,9 +48,6 @@
           </div>
           <span class="chevron">{{ suggestionsOpen ? '▼' : '▶' }}</span>
         </div>
-        <button class="btn btn-secondary btn-sm" @click="loadSuggestions" :disabled="loadingSuggestions">
-          {{ loadingSuggestions ? $t('common.loading') : $t('hooks.refreshSuggestions') }}
-        </button>
       </div>
 
       <div v-if="suggestionsOpen && suggestionError" class="msg msg-error" style="margin-bottom:12px">
@@ -145,6 +146,9 @@
               <option v-for="route in routeOptions" :key="route" :value="route">{{ route }}</option>
             </select>
           </div>
+          <button class="btn btn-secondary btn-sm" @click="loadSuggestions()" :disabled="loadingSuggestions || !selectedRoute">
+            {{ loadingSuggestions ? $t('common.loading') : $t('hooks.refreshSuggestions') }}
+          </button>
           <button class="btn btn-primary btn-sm" @click="addRule" :disabled="!selectedRoute">{{ $t('hooks.addRule') }}</button>
         </div>
       </div>
@@ -328,22 +332,29 @@ const routeConfigMap = ref({})
 const providerConfigMap = ref({})
 const routeHookRulesMap = ref({})
 const selectedRoute = ref('')
-const quickStartOpen = ref(true)
+const quickStartOpen = ref(false)
 const suggestionsOpen = ref(true)
 
 const routeModelMap = computed(() => buildRouteModelMap(routeConfigMap.value, providerConfigMap.value))
 const routeOptions = computed(() => sortTextValues(Object.keys(routeConfigMap.value || {})))
 
-const quickStartOverview = computed(() => ({
-  title: t('hooks.about'),
-  desc: t('hooks.aboutDesc', {
-    pattern: 'mcp_name__tool_name',
-    wildcard: '*',
-    example1: 'my_mcp__write_*',
-    example2: '*',
-  }),
-  example: 'my_mcp__write_* / *',
-}))
+const logicSteps = computed(() => ([
+  {
+    key: 'match',
+    title: t('hooks.guideMatchTitle'),
+    desc: t('hooks.guideMatchDesc'),
+  },
+  {
+    key: 'type',
+    title: t('hooks.logicTypeTitle'),
+    desc: t('hooks.logicTypeDesc'),
+  },
+  {
+    key: 'params',
+    title: t('hooks.logicParamsTitle'),
+    desc: t('hooks.logicParamsDesc'),
+  },
+]))
 
 const quickStartCards = computed(() => ([
   {
@@ -445,7 +456,7 @@ function syncRulesFromSelectedRoute(route = selectedRoute.value) {
   rules.value = cloneRules(routeHookRulesMap.value[normalizedRoute] || [])
 }
 
-function selectEditingRoute(route) {
+async function selectEditingRoute(route) {
   const normalizedRoute = normalizeText(route)
   if (normalizedRoute === normalizeText(selectedRoute.value)) {
     syncRulesFromSelectedRoute(normalizedRoute)
@@ -459,6 +470,7 @@ function selectEditingRoute(route) {
     query: normalizedRoute ? { route: normalizedRoute } : {},
   })
   saveMsg.value = null
+  await loadSuggestions(normalizedRoute)
 }
 
 function ensureSelectedRoute(messageKey = 'hooks.selectRouteToEdit') {
@@ -785,11 +797,18 @@ async function loadConfig() {
   syncRulesFromSelectedRoute(nextRoute)
 }
 
-async function loadSuggestions() {
+async function loadSuggestions(route = selectedRoute.value) {
+  const normalizedRoute = normalizeText(route)
+  if (!normalizedRoute) {
+    recentLogs.value = 0
+    suggestions.value = []
+    suggestionError.value = ''
+    return
+  }
   loadingSuggestions.value = true
   suggestionError.value = ''
   try {
-    const resp = await fetchToolHookSuggestions()
+    const resp = await fetchToolHookSuggestions(normalizedRoute)
     recentLogs.value = resp.recent_logs || 0
     suggestions.value = resp.suggestions || []
   } catch (e) {
@@ -805,7 +824,7 @@ async function load() {
   } catch (e) {
     saveMsg.value = { type: 'msg-error', text: t('hooks.loadFailed', { error: e.message }) }
   }
-  await loadSuggestions()
+  await loadSuggestions(selectedRoute.value)
 }
 
 async function save() {
@@ -889,44 +908,49 @@ onMounted(load)
   gap: 12px;
 }
 
+.logic-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.logic-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+}
+
+.logic-step-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 .quick-start-stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin-top: 12px;
 }
 
-.guide-overview,
 .guide-card {
   border: 1px solid var(--c-border);
   border-radius: var(--radius-sm);
   padding: 14px;
   background: linear-gradient(180deg, #fff 0%, #f7fbff 100%);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
-}
-
-.guide-overview {
-  padding: 18px;
-  background: linear-gradient(135deg, #fffaf0 0%, #f3f9ff 100%);
-  border-color: #d8e7f7;
-}
-
-.guide-overview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.guide-overview-example {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #fff;
-  color: #184a7a;
-  border: 1px solid #d8e7f7;
-  font-size: 12px;
 }
 
 .guide-card-title {
@@ -1138,13 +1162,13 @@ onMounted(load)
   .section-header,
   .rules-toolbar,
   .field-headline,
-  .guide-overview-head,
   .route-hint,
   .suggestion-actions {
     flex-direction: column;
     align-items: stretch;
   }
 
+  .logic-flow,
   .guide-grid {
     grid-template-columns: 1fr;
   }

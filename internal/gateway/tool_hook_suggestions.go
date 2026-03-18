@@ -8,6 +8,7 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/internal/reqlog"
+	"github.com/wweir/warden/pkg/protocol"
 )
 
 type toolHookSuggestionResponse struct {
@@ -60,6 +61,20 @@ type toolSuggestionRouteAgg struct {
 	LastSeen       time.Time
 	ModelCounts    map[string]int
 	ProviderCounts map[string]int
+}
+
+func buildToolHookSuggestionsForRoute(records []reqlog.Record, route string) toolHookSuggestionResponse {
+	if route == "" {
+		return buildToolHookSuggestions(records)
+	}
+
+	filtered := make([]reqlog.Record, 0, len(records))
+	for _, rec := range records {
+		if rec.Route == route {
+			filtered = append(filtered, rec)
+		}
+	}
+	return buildToolHookSuggestions(filtered)
 }
 
 func buildToolHookSuggestions(records []reqlog.Record) toolHookSuggestionResponse {
@@ -178,7 +193,7 @@ func buildToolHookSuggestions(records []reqlog.Record) toolHookSuggestionRespons
 }
 
 func extractToolCallObservations(rec reqlog.Record) []toolCallObservation {
-	seen := map[string]struct{}{}
+	seen := map[string]int{}
 	observations := make([]toolCallObservation, 0)
 	add := func(call toolCallObservation) {
 		if call.Name == "" {
@@ -188,10 +203,13 @@ func extractToolCallObservations(rec reqlog.Record) []toolCallObservation {
 		if call.ID != "" {
 			key = "id\x00" + call.ID
 		}
-		if _, ok := seen[key]; ok {
+		if idx, ok := seen[key]; ok {
+			if observations[idx].Arguments == "" && call.Arguments != "" {
+				observations[idx] = call
+			}
 			return
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(observations)
 		observations = append(observations, call)
 	}
 
@@ -217,6 +235,14 @@ func extractToolCallsFromJSON(raw json.RawMessage) []toolCallObservation {
 	}
 
 	result := gjson.ParseBytes(raw)
+	if result.Type == gjson.String {
+		return extractToolCallsFromSSE([]byte(result.String()))
+	}
+
+	return extractToolCallsFromResult(result)
+}
+
+func extractToolCallsFromResult(result gjson.Result) []toolCallObservation {
 	calls := make([]toolCallObservation, 0)
 
 	for _, choice := range result.Get("choices").Array() {
@@ -224,21 +250,16 @@ func extractToolCallsFromJSON(raw json.RawMessage) []toolCallObservation {
 			calls = append(calls, toolCallObservation{
 				ID:        call.Get("id").String(),
 				Name:      call.Get("function.name").String(),
-				Arguments: call.Get("function.arguments").String(),
+				Arguments: resultStringOrRaw(call.Get("function.arguments")),
 			})
 		}
 		calls = append(calls, extractAnthropicToolUses(choice.Get("message.content"))...)
 	}
 
 	for _, item := range result.Get("output").Array() {
-		if item.Get("type").String() != "function_call" {
-			continue
+		if call, ok := extractFunctionCallResult(item); ok {
+			calls = append(calls, call)
 		}
-		calls = append(calls, toolCallObservation{
-			ID:        item.Get("call_id").String(),
-			Name:      item.Get("name").String(),
-			Arguments: item.Get("arguments").String(),
-		})
 	}
 
 	for _, item := range result.Get("content").Array() {
@@ -252,8 +273,65 @@ func extractToolCallsFromJSON(raw json.RawMessage) []toolCallObservation {
 		})
 	}
 	calls = append(calls, extractAnthropicToolUses(result.Get("message.content"))...)
+	if call, ok := extractFunctionCallResult(result); ok {
+		calls = append(calls, call)
+	}
+	if response := result.Get("response"); response.Exists() {
+		calls = append(calls, extractToolCallsFromResult(response)...)
+	}
+	if item := result.Get("item"); item.Exists() {
+		if call, ok := extractFunctionCallResult(item); ok {
+			calls = append(calls, call)
+		}
+	}
 
 	return calls
+}
+
+func extractToolCallsFromSSE(raw []byte) []toolCallObservation {
+	events := protocol.ParseEvents(raw)
+	calls := make([]toolCallObservation, 0)
+	for _, evt := range events {
+		if evt.Data == "" || !gjson.Valid(evt.Data) {
+			continue
+		}
+		calls = append(calls, extractToolCallsFromJSON(json.RawMessage(evt.Data))...)
+	}
+	return calls
+}
+
+func extractFunctionCallResult(result gjson.Result) (toolCallObservation, bool) {
+	if result.Get("type").String() != "function_call" {
+		return toolCallObservation{}, false
+	}
+	name := result.Get("name").String()
+	if name == "" {
+		return toolCallObservation{}, false
+	}
+	return toolCallObservation{
+		ID:        firstNonEmpty(result.Get("call_id").String(), result.Get("id").String()),
+		Name:      name,
+		Arguments: resultStringOrRaw(result.Get("arguments")),
+	}, true
+}
+
+func resultStringOrRaw(result gjson.Result) string {
+	if !result.Exists() {
+		return ""
+	}
+	if result.Type == gjson.String {
+		return result.String()
+	}
+	return result.Raw
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func extractAnthropicToolUses(content gjson.Result) []toolCallObservation {

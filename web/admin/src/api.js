@@ -44,8 +44,9 @@ export function fetchConfig() {
 	return apiJSON("/_admin/api/config");
 }
 
-export function fetchToolHookSuggestions() {
-	return apiJSON("/_admin/api/tool-hooks/suggestions");
+export function fetchToolHookSuggestions(route = "") {
+	const query = route ? `?route=${encodeURIComponent(route)}` : "";
+	return apiJSON(`/_admin/api/tool-hooks/suggestions${query}`);
 }
 
 export async function saveConfig(config) {

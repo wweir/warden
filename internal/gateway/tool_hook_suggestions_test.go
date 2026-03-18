@@ -103,3 +103,99 @@ func TestBuildToolHookSuggestions(t *testing.T) {
 		t.Fatalf("unexpected sample args: %q", webSearch.SampleArguments)
 	}
 }
+
+func TestBuildToolHookSuggestionsForRoute(t *testing.T) {
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	records := []reqlog.Record{
+		{
+			Timestamp: now,
+			Route:     "/openai",
+			Response:  json.RawMessage(`{"output":[{"type":"function_call","call_id":"call-1","name":"web_search","arguments":"{\"q\":\"openai\"}"}]}`),
+		},
+		{
+			Timestamp: now.Add(time.Minute),
+			Route:     "/anthropic",
+			Response:  json.RawMessage(`{"content":[{"type":"tool_use","id":"call-2","name":"filesystem__read_file","input":{"path":"/tmp/a"}}]}`),
+		},
+	}
+
+	resp := buildToolHookSuggestionsForRoute(records, "/openai")
+	if resp.RecentLogs != 1 {
+		t.Fatalf("expected 1 filtered log, got %d", resp.RecentLogs)
+	}
+	if len(resp.Suggestions) != 1 {
+		t.Fatalf("expected 1 filtered suggestion, got %d", len(resp.Suggestions))
+	}
+	if resp.Suggestions[0].Match != "web_search" {
+		t.Fatalf("unexpected filtered suggestion: %#v", resp.Suggestions[0])
+	}
+}
+
+func TestExtractToolCallsFromJSONSupportsResponsesEnvelope(t *testing.T) {
+	raw := json.RawMessage(`{
+		"response":{
+			"output":[
+				{"type":"function_call","call_id":"call-9","name":"web_search","arguments":"{\"q\":\"responses\"}"}
+			]
+		}
+	}`)
+
+	calls := extractToolCallsFromJSON(raw)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Name != "web_search" || calls[0].Arguments != "{\"q\":\"responses\"}" {
+		t.Fatalf("unexpected call: %#v", calls[0])
+	}
+}
+
+func TestExtractToolCallsFromJSONSupportsResponsesSSEString(t *testing.T) {
+	sse := `event: response.output_item.added
+data: {"item":{"type":"function_call","call_id":"call-sse","name":"web_search"}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call-sse","name":"web_search","arguments":"{\"q\":\"warden\"}"}]}}
+`
+	raw, err := json.Marshal(sse)
+	if err != nil {
+		t.Fatalf("marshal sse string: %v", err)
+	}
+
+	calls := extractToolCallsFromJSON(raw)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls from sse events, got %d", len(calls))
+	}
+	if calls[0].Name != "web_search" {
+		t.Fatalf("unexpected first call: %#v", calls[0])
+	}
+	if calls[1].Arguments != "{\"q\":\"warden\"}" {
+		t.Fatalf("unexpected completed-event args: %#v", calls[1])
+	}
+}
+
+func TestBuildToolHookSuggestionsPrefersCompletedArgsFromSSE(t *testing.T) {
+	sse := `event: response.output_item.added
+data: {"item":{"type":"function_call","call_id":"call-sse","name":"web_search"}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call-sse","name":"web_search","arguments":"{\"q\":\"warden\"}"}]}}
+`
+	raw, err := json.Marshal(sse)
+	if err != nil {
+		t.Fatalf("marshal sse string: %v", err)
+	}
+
+	resp := buildToolHookSuggestions([]reqlog.Record{{
+		Timestamp: time.Date(2026, 3, 9, 12, 3, 0, 0, time.UTC),
+		Route:     "/openai",
+		Model:     "gpt-4.1-mini",
+		Provider:  "primary",
+		Response:  raw,
+	}})
+	if len(resp.Suggestions) != 1 {
+		t.Fatalf("expected 1 suggestion, got %d", len(resp.Suggestions))
+	}
+	if resp.Suggestions[0].SampleArguments != "{\"q\":\"warden\"}" {
+		t.Fatalf("expected completed args to win, got %q", resp.Suggestions[0].SampleArguments)
+	}
+}

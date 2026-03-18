@@ -368,9 +368,9 @@ func (g *Gateway) handleLogStream(w http.ResponseWriter, r *http.Request, _ http
 	}
 }
 
-func (g *Gateway) handleToolHookSuggestions(w http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
+func (g *Gateway) handleToolHookSuggestions(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buildToolHookSuggestions(g.broadcaster.Recent()))
+	json.NewEncoder(w).Encode(buildToolHookSuggestionsForRoute(g.broadcaster.Recent(), strings.TrimSpace(r.URL.Query().Get("route"))))
 }
 
 // writeSSE writes a single SSE event with JSON data.

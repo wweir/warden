@@ -1,8 +1,13 @@
 <template>
   <div class="status-card panel" :class="'sc-' + status">
     <div class="sc-header">
-      <span class="sc-dot"></span>
-      <strong class="sc-name">{{ name }}</strong>
+      <div class="sc-header-main">
+        <span class="sc-dot"></span>
+        <strong class="sc-name">{{ name }}</strong>
+      </div>
+      <div v-if="$slots.actions" class="sc-actions">
+        <slot name="actions" />
+      </div>
     </div>
     <div class="sc-body">
       <slot />
@@ -27,9 +32,16 @@ defineProps({
 .status-card.sc-error { border-left-color: var(--c-danger); }
 .sc-header {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.sc-header-main {
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  min-width: 0;
 }
 .sc-dot {
   width: 8px;
@@ -41,6 +53,9 @@ defineProps({
 .sc-warn .sc-dot { background: var(--c-warning); }
 .sc-error .sc-dot { background: var(--c-danger); }
 .sc-name { font-size: 14px; font-weight: 600; }
+.sc-actions {
+  flex-shrink: 0;
+}
 .sc-body {
   font-size: 13px;
   color: var(--c-text-2);

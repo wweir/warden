@@ -58,6 +58,7 @@
           :exact-models="routeConfig.exact_models"
           :wildcard-models="routeConfig.wildcard_models"
           :provider-map="providerMap"
+          :provider-model-map="providerModelMap"
           :route-protocol="routeConfig.protocol"
           @update:exactModels="routeConfig.exact_models = $event"
           @update:wildcardModels="routeConfig.wildcard_models = $event"
@@ -180,99 +181,29 @@
         </table>
       </section>
 
-      <section v-if="detail" class="info-section">
-        <h3>{{ $t('routeDetail.sendRequest') }}</h3>
-        <div class="send-form">
-          <div class="form-row">
-            <label>{{ $t('routeDetail.endpoint') }}</label>
-            <select v-model="endpoint" class="form-input form-select">
-              <option v-for="ep in endpointOptions" :key="ep" :value="ep">{{ ep }}</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label>{{ $t('routeDetail.model') }}</label>
-            <ModelCombobox
-              v-model="modelQuery"
-              :models="models"
-              :placeholder="$t('routeDetail.searchModel')"
-              @update:modelValue="updateTemplate"
-            />
-          </div>
-          <div class="form-row">
-            <label>{{ $t('routeDetail.stream') }}</label>
-            <label class="toggle">
-              <input type="checkbox" v-model="stream" @change="updateTemplate">
-              <span>{{ stream ? $t('common.on') : $t('common.off') }}</span>
-            </label>
-          </div>
-          <div class="form-row">
-            <label>{{ $t('routeDetail.requestBody') }}</label>
-            <textarea
-              v-model="requestBody"
-              rows="10"
-              class="form-input json-input"
-              spellcheck="false"
-            ></textarea>
-          </div>
-          <div class="form-row">
-            <button @click="send" class="btn btn-primary" :disabled="sending">
-              {{ sending ? $t('routeDetail.sending') : $t('routeDetail.send') }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="response" class="response-section">
-          <div class="response-meta">
-            <span :class="['status-code', response.ok ? 'ok' : 'error']">{{ response.status }}</span>
-            <span class="latency">
-              {{ response.done ? response.duration + 'ms' : $t('routeDetail.streaming') }}
-            </span>
-          </div>
-
-          <template v-if="response.streaming">
-            <div class="stream-panels">
-              <div class="stream-panel">
-                <h4>{{ $t('routeDetail.contentLabel') }}</h4>
-                <pre class="code-block" ref="contentRef">{{ response.content || $t('routeDetail.waiting') }}</pre>
-              </div>
-              <div class="stream-panel">
-                <h4>
-                  {{ $t('routeDetail.rawEvents') }}
-                  <span class="event-count">({{ response.eventCount }})</span>
-                </h4>
-                <pre class="code-block raw-events" ref="eventsRef">{{ response.events }}</pre>
-              </div>
-            </div>
-          </template>
-          <template v-else>
-            <pre class="code-block">{{ response.body }}</pre>
-          </template>
-        </div>
-      </section>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   createLogStream,
   fetchConfig,
   fetchConfigSource,
+  fetchProviderDetail,
   fetchRouteDetail,
-  fetchRouteModels,
   fetchStatus,
   restartGateway,
   saveConfig,
-  sendRouteRequest,
   validateConfig,
 } from '../api.js'
-import ModelCombobox from '../components/ModelCombobox.vue'
 import RouteModelsEditor from '../components/RouteModelsEditor.vue'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 
 const props = defineProps({
@@ -286,42 +217,65 @@ const message = ref('')
 const messageType = ref('msg-success')
 const configSource = ref(null)
 const configDoc = ref(null)
+const providerDiscoveredModels = ref({})
 const routeConfig = ref(createEmptyRouteConfig())
 const editablePrefix = ref('')
-const models = ref([])
-const endpoint = ref('chat/completions')
-const modelQuery = ref('')
-const stream = ref(false)
-const requestBody = ref('')
-const sending = ref(false)
-const response = ref(null)
-const contentRef = ref(null)
-const eventsRef = ref(null)
 const applying = ref(false)
 const deleting = ref(false)
 const waitingAlive = ref(false)
 const waitingElapsed = ref(0)
+let providerSuggestionLoadID = 0
 
 const isCreate = computed(() => !!props.create)
 const existingPrefix = computed(() => (isCreate.value ? '' : normalizeRoutePrefix(props.prefix)))
 const effectivePrefix = computed(() =>
   isCreate.value ? normalizeRoutePrefix(editablePrefix.value) : existingPrefix.value,
 )
+const sourceProviderName = computed(() => {
+  if (!isCreate.value) return ''
+  const provider = route.query.provider
+  return normalizeText(Array.isArray(provider) ? provider[0] : provider)
+})
 const pageTitle = computed(() =>
   isCreate.value ? t('routeDetail.newRouteTitle') : t('routeDetail.breadcrumbRoute', { prefix: effectivePrefix.value }),
 )
 const providerMap = computed(() => configDoc.value?.provider || {})
-const busy = computed(() => applying.value || deleting.value)
-const endpointOptions = computed(() => {
-  if (routeConfig.value.protocol === 'anthropic') return ['messages']
-  if (routeConfig.value.protocol === 'responses') return ['responses']
-  return ['chat/completions']
+const providerModelMap = computed(() => {
+  const names = new Set([
+    ...Object.keys(providerMap.value || {}),
+    ...Object.keys(providerDiscoveredModels.value || {}),
+  ])
+  const out = {}
+  for (const name of names) {
+    out[name] = uniqueSortedTextValues([
+      ...(providerMap.value?.[name]?.models || []),
+      ...(providerDiscoveredModels.value?.[name] || []),
+    ])
+  }
+  return out
 })
+const busy = computed(() => applying.value || deleting.value)
 
 function normalizeRoutePrefix(prefix) {
   const value = String(prefix || '').trim()
   if (!value) return ''
   return value.startsWith('/') ? value : `/${value}`
+}
+
+function normalizeText(value) {
+  return String(value || '').trim()
+}
+
+function uniqueSortedTextValues(values) {
+  const out = []
+  const seen = new Set()
+  for (const value of values || []) {
+    const normalized = normalizeText(value)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out.sort((a, b) => a.localeCompare(b))
 }
 
 function deepClone(value) {
@@ -332,6 +286,10 @@ function supportedRouteProtocols(providerProtocol) {
   if (providerProtocol === 'anthropic') return ['anthropic']
   if (['openai', 'ollama', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
   return []
+}
+
+function preferredRouteProtocol(providerProtocol) {
+  return supportedRouteProtocols(providerProtocol)[0] || 'chat'
 }
 
 function defaultProviderForProtocol(protocol, providerConfigMap = {}) {
@@ -350,6 +308,31 @@ function createEmptyRouteConfig(providerConfigMap = {}) {
     protocol,
     exact_models: {},
     wildcard_models: provider ? { '*': { providers: [provider] } } : {},
+  }
+}
+
+function createProviderSeededRouteConfig(providerName, providerConfigMap = {}, discoveredModelMap = {}) {
+  const provider = providerConfigMap?.[providerName]
+  if (!provider) {
+    throw new Error(t('routeDetail.sourceProviderMissing', { name: providerName }))
+  }
+
+  const protocol = preferredRouteProtocol(provider?.protocol || 'openai')
+  const models = uniqueSortedTextValues([
+    ...(provider?.models || []),
+    ...(discoveredModelMap?.[providerName] || []),
+  ])
+  const exactModels = {}
+  for (const model of models) {
+    exactModels[model] = {
+      upstreams: [{ provider: providerName, model }],
+    }
+  }
+
+  return {
+    protocol,
+    exact_models: exactModels,
+    wildcard_models: {},
   }
 }
 
@@ -380,49 +363,66 @@ function buildRoutePayload(existingRoute = {}) {
   return nextRoute
 }
 
-function buildTemplate() {
-  const model = modelQuery.value
-  const useStream = stream.value
-  if (endpoint.value === 'messages') {
-    return JSON.stringify(
-      {
-        model,
-        messages: [{ role: 'user', content: 'Hello' }],
-        stream: useStream,
-        max_tokens: 1024,
-      },
-      null,
-      2,
-    )
-  }
-  return JSON.stringify(
-    endpoint.value === 'responses'
-      ? { model, input: 'Hello', stream: useStream }
-      : { model, messages: [{ role: 'user', content: 'Hello' }], stream: useStream },
-    null,
-    2,
+function extractProviderModelIDs(models) {
+  return uniqueSortedTextValues(
+    (models || []).map((model) => {
+      if (typeof model === 'string') return model
+      if (typeof model?.id === 'string') return model.id
+      return ''
+    }),
   )
 }
 
-function updateTemplate() {
-  requestBody.value = buildTemplate()
-}
-
-watch(endpoint, updateTemplate)
-watch(modelQuery, updateTemplate)
-watch(endpointOptions, (options) => {
-  if (!options.includes(endpoint.value)) {
-    endpoint.value = options[0] || 'chat/completions'
+async function loadProviderModelSuggestions(providerConfigMap = {}) {
+  const loadID = ++providerSuggestionLoadID
+  const providerNames = Object.keys(providerConfigMap || {})
+  if (providerNames.length === 0) {
+    if (loadID === providerSuggestionLoadID) {
+      providerDiscoveredModels.value = {}
+    }
+    return
   }
-})
+
+  const results = await Promise.allSettled(
+    providerNames.map((name) => fetchProviderDetail(name)),
+  )
+
+  if (loadID !== providerSuggestionLoadID) return
+
+  const nextSuggestions = {}
+  providerNames.forEach((name, index) => {
+    const configured = providerConfigMap?.[name]?.models || []
+    const discovered =
+      results[index]?.status === 'fulfilled'
+        ? extractProviderModelIDs(results[index].value?.models)
+        : []
+    nextSuggestions[name] = uniqueSortedTextValues([...configured, ...discovered])
+  })
+  providerDiscoveredModels.value = nextSuggestions
+}
 
 async function loadConfigDoc() {
   const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()])
   configDoc.value = cfg
   configSource.value = source
+  await loadProviderModelSuggestions(cfg.provider || {})
 
   if (isCreate.value) {
     editablePrefix.value = ''
+    if (sourceProviderName.value) {
+      routeConfig.value = createProviderSeededRouteConfig(
+        sourceProviderName.value,
+        cfg.provider || {},
+        providerDiscoveredModels.value,
+      )
+      if (Object.keys(routeConfig.value.exact_models || {}).length === 0) {
+        setMessage(
+          'msg-warning',
+          t('routeDetail.sourceProviderNoModels', { name: sourceProviderName.value }),
+        )
+      }
+      return
+    }
     routeConfig.value = createEmptyRouteConfig(cfg.provider || {})
     return
   }
@@ -438,15 +438,10 @@ async function loadConfigDoc() {
 async function loadDetail() {
   if (isCreate.value || !effectivePrefix.value) {
     detail.value = null
-    models.value = []
-    updateTemplate()
     return
   }
 
   detail.value = await fetchRouteDetail(effectivePrefix.value)
-  models.value = await fetchRouteModels(effectivePrefix.value)
-  modelQuery.value = ''
-  updateTemplate()
 }
 
 async function load() {
@@ -573,125 +568,6 @@ async function deleteRoute() {
   }
 }
 
-function extractContent(dataStr, ep) {
-  try {
-    const obj = JSON.parse(dataStr)
-    if (ep === 'chat/completions') {
-      return obj.choices?.[0]?.delta?.content || ''
-    }
-    if (obj.type === 'response.output_text.delta') {
-      return obj.delta || ''
-    }
-  } catch {
-    // ignore parse errors
-  }
-  return ''
-}
-
-async function send() {
-  sending.value = true
-  response.value = null
-  const start = performance.now()
-
-  let body
-  try {
-    body = JSON.parse(requestBody.value)
-  } catch (e) {
-    response.value = {
-      status: 'Parse Error',
-      ok: false,
-      done: true,
-      duration: 0,
-      body: 'Invalid JSON: ' + e.message,
-      streaming: false,
-    }
-    sending.value = false
-    return
-  }
-
-  let res
-  try {
-    res = await sendRouteRequest(effectivePrefix.value, endpoint.value, body)
-  } catch (e) {
-    response.value = {
-      status: 'Error',
-      ok: false,
-      done: true,
-      duration: Math.round(performance.now() - start),
-      body: e.message,
-      streaming: false,
-    }
-    sending.value = false
-    return
-  }
-
-  if (!body.stream) {
-    const duration = Math.round(performance.now() - start)
-    const text = await res.text()
-    let formatted = text
-    try {
-      formatted = JSON.stringify(JSON.parse(text), null, 2)
-    } catch {
-      // keep raw
-    }
-    response.value = {
-      status: res.status,
-      ok: res.ok,
-      done: true,
-      duration,
-      body: formatted,
-      streaming: false,
-    }
-    sending.value = false
-    return
-  }
-
-  response.value = {
-    status: res.status,
-    ok: res.ok,
-    done: false,
-    duration: 0,
-    streaming: true,
-    content: '',
-    events: '',
-    eventCount: 0,
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  const ep = endpoint.value
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        if (trimmed.startsWith('data: ')) {
-          const dataStr = trimmed.slice(6)
-          if (dataStr === '[DONE]') continue
-          response.value.events += trimmed + '\n'
-          response.value.eventCount += 1
-          response.value.content += extractContent(dataStr, ep)
-        } else {
-          response.value.events += trimmed + '\n'
-        }
-      }
-    }
-  } catch (e) {
-    response.value.content += '\n[Stream error: ' + e.message + ']'
-  }
-
-  response.value.done = true
-  response.value.duration = Math.round(performance.now() - start)
-  sending.value = false
-}
-
 let stopStream = null
 
 function startStream() {
@@ -710,7 +586,7 @@ function startStream() {
 }
 
 watch(
-  () => [props.prefix, props.create],
+  () => [props.prefix, props.create, route.query.provider],
   () => {
     message.value = ''
     if (stopStream) {
@@ -781,80 +657,6 @@ onUnmounted(() => {
   margin-top: 18px;
 }
 
-.toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  font-weight: normal;
-  padding-top: 0;
-}
-
-.form-select,
-.json-input {
-  width: 100%;
-}
-
-.json-input {
-  min-height: 120px;
-  resize: vertical;
-}
-
-.response-section {
-  margin-top: 16px;
-  border-top: 1px solid var(--c-border);
-  padding-top: 12px;
-}
-
-.response-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.stream-panels {
-  display: grid;
-  grid-template-columns: 1fr 4fr;
-  gap: 12px;
-}
-
-.stream-panel h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--c-text-2);
-}
-
-.event-count {
-  font-weight: normal;
-  color: var(--c-text-3);
-}
-
-.status-code {
-  font-weight: 700;
-  font-size: 14px;
-}
-
-.status-code.ok {
-  color: var(--c-success);
-}
-
-.status-code.error {
-  color: var(--c-danger);
-}
-
-.latency {
-  font-size: 13px;
-  color: var(--c-text-2);
-}
-
-.raw-events {
-  font-size: 11px;
-  color: var(--c-text-2);
-  max-height: 400px;
-}
-
 .prompt-text {
   margin: 0;
   white-space: pre-wrap;
@@ -863,46 +665,14 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.send-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.form-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.form-row > label:first-child {
-  width: 100px;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--c-text-2);
-  padding-top: 6px;
-  flex-shrink: 0;
-}
-
 @media (max-width: 768px) {
   .section-head,
-  .editor-actions,
-  .form-row {
+  .editor-actions {
     flex-direction: column;
   }
 
-  .editor-grid,
-  .stream-panels {
+  .editor-grid {
     grid-template-columns: 1fr;
-  }
-
-  .form-row {
-    gap: 4px;
-  }
-
-  .form-row > label:first-child {
-    width: auto;
-    padding-top: 0;
   }
 }
 </style>

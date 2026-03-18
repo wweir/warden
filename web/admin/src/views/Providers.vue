@@ -24,6 +24,15 @@
           class="clickable-card"
           @click="$router.push('/providers/' + p.name)"
         >
+          <template #actions>
+            <button
+              class="card-corner-action"
+              :title="$t('providers.createRouteFromModels')"
+              @click.stop="createRouteFromProvider(p.name)"
+            >
+              {{ $t('providers.createRouteFromModels') }}
+            </button>
+          </template>
           <div>{{ $t('providers.models') }}: {{ p.model_count }}</div>
           <div>{{ $t('providers.requests') }}: {{ fmtNum(p.total_requests) }} ({{ fmtNum(p.success_count) }} ok / {{ fmtNum(p.failure_count) }} fail)</div>
           <div v-if="p.total_requests > 0">
@@ -68,10 +77,12 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import StatusCard from '../components/StatusCard.vue'
 import { createStatusStream, healthCheck, setProviderSuppress } from '../api.js'
 import { fmtNum } from '../utils.js'
 
+const router = useRouter()
 const status = ref(null)
 const error = ref('')
 const search = ref('')
@@ -134,6 +145,13 @@ async function unsuppressProvider(name) {
   }
 }
 
+function createRouteFromProvider(name) {
+  router.push({
+    path: '/routes/new',
+    query: { provider: name },
+  })
+}
+
 onMounted(() => {
   statusStop = createStatusStream().start(
     (data) => { status.value = data; error.value = '' },
@@ -183,7 +201,23 @@ onUnmounted(() => {
   margin-top: 8px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+.card-corner-action {
+  border: none;
+  background: transparent;
+  color: var(--c-text-3);
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 0;
+  cursor: pointer;
+  transition: color var(--transition), opacity var(--transition);
+  opacity: 0.8;
+}
+.card-corner-action:hover {
+  color: var(--c-text-2);
+  opacity: 1;
 }
 .error-stats {
   margin-top: 4px;

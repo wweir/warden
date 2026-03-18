@@ -21,6 +21,8 @@ export default {
 		loading: "Loading...",
 		noData: "No data",
 		filter: "filter…",
+		moveUp: "Move up",
+		moveDown: "Move down",
 		configured: "Configured",
 		notSet: "Not set",
 		connected: "connected",
@@ -34,10 +36,13 @@ export default {
 	},
 	dashboard: {
 		title: "Dashboard",
+		emptyRoutesHint: "Add a provider before adding routes.",
 		routes: "Routes",
+		active: "active",
 		providers: "Providers",
 		mcpConnected: "MCP Connected",
 		totalRequests: "Total Requests",
+		totalTokens: "Total Tokens",
 		success: "success",
 		warn: "warn",
 		error: "error",
@@ -122,6 +127,7 @@ export default {
 	providers: {
 		title: "Providers",
 		createProvider: "+ New Provider",
+		createRouteFromModels: "Route From Models",
 		searchPlaceholder: "Search name, status…",
 		ping: "Ping",
 		suppress: "Suppress",
@@ -140,6 +146,10 @@ export default {
 	},
 	hooks: {
 		title: "Tool Call Hooks",
+		logicTitle: "Configuration Flow",
+		logicDesc: "First narrow the match scope, then choose the execution path, and only fill the fields that type actually needs.",
+		showExamples: "Show Examples",
+		hideExamples: "Hide Examples",
 		about: "About",
 		aboutDesc:
 			"Route hooks observe tool calls returned on the current route. Pattern format: {pattern}. Use {wildcard} as wildcard (e.g. {example1} or {example2} to match all tools). Route-level MCP tool execution has been removed, so hooks are mainly for audit and policy checks.",
@@ -150,6 +160,12 @@ export default {
 		guideMatchTitle: "Start with the match scope",
 		guideMatchDesc:
 			"The pattern matches the full tool name, not the model name. Keep the scope narrow before blocking.",
+		logicTypeTitle: "Then choose the review path",
+		logicTypeDesc:
+			"exec fits a local policy program, ai fits fast rollout, and http fits an external audit service.",
+		logicParamsTitle: "Only fill required fields",
+		logicParamsDesc:
+			"Do not populate route, model, command, and webhook all at once. Leave fields empty when the current hook type does not use them.",
 		guideExecTitle: "Exec: delegate to a local program",
 		guideExecDesc:
 			"Warden writes the tool-call JSON to stdin. Use this for your own policy binary or script.",
@@ -337,6 +353,9 @@ export default {
 		prefixRequired: "Route prefix is required",
 		routeExists: "Route {prefix} already exists",
 		routeConfigMissing: "Route config for {prefix} was not found",
+		sourceProviderMissing: 'Provider "{name}" for route seeding was not found',
+		sourceProviderNoModels:
+			'Provider "{name}" has no configured or discovered models, so no exact model mappings were generated.',
 		saveApply: "Save & Apply",
 		saving: "Saving...",
 		deleteRoute: "Delete Route",
@@ -361,7 +380,7 @@ export default {
 		patternCol: "Pattern",
 		patternHint: "Wildcard patterns must contain *, for example gpt-*.",
 		upstreamsCol: "Upstreams",
-		upstreamsHint: "Tried in order. You can rewrite a public model name to a different upstream model here.",
+		upstreamsHint: "Tried in order. Earlier entries have higher priority, and you can rewrite a public model name to a different upstream model here.",
 		addUpstream: "+ Add Upstream",
 		noUpstreams: "No upstreams yet.",
 		selectProvider: "Select provider",
@@ -369,7 +388,8 @@ export default {
 		upstreamModelPlaceholder: "Select or type upstream model",
 		providersCol: "Providers",
 		providersPlaceholder: "Provider name",
-		wildcardProvidersHint: "Select providers only. The request model name is not rewritten.",
+		wildcardProvidersHint: "Select providers only. The request model name is not rewritten, and list order defines priority.",
+		priorityValue: "P{n}",
 		promptCol: "Prompt",
 		systemPromptPlaceholder: "Optional. Inject an extra system prompt only for this route model.",
 		providers: "Providers ({n})",
@@ -381,24 +401,25 @@ export default {
 		avgLatency: "Avg Latency",
 		status: "Status",
 		failures: "{n} failures",
-		sendRequest: "Send Request",
-		endpoint: "Endpoint:",
-		model: "Model:",
-		searchModel: "Search or type model name",
-		stream: "Stream:",
-		requestBody: "Request Body:",
-		send: "Send",
-		sending: "Sending...",
-		rawEvents: "Raw Events",
-		contentLabel: "Content",
-		streaming: "streaming...",
-		waiting: "(waiting...)",
 	},
 	providerDetail: {
 		newProviderTitle: "New Provider",
 		configEditor: "Provider Config",
 		configEditorDesc:
 			"Edit connection settings, auth, protocol flags, and model list for a single provider here. Saving still writes the full config file and restarts the gateway.",
+		modelsGuide:
+			"Use this only when you want a static model baseline for this provider. It is optional, and runtime discovery is still used when available.",
+		modelsOptional: "Optional static baseline",
+		modelsConfiguredCount: "{n} configured",
+		modelsDiscoveredCount: "{n} discovered",
+		modelsPlaceholder: "Type a model ID, or pick from discovered models",
+		modelsSuggestionHint:
+			"Suggestions come from the provider's current discovered model list. They are here to speed up input, not to redefine route exposure.",
+		modelsNoSuggestionHint:
+			"No discovered model list is available yet. You can still type model IDs manually if this provider needs a static fallback.",
+		modelsBehaviorHint:
+			"Configured models are used as a fallback when /models discovery fails, and they also feed wildcard filtering and route editor suggestions.",
+		addDiscoveredModels: "Add discovered ({n})",
 		basicInfo: "Basic Info",
 		name: "Name",
 		namePlaceholder: "e.g. openai-primary",

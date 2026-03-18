@@ -78,6 +78,9 @@
           :key="`${entry.name}/${idx}`"
           class="upstream-row"
         >
+          <div class="upstream-priority">
+            <span class="priority-chip">{{ $t('routeDetail.priorityValue', { n: idx + 1 }) }}</span>
+          </div>
           <select
             :value="upstream.provider"
             class="form-input"
@@ -99,10 +102,33 @@
             input-class="upstream-model-input"
             @update:modelValue="updateUpstreamModel(entry.id, idx, $event)"
           />
+          <div class="upstream-actions">
+            <button
+              class="btn btn-secondary btn-sm"
+              type="button"
+              :disabled="idx === 0"
+              :title="$t('common.moveUp')"
+              :aria-label="$t('common.moveUp')"
+              @click="moveUpstream(entry.id, idx, -1)"
+            >
+              Up
+            </button>
+            <button
+              class="btn btn-secondary btn-sm"
+              type="button"
+              :disabled="idx === entry.upstreams.length - 1"
+              :title="$t('common.moveDown')"
+              :aria-label="$t('common.moveDown')"
+              @click="moveUpstream(entry.id, idx, 1)"
+            >
+              Down
+            </button>
+          </div>
           <button
             class="btn-icon upstream-delete"
             type="button"
             :title="$t('common.delete')"
+            :aria-label="$t('common.delete')"
             @click="removeUpstream(entry.id, idx)"
           >
             &times;
@@ -178,6 +204,7 @@
             <TagListEditor
               :model-value="entry.providers"
               :suggestions="providerOptions()"
+              :allow-reorder="true"
               :placeholder="$t('routeDetail.providersPlaceholder')"
               @update:modelValue="updateWildcardProviders(entry.pattern, $event)"
             />
@@ -199,6 +226,7 @@ const props = defineProps({
   exactModels: { type: Object, default: () => ({}) },
   wildcardModels: { type: Object, default: () => ({}) },
   providerMap: { type: Object, default: () => ({}) },
+  providerModelMap: { type: Object, default: () => ({}) },
   routeProtocol: { type: String, default: '' },
 })
 
@@ -307,15 +335,17 @@ function defaultProvider() {
   return providerOptions()[0] || sortValues(Object.keys(props.providerMap || {}))[0] || ''
 }
 
+function availableProviderModels(providerName) {
+  return props.providerModelMap?.[providerName] || props.providerMap?.[providerName]?.models || []
+}
+
 function providerModelOptions(providerName, currentModel = '') {
-  return sortValues(
-    dedupeNonEmpty([...(props.providerMap?.[providerName]?.models || []), currentModel]),
-  )
+  return sortValues(dedupeNonEmpty([...(availableProviderModels(providerName) || []), currentModel]))
 }
 
 function upstreamModelPlaceholder(publicModelName, providerName) {
   if (!providerName) return t('routeDetail.selectProviderFirst')
-  if ((props.providerMap?.[providerName]?.models || []).length > 0) {
+  if (availableProviderModels(providerName).length > 0) {
     return t('routeDetail.upstreamModelPlaceholder')
   }
   return publicModelName
@@ -355,6 +385,14 @@ function cloneWildcardEntries() {
     systemPrompt: entry.systemPrompt,
     providers: [...entry.providers],
   }))
+}
+
+function moveArrayItem(list, from, to) {
+  if (to < 0 || to >= list.length || from === to) return list
+  const next = [...list]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  return next
 }
 
 function uniqueWildcardPattern() {
@@ -476,6 +514,18 @@ function addUpstream(entryID) {
           }
         : entry,
     ),
+  )
+}
+
+function moveUpstream(entryID, idx, delta) {
+  emitExact(
+    cloneExactEntries().map((entry) => {
+      if (entry.id !== entryID) return entry
+      return {
+        ...entry,
+        upstreams: moveArrayItem(entry.upstreams, idx, idx + delta),
+      }
+    }),
   )
 }
 
@@ -621,10 +671,32 @@ function removeUpstream(entryID, idx) {
 
 .upstream-row {
   display: grid;
-  grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 220px) minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   margin-top: 8px;
+}
+
+.upstream-priority {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.priority-chip {
+  min-width: 40px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: var(--c-primary-bg);
+  color: var(--c-primary);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.upstream-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .upstream-delete {
