@@ -14,7 +14,6 @@ import (
 
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/selector"
-	"github.com/wweir/warden/pkg/protocol/anthropic"
 )
 
 // firstTokenTimeout is the fixed timeout for streaming requests.
@@ -132,23 +131,4 @@ func writeUpstreamAwareError(w http.ResponseWriter, err error) {
 	}
 
 	http.Error(w, upErr.Error(), upErr.Code)
-}
-
-// pipeRawStream sends a raw request body upstream and returns the response bytes
-// after writing them to the client. Uses streaming timeout (30s first-token).
-func pipeRawStream(ctx context.Context, w http.ResponseWriter, provCfg *config.ProviderConfig, endpoint string, body []byte) ([]byte, error) {
-	rawBody, _, err := sendRequest(ctx, provCfg, endpoint, body, true)
-	// Always write the response body to the client if it exists
-	if rawBody != nil {
-		clientBody := rawBody
-		if provCfg.Protocol == "anthropic" {
-			clientBody = anthropic.ConvertStreamToOpenAI(rawBody)
-		}
-		if _, writeErr := w.Write(clientBody); writeErr != nil {
-			slog.Warn("Failed to write stream response", "error", writeErr)
-		}
-		w.(http.Flusher).Flush()
-	}
-	// Always return the raw body even if there's an error
-	return rawBody, err
 }

@@ -14,7 +14,7 @@ type resolvedRouteTarget struct {
 	prov   *config.ProviderConfig
 }
 
-func (g *Gateway) matchRouteModel(route *config.RouteConfig, requestedModel string) (*config.CompiledRouteModel, error) {
+func matchRouteModel(route *config.RouteConfig, requestedModel string) (*config.CompiledRouteModel, error) {
 	if requestedModel == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -26,7 +26,7 @@ func (g *Gateway) matchRouteModel(route *config.RouteConfig, requestedModel stri
 }
 
 func (g *Gateway) selectRouteTarget(route *config.RouteConfig, serviceProtocol, requestedModel, explicitProvider string, exclude []string) (*resolvedRouteTarget, error) {
-	matched, err := g.matchRouteModel(route, requestedModel)
+	matched, err := matchRouteModel(route, requestedModel)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func (g *Gateway) selectRouteTarget(route *config.RouteConfig, serviceProtocol, 
 	if explicitProvider != "" {
 		target, prov, err = g.selector.SelectByName(g.cfg, serviceProtocol, matched, requestedModel, explicitProvider)
 	} else {
-		target, prov, err = g.selector.Select(g.cfg, route, serviceProtocol, matched, requestedModel, exclude...)
+		target, prov, err = g.selector.Select(g.cfg, serviceProtocol, matched, requestedModel, exclude...)
 	}
 	if err != nil {
 		if explicitProvider != "" {

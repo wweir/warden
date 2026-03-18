@@ -37,6 +37,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	model := gjson.GetBytes(rawReqBody, "model").String()
 	stream := gjson.GetBytes(rawReqBody, "stream").Bool()
+	stateful := isStatefulResponsesRequest(rawReqBody)
 	if !gjson.ValidBytes(rawReqBody) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
@@ -53,56 +54,29 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	provCfg := resolved.prov
 	selectedTarget := resolved.target
 	matchedRouteModel := resolved.model
-	allowFailover := explicitProvider == ""
+	allowFailover := explicitProvider == "" && !stateful
 	var failovers []reqlog.Failover
 	metricLabels := buildMetricLabels(route, config.RouteProtocolResponses, "responses", selectedTarget)
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
 
-	if prompt := matchedRouteModel.SystemPrompt; prompt != "" {
-		rawReqBody = openai.InjectSystemPromptResponsesRaw(rawReqBody, prompt)
+	if matchedRouteModel.PromptEnabled {
+		if prompt := matchedRouteModel.SystemPrompt; prompt != "" {
+			rawReqBody = openai.InjectSystemPromptResponsesRaw(rawReqBody, prompt)
+		}
 	}
 
-	if provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
+	if !stateful && provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
 		g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried, failovers)
 		return
 	}
 
-	logRecord := func(respBody []byte, errMsg string) {
-		rec := reqlog.Record{
-			Timestamp:   startTime,
-			RequestID:   reqID,
-			Route:       route.Prefix,
-			Endpoint:    "responses",
-			Model:       model,
-			Stream:      stream,
-			Provider:    provCfg.Name,
-			UserAgent:   r.UserAgent(),
-			DurationMs:  time.Since(startTime).Milliseconds(),
-			Error:       errMsg,
-			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
-			Request:     rawReqBody,
-			Response:    respBody,
-			Failovers:   failovers,
-		}
-		if stream && len(respBody) > 0 && errMsg == "" {
-			events := protocol.ParseEvents(respBody)
-			if cr := openai.ExtractCompletedResponse(events); cr != nil {
-				if assembled, err := json.Marshal(cr); err == nil {
-					rec.Response = assembled
-					usage := ExtractTokenUsage(assembled)
-					g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-				}
-			}
-		} else if len(respBody) > 0 && errMsg == "" {
-			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-		}
-		g.recordAndBroadcast(rec)
-	}
-
 	for {
 		logRequest(r, provCfg.Name, model)
+		logParams := newInferenceLogParams(r, startTime, reqID, route.Prefix, "responses", model, stream, rawReqBody, failovers, metricLabels, provCfg.Name)
+		if stream {
+			g.publishPendingInferenceLog(logParams)
+		}
 
 		provReqBody := prepareRawBody(rawReqBody, selectedTarget)
 		respBody, latency, err := sendRequest(r.Context(), provCfg, protocolEndpoint(provCfg.Protocol, true), provReqBody, stream)
@@ -122,7 +96,12 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					continue
 				}
 			}
-			logRecord(nil, err.Error())
+			g.recordInferenceLog(
+				logParams,
+				nil,
+				err.Error(),
+				nil,
+			)
 			writeUpstreamAwareError(w, err)
 			return
 		}
@@ -139,13 +118,26 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			w.Header().Set("Connection", "keep-alive")
 			w.Write(respBody)
 			w.(http.Flusher).Flush()
-			logRecord(respBody, "")
+			g.recordInferenceLog(
+				logParams,
+				respBody,
+				"",
+				func(respBody []byte) ([]byte, []byte, error) {
+					assembled, err := openai.AssembleResponsesStream(respBody)
+					return assembled, respBody, err
+				},
+			)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(respBody)
-		logRecord(respBody, "")
+		g.recordInferenceLog(
+			logParams,
+			respBody,
+			"",
+			nil,
+		)
 		return
 	}
 }
@@ -163,40 +155,6 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 	metricLabels := buildMetricLabels(route, config.RouteProtocolResponses, "responses", target)
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
-
-	logRecord := func(respBody []byte, errMsg string) {
-		rec := reqlog.Record{
-			Timestamp:   startTime,
-			RequestID:   reqID,
-			Route:       route.Prefix,
-			Endpoint:    "responses",
-			Model:       model,
-			Stream:      stream,
-			Provider:    provCfg.Name,
-			UserAgent:   r.UserAgent(),
-			DurationMs:  time.Since(startTime).Milliseconds(),
-			Error:       errMsg,
-			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
-			Request:     rawReqBody,
-			Response:    respBody,
-			Failovers:   failovers,
-		}
-		if stream && len(respBody) > 0 && errMsg == "" {
-			events := protocol.ParseEvents(respBody)
-			if cr := openai.ExtractCompletedResponse(events); cr != nil {
-				if assembled, err := json.Marshal(cr); err == nil {
-					rec.Response = assembled
-					usage := ExtractTokenUsage(assembled)
-					g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-				}
-			}
-		} else if len(respBody) > 0 && errMsg == "" {
-			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-		}
-		g.recordAndBroadcast(rec)
-	}
-
 	var respReq openai.ResponsesRequest
 	if err = json.Unmarshal(rawReqBody, &respReq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -214,6 +172,10 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 
 	for {
 		logRequest(r, provCfg.Name, origModel)
+		logParams := newInferenceLogParams(r, startTime, reqID, route.Prefix, "responses", model, stream, rawReqBody, failovers, metricLabels, provCfg.Name)
+		if stream {
+			g.publishPendingInferenceLog(logParams)
+		}
 
 		if stream {
 			rawResp, latency, sendErr := sendUpstreamChatRawWithLatency(r.Context(), provCfg, chatReq)
@@ -234,7 +196,12 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 						continue
 					}
 				}
-				logRecord(nil, sendErr.Error())
+				g.recordInferenceLog(
+					logParams,
+					nil,
+					sendErr.Error(),
+					nil,
+				)
 				writeUpstreamAwareError(w, sendErr)
 				return
 			}
@@ -250,7 +217,15 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 				slog.Warn("Failed to write converted stream response", "error", writeErr)
 			}
 			w.(http.Flusher).Flush()
-			logRecord(respSSE, "")
+			g.recordInferenceLog(
+				logParams,
+				respSSE,
+				"",
+				func(respBody []byte) ([]byte, []byte, error) {
+					assembled, err := openai.AssembleResponsesStream(respBody)
+					return assembled, respBody, err
+				},
+			)
 			return
 		}
 
@@ -271,7 +246,12 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 					continue
 				}
 			}
-			logRecord(nil, forwardErr.Error())
+			g.recordInferenceLog(
+				newInferenceLogParams(r, startTime, reqID, route.Prefix, "responses", model, stream, rawReqBody, failovers, metricLabels, provCfg.Name),
+				nil,
+				forwardErr.Error(),
+				nil,
+			)
 			writeUpstreamAwareError(w, forwardErr)
 			return
 		}
@@ -291,7 +271,12 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 		if _, writeErr := w.Write(respBody); writeErr != nil {
 			slog.Warn("Failed to write converted response", "error", writeErr)
 		}
-		logRecord(respBody, "")
+		g.recordInferenceLog(
+			logParams,
+			respBody,
+			"",
+			nil,
+		)
 		return
 	}
 }
@@ -333,4 +318,8 @@ func funcCallsToInfos(calls []openai.FunctionCallItem) []protocol.ToolCallInfo {
 		}
 	}
 	return infos
+}
+
+func isStatefulResponsesRequest(rawReqBody []byte) bool {
+	return gjson.GetBytes(rawReqBody, "previous_response_id").String() != ""
 }

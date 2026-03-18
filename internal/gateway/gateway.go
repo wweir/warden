@@ -137,11 +137,11 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 func (g *Gateway) shouldRegisterOpenAIEndpoint(route *config.RouteConfig, serviceProtocol string) bool {
 	switch serviceProtocol {
 	case config.RouteProtocolChat:
-		if route.Protocol == "" || route.Protocol == config.RouteProtocolChat {
+		if route.Protocol == config.RouteProtocolChat {
 			return true
 		}
 	case config.RouteProtocolResponses:
-		if route.Protocol == "" || route.Protocol == config.RouteProtocolResponses {
+		if route.Protocol == config.RouteProtocolResponses {
 			return true
 		}
 	default:
@@ -370,7 +370,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		durationMs := time.Since(startTime).Milliseconds()
 		logResp := []byte(errBody)
 		if inspectableBody {
-			logResp = assembleProxyResponse(provCfg.Protocol, decodedRespBody)
+			logResp = assembleProxyResponse(serviceProtocol, provCfg.Protocol, decodedRespBody)
 		}
 
 		// Extract token usage for metrics (only for LLM responses)
@@ -408,21 +408,36 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 // For Anthropic SSE, it extracts the response.completed event.
 // For other protocols, it uses OpenAI Chat Completions stream assembly.
 // Non-SSE bodies are returned as-is.
-func assembleProxyResponse(protocol string, body []byte) []byte {
+func assembleProxyResponse(serviceProtocol, upstreamProtocol string, body []byte) []byte {
 	trimmed := strings.TrimSpace(string(body))
 	if !strings.HasPrefix(trimmed, "event:") && !strings.HasPrefix(trimmed, "data:") {
 		return body
 	}
-	if protocol == "anthropic" {
+	if serviceProtocol == config.RouteProtocolAnthropic {
 		if assembled := anthropic.AssembleStream(body); assembled != nil {
 			return assembled
 		}
-		return body
+		return marshalRawStreamForLog(body)
 	}
-	if assembled, err := openai.AssembleChatStream(body); err == nil {
+	if serviceProtocol == config.RouteProtocolResponses {
+		if assembled, err := openai.AssembleResponsesStream(body); err == nil {
+			return assembled
+		}
+		return marshalRawStreamForLog(body)
+	}
+	clientBody := convertStreamIfNeeded(upstreamProtocol, body)
+	if assembled, err := openai.AssembleChatStream(clientBody); err == nil {
 		return assembled
 	}
-	return body
+	return marshalRawStreamForLog(clientBody)
+}
+
+func marshalRawStreamForLog(body []byte) []byte {
+	data, err := json.Marshal(strings.TrimSpace(string(body)))
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return data
 }
 
 // --- models ---

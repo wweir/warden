@@ -120,10 +120,9 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 }
 
 // Select returns the best upstream target for the given matched route model.
-func (s *Selector) Select(cfg *config.ConfigStruct, route *config.RouteConfig, serviceProtocol string, matched *config.CompiledRouteModel, requestedModel string, exclude ...string) (*RouteTarget, *config.ProviderConfig, error) {
+func (s *Selector) Select(cfg *config.ConfigStruct, serviceProtocol string, matched *config.CompiledRouteModel, requestedModel string, exclude ...string) (*RouteTarget, *config.ProviderConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_ = route
 
 	now := time.Now()
 

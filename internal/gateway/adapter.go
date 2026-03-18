@@ -22,16 +22,6 @@ func protocolEndpoint(protocol string, isResponses bool) string {
 	}
 }
 
-// protocolModelsEndpoint returns the models listing endpoint for a given protocol.
-func protocolModelsEndpoint(protocol string) string {
-	switch protocol {
-	case "anthropic":
-		return "/v1/models"
-	default:
-		return "/models"
-	}
-}
-
 // marshalProtocolRequest marshals a ChatCompletionRequest for the given protocol.
 // For Anthropic, it converts from OpenAI format to Anthropic Messages API format.
 // For OpenAI and Ollama, it marshals directly.

@@ -46,7 +46,7 @@ func TestSelector_SelectExactModel(t *testing.T) {
 	}
 
 	s := NewSelector(cfg)
-	target, prov, err := s.Select(cfg, route, config.RouteProtocolChat, matched, "gpt-4o")
+	target, prov, err := s.Select(cfg, config.RouteProtocolChat, matched, "gpt-4o")
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 	s.states["second"].availableModels = map[string]bool{"gpt-4.1": true}
 	s.mu.Unlock()
 
-	target, prov, err := s.Select(cfg, route, config.RouteProtocolResponses, matched, "gpt-4.1")
+	target, prov, err := s.Select(cfg, config.RouteProtocolResponses, matched, "gpt-4.1")
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}
@@ -126,7 +126,7 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 		t.Fatal("SetManualSuppress(primary, true) = false")
 	}
 
-	target, prov, err := s.Select(cfg, route, config.RouteProtocolChat, matched, "gpt-4o")
+	target, prov, err := s.Select(cfg, config.RouteProtocolChat, matched, "gpt-4o")
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}

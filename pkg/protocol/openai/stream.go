@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/wweir/warden/pkg/protocol"
@@ -92,7 +93,7 @@ type ResponsesStreamParser struct{}
 func (p *ResponsesStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, error) {
 	// find the response.completed event and extract function_call items
 	for _, evt := range events {
-		if evt.EventType != "response.completed" {
+		if responsesEventType(evt) != "response.completed" {
 			continue
 		}
 
@@ -128,6 +129,17 @@ func (p *ResponsesStreamParser) Parse(events []protocol.Event) ([]protocol.ToolC
 	}
 
 	return nil, nil
+}
+
+// AssembleResponsesStream extracts the completed Responses API object from an SSE stream
+// so streaming logs keep the same shape as non-streaming responses.
+func AssembleResponsesStream(rawSSE []byte) ([]byte, error) {
+	events := protocol.ParseEvents(rawSSE)
+	resp := ExtractCompletedResponse(events)
+	if resp == nil {
+		return nil, fmt.Errorf("response.completed event not found")
+	}
+	return json.Marshal(resp)
 }
 
 // AssembleChatStream merges streaming SSE chunks into a single JSON object
@@ -280,16 +292,44 @@ func toFloat64(v any) float64 {
 // ExtractCompletedResponse finds the response.completed event and returns the response.
 func ExtractCompletedResponse(events []protocol.Event) *ResponsesResponse {
 	for _, evt := range events {
-		if evt.EventType != "response.completed" {
+		if responsesEventType(evt) != "response.completed" {
 			continue
 		}
-		var wrapper struct {
-			Response ResponsesResponse `json:"response"`
+		if resp := completedResponseFromData(evt.Data); resp != nil {
+			return resp
 		}
-		if err := json.Unmarshal([]byte(evt.Data), &wrapper); err != nil {
-			return nil
-		}
-		return &wrapper.Response
 	}
 	return nil
+}
+
+func responsesEventType(evt protocol.Event) string {
+	if evt.EventType != "" {
+		return evt.EventType
+	}
+
+	var typeCheck struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(evt.Data), &typeCheck); err != nil {
+		return ""
+	}
+	return typeCheck.Type
+}
+
+func completedResponseFromData(data string) *ResponsesResponse {
+	var wrapper struct {
+		Response *ResponsesResponse `json:"response"`
+	}
+	if err := json.Unmarshal([]byte(data), &wrapper); err == nil && wrapper.Response != nil {
+		return wrapper.Response
+	}
+
+	var resp ResponsesResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return nil
+	}
+	if resp.ID == "" && resp.Status == "" && resp.Output == nil && len(resp.Extra) == 0 {
+		return nil
+	}
+	return &resp
 }

@@ -118,6 +118,10 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 		model   string
 		created = time.Now().Unix()
 		buf     []byte
+		usage   struct {
+			InputTokens  int64 `json:"input_tokens,omitempty"`
+			OutputTokens int64 `json:"output_tokens,omitempty"`
+		}
 	)
 
 	for _, evt := range events {
@@ -138,6 +142,10 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 				Message struct {
 					ID    string `json:"id"`
 					Model string `json:"model"`
+					Usage struct {
+						InputTokens  int64 `json:"input_tokens"`
+						OutputTokens int64 `json:"output_tokens"`
+					} `json:"usage"`
 				} `json:"message"`
 			}
 			if json.Unmarshal([]byte(evt.Data), &msg) != nil {
@@ -145,10 +153,12 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			}
 			msgID = msg.Message.ID
 			model = msg.Message.Model
+			usage.InputTokens = msg.Message.Usage.InputTokens
+			usage.OutputTokens = msg.Message.Usage.OutputTokens
 
 			// emit initial chunk with role
 			buf = appendOpenAIChunk(buf, msgID, model, created,
-				map[string]any{"role": "assistant"}, nil)
+				map[string]any{"role": "assistant"}, nil, nil)
 
 		case "content_block_delta":
 			var msg struct {
@@ -162,7 +172,7 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			}
 			if msg.Delta.Type == "text_delta" && msg.Delta.Text != "" {
 				buf = appendOpenAIChunk(buf, msgID, model, created,
-					map[string]any{"content": msg.Delta.Text}, nil)
+					map[string]any{"content": msg.Delta.Text}, nil, nil)
 			}
 
 		case "message_delta":
@@ -178,8 +188,19 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 				continue
 			}
 			finishReason := MapStopReason(msg.Delta.StopReason)
+			if msg.Usage.OutputTokens > 0 {
+				usage.OutputTokens = msg.Usage.OutputTokens
+			}
+			extra := map[string]any{}
+			if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+				extra["usage"] = map[string]any{
+					"prompt_tokens":     usage.InputTokens,
+					"completion_tokens": usage.OutputTokens,
+					"total_tokens":      usage.InputTokens + usage.OutputTokens,
+				}
+			}
 			buf = appendOpenAIChunk(buf, msgID, model, created,
-				map[string]any{}, &finishReason)
+				map[string]any{}, &finishReason, extra)
 		}
 	}
 
@@ -187,7 +208,7 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 	return buf
 }
 
-func appendOpenAIChunk(buf []byte, id, model string, created int64, delta map[string]any, finishReason *string) []byte {
+func appendOpenAIChunk(buf []byte, id, model string, created int64, delta map[string]any, finishReason *string, extra map[string]any) []byte {
 	chunk := map[string]any{
 		"id":      id,
 		"object":  "chat.completion.chunk",
@@ -200,6 +221,9 @@ func appendOpenAIChunk(buf []byte, id, model string, created int64, delta map[st
 				"finish_reason": finishReason,
 			},
 		},
+	}
+	for k, v := range extra {
+		chunk[k] = v
 	}
 	data, _ := json.Marshal(chunk)
 	return append(buf, []byte(fmt.Sprintf("data: %s\n\n", data))...)

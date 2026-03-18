@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -55,51 +54,22 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
 
-	if prompt := matchedRouteModel.SystemPrompt; prompt != "" {
-		rawReqBody = openai.InjectSystemPromptRaw(rawReqBody, prompt)
+	if matchedRouteModel.PromptEnabled {
+		if prompt := matchedRouteModel.SystemPrompt; prompt != "" {
+			rawReqBody = openai.InjectSystemPromptRaw(rawReqBody, prompt)
+		}
 	}
 
 	authRetried := map[string]bool{}
 	allowFailover := explicitProvider == ""
 	var failovers []reqlog.Failover
 
-	if selectedProvider.ChatToResponses && selectedProvider.Protocol == "openai" {
-		g.handleChatViaResponses(w, r, route, rawReqBody, model, stream, selectedProvider, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried, failovers)
-		return
-	}
-
-	logRecord := func(respBody []byte, errMsg string) {
-		rec := reqlog.Record{
-			Timestamp:   startTime,
-			RequestID:   reqID,
-			Route:       route.Prefix,
-			Endpoint:    "chat/completions",
-			Model:       model,
-			Stream:      stream,
-			Provider:    selectedProvider.Name,
-			UserAgent:   r.UserAgent(),
-			DurationMs:  time.Since(startTime).Milliseconds(),
-			Error:       errMsg,
-			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
-			Request:     rawReqBody,
-			Response:    respBody,
-			Failovers:   failovers,
-		}
-		if stream && len(respBody) > 0 && errMsg == "" {
-			if assembled, err := openai.AssembleChatStream(respBody); err == nil {
-				rec.Response = assembled
-				usage := ExtractTokenUsage(assembled)
-				g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-			}
-		} else if len(respBody) > 0 && errMsg == "" {
-			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-		}
-		g.recordAndBroadcast(rec)
-	}
-
 	for {
 		logRequest(r, selectedProvider.Name, model)
+		logParams := newInferenceLogParams(r, startTime, reqID, route.Prefix, "chat/completions", model, stream, rawReqBody, failovers, metricLabels, selectedProvider.Name)
+		if stream {
+			g.publishPendingInferenceLog(logParams)
+		}
 
 		provReqBody := prepareRawBody(rawReqBody, selectedTarget)
 		reqBody, err := marshalProtocolRaw(selectedProvider.Protocol, provReqBody)
@@ -125,7 +95,12 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 					continue
 				}
 			}
-			logRecord(nil, err.Error())
+			g.recordInferenceLog(
+				logParams,
+				nil,
+				err.Error(),
+				nil,
+			)
 			writeUpstreamAwareError(w, err)
 			return
 		}
@@ -145,7 +120,16 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				slog.Warn("Failed to write stream response", "error", writeErr)
 			}
 			w.(http.Flusher).Flush()
-			logRecord(respBody, "")
+			g.recordInferenceLog(
+				logParams,
+				respBody,
+				"",
+				func(respBody []byte) ([]byte, []byte, error) {
+					clientBody := convertStreamIfNeeded(selectedProvider.Protocol, respBody)
+					assembled, err := openai.AssembleChatStream(clientBody)
+					return assembled, clientBody, err
+				},
+			)
 			return
 		}
 
@@ -153,7 +137,12 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		if _, writeErr := w.Write(respBody); writeErr != nil {
 			slog.Warn("Failed to write response", "error", writeErr)
 		}
-		logRecord(respBody, "")
+		g.recordInferenceLog(
+			logParams,
+			respBody,
+			"",
+			nil,
+		)
 		return
 	}
 }
@@ -167,7 +156,7 @@ func (g *Gateway) tryFailover(err error, failed *resolvedRouteTarget, excluded *
 	*excluded = append(*excluded, failed.target.Key)
 	g.selector.RecordFailover(failed.prov.Name)
 	g.RecordFailoverMetric(buildMetricLabels(route, serviceProtocol, endpoint, failed.target))
-	nextTarget, nextProv, selErr := g.selector.Select(g.cfg, route, serviceProtocol, failed.model, requestedModel, *excluded...)
+	nextTarget, nextProv, selErr := g.selector.Select(g.cfg, serviceProtocol, failed.model, requestedModel, *excluded...)
 	if selErr != nil {
 		return nil
 	}
@@ -228,137 +217,4 @@ func (g *Gateway) forwardNonStreamRequest(ctx context.Context, provCfg *config.P
 	}
 
 	return resp, body, latency, nil
-}
-
-// handleChatViaResponses handles Chat Completions requests by converting to/from Responses API format.
-// This is used when chat_to_responses is enabled for a provider.
-func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
-	rawReqBody []byte, model string, stream bool, provCfg *config.ProviderConfig, target *sel.RouteTarget, matchedRouteModel *config.CompiledRouteModel,
-	startTime time.Time, reqID string, allowFailover bool,
-	excluded []string, authRetried map[string]bool, failovers []reqlog.Failover,
-) {
-	var err error
-	defer func() { deferlog.DebugError(err, "handle chat via responses", "route", route.Prefix) }()
-	metricLabels := buildMetricLabels(route, config.RouteProtocolChat, "chat/completions", target)
-	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
-	applyMetricHeaders(w, metricLabels)
-
-	logRecord := func(respBody []byte, errMsg string) {
-		rec := reqlog.Record{
-			Timestamp:   startTime,
-			RequestID:   reqID,
-			Route:       route.Prefix,
-			Endpoint:    "chat/completions",
-			Model:       model,
-			Stream:      stream,
-			Provider:    provCfg.Name,
-			UserAgent:   r.UserAgent(),
-			DurationMs:  time.Since(startTime).Milliseconds(),
-			Error:       errMsg,
-			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
-			Request:     rawReqBody,
-			Response:    respBody,
-			Failovers:   failovers,
-		}
-		if stream && len(respBody) > 0 && errMsg == "" {
-			chatSSE := openai.ResponsesSSEToChatSSE(respBody)
-			if assembled, err := openai.AssembleChatStream(chatSSE); err == nil {
-				rec.Response = assembled
-				usage := ExtractTokenUsage(assembled)
-				g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-			}
-		} else if len(respBody) > 0 && errMsg == "" {
-			usage := ExtractTokenUsage(respBody)
-			g.RecordTokenMetrics(metricLabels, usage, rec.DurationMs)
-		}
-		g.recordAndBroadcast(rec)
-	}
-
-	var chatReq openai.ChatCompletionRequest
-	if err = json.Unmarshal(rawReqBody, &chatReq); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	respReq, err := openai.ChatRequestToResponsesRequest(chatReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("convert to responses: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	origModel := respReq.Model
-	respReq.Model = target.UpstreamModel
-
-	for {
-		logRequest(r, provCfg.Name, origModel)
-
-		respReq.Stream = stream
-		reqBody, err := json.Marshal(respReq)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		rawResp, latency, err := sendRequest(r.Context(), provCfg, "/responses", reqBody, stream)
-		if err != nil {
-			if stream {
-				g.selector.RecordOutcomeWithSource(provCfg.Name, err, latency, "pre_stream")
-				g.RecordStreamErrorMetric(metricLabels, "pre_stream")
-			} else {
-				g.selector.RecordOutcome(provCfg.Name, err, latency)
-			}
-			if tryAuthRetry(err, provCfg, authRetried) {
-				continue
-			}
-			if allowFailover {
-				failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-				if next := g.tryFailover(err, failed, &excluded, route, config.RouteProtocolChat, "chat/completions", origModel, &failovers); next != nil {
-					provCfg = next.prov
-					target = next.target
-					respReq.Model = target.UpstreamModel
-					metricLabels = buildMetricLabels(route, config.RouteProtocolChat, "chat/completions", target)
-					applyMetricHeaders(w, metricLabels)
-					continue
-				}
-			}
-			logRecord(nil, err.Error())
-			writeUpstreamAwareError(w, err)
-			return
-		}
-		g.selector.RecordOutcome(provCfg.Name, nil, latency)
-		if stream {
-			g.RecordTTFTMetric(metricLabels, latency)
-			g.runRouteToolHooks(r.Context(), parseResponsesToolCalls(rawResp, true), "ChatToResponses: failed to run tool hooks")
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			chatSSE := openai.ResponsesSSEToChatSSE(rawResp)
-			if _, writeErr := w.Write(chatSSE); writeErr != nil {
-				slog.Warn("Failed to write stream response", "error", writeErr)
-			}
-			w.(http.Flusher).Flush()
-			logRecord(rawResp, "")
-			return
-		}
-
-		var respResp openai.ResponsesResponse
-		if err = json.Unmarshal(rawResp, &respResp); err != nil {
-			http.Error(w, fmt.Sprintf("parse response: %v", err), http.StatusBadGateway)
-			return
-		}
-		funcCalls, _ := extractFunctionCalls(respResp.Output)
-		g.runRouteToolHooks(r.Context(), funcCallsToInfos(funcCalls), "ChatToResponses: failed to run tool hooks")
-
-		chatResp, err := openai.ResponsesResponseToChatResponse(respResp, model)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("convert response: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		respBody, _ := json.Marshal(chatResp)
-		w.Write(respBody)
-		logRecord(rawResp, "")
-		return
-	}
 }

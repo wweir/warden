@@ -49,27 +49,6 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 			failBody:      `{"error":{"type":"server_error","message":"primary failed"}}`,
 		},
 		{
-			name:          "chat via responses",
-			routePrefix:   "/openai-chat-resp",
-			routeProtocol: config.RouteProtocolChat,
-			requestPath:   "/openai-chat-resp/chat/completions",
-			requestBody:   `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
-			upstreamPath:  "/responses",
-			primaryURL:    func(url string) string { return url },
-			fallbackURL:   func(url string) string { return url },
-			primaryProto:  "openai",
-			fallbackProto: "openai",
-			mutatePrimary: func(prov *config.ProviderConfig) { prov.ChatToResponses = true },
-			mutateFallback: func(prov *config.ProviderConfig) {
-				prov.ChatToResponses = true
-			},
-			exactModel:    "gpt-4o",
-			primaryModel:  "gpt-4o-primary",
-			fallbackModel: "gpt-4o-fallback",
-			successBody:   `{"id":"resp_123","status":"completed","output":[{"type":"message","content":"ok"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-			failBody:      `{"error":{"type":"server_error","message":"primary failed"}}`,
-		},
-		{
 			name:          "responses direct",
 			routePrefix:   "/openai-responses",
 			routeProtocol: config.RouteProtocolResponses,
@@ -210,6 +189,100 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 				t.Fatalf("failover error = %q, want status code", failover.Error)
 			}
 		})
+	}
+}
+
+func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
+	t.Parallel()
+
+	primaryHits := 0
+	fallbackHits := 0
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"object":"list","data":[]}`)
+			return
+		}
+		primaryHits++
+		if r.URL.Path != "/responses" {
+			t.Fatalf("primary upstream path = %q, want /responses", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"type":"server_error","message":"primary failed"}}`)
+	}))
+	defer primary.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"object":"list","data":[]}`)
+			return
+		}
+		fallbackHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"resp_fallback","status":"completed","output":[{"type":"message","content":"ok"}]}`)
+	}))
+	defer fallback.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary": {
+				URL:             primary.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("primary-token"),
+				ResponsesToChat: true,
+			},
+			"fallback": {
+				URL:             fallback.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("fallback-token"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponses,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*config.RouteUpstreamConfig{
+							{Provider: "primary", Model: "gpt-4o-primary"},
+							{Provider: "fallback", Model: "gpt-4o-fallback"},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"gpt-4o","input":"hello","previous_response_id":"resp_prev"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("primary hits = %d, want 1", primaryHits)
+	}
+	if fallbackHits != 0 {
+		t.Fatalf("fallback hits = %d, want 0", fallbackHits)
+	}
+
+	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())
+	if record.Provider != "primary" {
+		t.Fatalf("logged provider = %q, want primary", record.Provider)
+	}
+	if len(record.Failovers) != 0 {
+		t.Fatalf("failover log count = %d, want 0", len(record.Failovers))
 	}
 }
 
