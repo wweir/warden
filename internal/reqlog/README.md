@@ -10,7 +10,7 @@
 | `file.go` | `FileLogger`：每条记录写入独立 JSON 文件 |
 | `http.go` | `HTTPLogger`：异步推送日志到 HTTP 端点，支持模板渲染 |
 | `broadcast.go` | `Broadcaster`：内存广播器，SSE 推送 + 环形缓冲 |
-| `logger.go` | `newLogger`/`multiLogger`：按配置构建多后端 Logger |
+| `internal/gateway/logger.go` | `newLogger`/`multiLogger`：按配置构建多后端 Logger，`reqlog` 包本身只定义接口和后端实现 |
 
 ## 核心类型
 
@@ -37,6 +37,7 @@ type Record struct {
     Endpoint    string          // 端点，如 "chat/completions"
     Model       string
     Stream      bool
+    Pending     bool            // 流式请求的中间态；最终记录会用同一 request_id 覆盖
     Provider    string
     UserAgent   string
     DurationMs  int64
@@ -178,7 +179,7 @@ func (b *Broadcaster) Recent() []Record
 
 内存广播器，供 SSE 实时日志推送使用：
 
-- **环形缓冲**：保留最近 50 条记录，新 SSE 连接建立时通过 `Recent()` 回放历史
+- **环形缓冲**：保留最近 50 条记录，新 SSE 连接建立时通过 `Recent()` 回放历史；相同 `request_id` 的新事件会覆盖旧记录，避免 pending/final 重复堆积
 - **非阻塞 fan-out**：`Publish` 向所有订阅者 channel 发送，慢消费者丢弃该事件（不阻塞发布方）
 - 每个订阅者 channel 缓冲 64 条
 - `Unsubscribe` 关闭 channel，SSE handler 通过 range 感知断开

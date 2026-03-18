@@ -10,7 +10,7 @@ protocol/
 ├── openai/             # OpenAI 协议实现
 │   ├── types.go        # Chat Completions API 请求/响应类型
 │   ├── responses.go    # Responses API 请求/响应类型
-│   ├── convert.go      # Chat ↔ Responses 双向转换
+│   ├── convert.go      # Responses -> Chat 请求转换；Chat -> Responses 响应/SSE 转换
 │   ├── stream.go       # SSE 流式解析器（Chat + Responses）
 │   └── prompt.go       # 系统提示词注入
 └── anthropic/          # Anthropic 协议实现
@@ -24,7 +24,7 @@ protocol/
 - 定义 LLM 协议公共类型（`Event`、`ToolCallInfo`）
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
-- 提供 OpenAI `chat/completions` 与 `responses` 的双向请求/响应/SSE 转换
+- 提供 OpenAI `responses_to_chat` 所需的请求/响应/SSE 转换
 
 ## 主要类型
 

@@ -25,7 +25,9 @@
 ## Compatibility Notes
 
 - route 配置的主结构是 `exact_models` / `wildcard_models`
+- route model 的额外提示词由 `prompt_enabled` + `system_prompt` 共同表达；缺少 `prompt_enabled` 的旧配置仍兼容为“只要 `system_prompt` 非空就启用”
+- `route.protocol` 必填，不再接受空协议的隐式行为
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
-- 保留 legacy `models` / `providers` / `system_prompts` 到新结构的转换逻辑
+- 带 `previous_response_id` 的 Responses 有状态请求会禁用 failover，并绕过 `responses_to_chat`
 - `route` 的运行时派生字段只在 `Validate()` 后可依赖
 - `mcp` 与 `ssh` 配置块已移除，不再参与配置模型

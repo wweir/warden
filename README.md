@@ -1,6 +1,6 @@
 # Warden
 
-Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的 OpenAI 兼容入口，把请求按路由和模型映射到不同 provider，并在请求链路上提供协议转换、System Prompt 注入、工具调用 Hook、日志与管理面板。
+Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的 OpenAI 兼容入口，把请求按路由和模型映射到不同 provider，并在请求链路上提供有限协议兼容、System Prompt 注入、工具调用 Hook、日志与管理面板。
 
 ## 当前能力
 
@@ -8,7 +8,7 @@ Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的
 - 路由中心化配置：`route.protocol + route.exact_models + route.wildcard_models + route.hooks`
 - 精确模型 `upstreams` 映射与通配符模型 `providers` 选择
 - OpenAI `chat/completions` 与 `responses` 双接口
-- OpenAI `chat ↔ responses` 协议桥接
+- OpenAI `responses -> chat` 无状态兼容桥接
 - route-scoped 工具调用 Hook：`exec` / `ai` / `http`
 - Provider 健康探测、抑制、failover 与 Prometheus 指标
 - 可选客户端 API Key 鉴权；按密钥统计请求与 token 用量
@@ -90,6 +90,7 @@ route:
 - `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
 - `qwen` / `copilot` 在未显式配置 `api_key` 时，会从本地 `config_dir` 读取 OAuth 凭证
 - `api_keys` 为空时，网关不校验客户端 API Key；配置后支持 `Authorization: Bearer ...`、`Api-Key`、`X-Api-Key`
+- `route.protocol` 必填，只接受 `chat`、`responses`、`anthropic`
 - `route.exact_models` 只接受 `upstreams`
 - `route.wildcard_models` 只接受 `providers`
 - `route.hooks` 只观察并审计模型返回的工具调用；Warden 不负责执行内置 MCP 工具
@@ -139,10 +140,13 @@ curl http://localhost:8080/openai/responses \
 
 对 OpenAI-compatible provider：
 
-- `chat_to_responses: true`：本地 `chat/completions` → 上游 `/responses`
-- `responses_to_chat: true`：本地 `responses` → 上游 `/chat/completions`
+- `responses_to_chat: true`：仅无状态 `responses` → 上游 `/chat/completions`
 
 `responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。
+`responses_to_chat` 明确不支持 `previous_response_id`，因此不能承载 Responses 有状态续接。
+原生 `/responses` 路径会透传 `previous_response_id` 等字段，但会话状态仍由上游 provider 维护；带 `previous_response_id` 的有状态请求会禁用协议转换和 failover。
+
+更完整的现状整理见 [docs/responses-stateful-stateless-support.md](docs/responses-stateful-stateless-support.md)。
 
 对 route：
 

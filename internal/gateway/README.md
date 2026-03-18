@@ -9,7 +9,7 @@
 - Selects route-model upstream targets, records outcomes, and runs route-scoped tool-call hooks on returned tool calls.
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
-- Bridges OpenAI `chat/completions` ↔ `responses` when a provider enables protocol-conversion flags.
+- Bridges stateless OpenAI `responses` requests to upstream `chat/completions` when a provider enables `responses_to_chat`.
 - Logs inspectable upstream response bodies; transparent proxy logs decompress `gzip`/`br`/`zstd` bodies before persistence when possible.
 - Keeps failover trail on request logs, so a single successful client request still shows intermediate upstream switches.
 
@@ -22,7 +22,8 @@
 - Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
 - Wildcard model entries preserve the request model name and only choose which provider serves it.
 - Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
-- Anthropic routes still expose only `/messages`; OpenAI-compatible routes may expose both `/chat/completions` and `/responses` when the route has provider support for both, so provider-level protocol conversion flags are reachable.
+- Anthropic routes still expose only `/messages`; OpenAI-compatible routes may expose both `/chat/completions` and `/responses` when the route has provider support for both.
+- Stateful Responses requests (`previous_response_id`) bypass `responses_to_chat` conversion and disable failover, so the gateway only does native `/responses` passthrough for those requests.
 
 ## Key Interfaces
 
@@ -30,6 +31,9 @@
 - `PromMiddleware`: records request-level Prometheus metrics for business endpoints.
 - Client API key usage is tracked separately from provider usage, so gateway auth and upstream auth remain decoupled.
 - `dashboardMetricsStore`: maintains in-memory rolling dashboard points sampled from Prometheus collectors.
+- Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
+- Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
+- Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
 
 ## Admin Telemetry Flow
 

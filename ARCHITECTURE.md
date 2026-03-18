@@ -60,6 +60,8 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `provider.*.url` 与 `webhook.*.url` 必须为绝对 `http/https` URL
 - `provider.*.proxy` 只允许 `http` / `https` / `socks5` / `socks5h`
 - `qwen` / `copilot` 若未显式设置 `api_key`，则从本地 `config_dir` 读取 OAuth 凭证
+- `route.protocol` 必填，且只接受 `chat` / `responses` / `anthropic`
+- 不再接受 legacy `route.models` / `route.providers` / `route.system_prompts`
 - `route` 的运行时派生字段只有在 `Validate()` 后可依赖
 
 ### 2. Gateway Layer
@@ -72,6 +74,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 处理 OpenAI `chat/completions`、`responses` 与透明代理请求
 - 在响应中提取工具调用并触发 route hook
 - 记录日志、Prometheus 指标、按 API Key 的用量指标和 Dashboard 时序数据
+- chat / responses 的请求日志拼装走共享 helper，保证流式响应在日志中尽量落为最终对象而不是原始 SSE 文本
 
 `Gateway.Close()` 负责：
 
@@ -141,6 +144,7 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 文件 / HTTP 双后端日志输出
 - SSE 广播
 - 管理端日志流消费
+- 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
 - 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
 - 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
 
@@ -170,11 +174,14 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 - `provider.models` 在管理端中被定义为 provider 可用模型的静态基线与发现失败兜底，并复用运行时已发现模型作为录入建议来源；它不负责声明 route 对外公开模型面
 - `Routes` 页面负责 route 配置编辑，包括 `exact_models` / `wildcard_models`
 - route 编辑器里的 exact upstream model 建议会合并 `provider.models` 静态基线与当前运行时 `/models` 发现结果
+- route 编辑器中的模型卡片采用左右分栏：左侧维护公开模型信息，右侧维护 upstream/provider 列表，降低模型较多时的纵向滚动成本
+- route model 的额外 system prompt 由 `prompt_enabled` 显式控制；UI 默认折叠，只有启用后才显示输入框；后端只在 `prompt_enabled=true` 且 `system_prompt` 非空时注入
 - `Providers` 页面卡片可以直接发起“基于当前 provider 模型创建 route”；该入口会用 provider 的已配置/已发现模型预填 `exact_models`，并让每个 public model 默认回指同名 upstream model
 - route hooks 的主编辑入口是 `Tool Hooks` 页面
 - `Config` 页面承载通用配置、客户端 API 密钥、webhook 与日志目标编辑
 - `Config` 页面不承载 provider / route / hook 编辑
 - `Logs` 页面在整合会话时，优先使用 Responses stateful 请求中的 `previous_response_id -> response.id` 显式关联；没有显式关联时再退回 fingerprint 前缀和旧的时间窗启发式
+- `Logs` 页面按 `request_id` upsert SSE 事件，因此流式请求会先显示“进行中”，完成后在同一行补全 duration/response
 
 ## Request Flow
 
@@ -219,7 +226,7 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 - `anthropic` route 仍只暴露 Anthropic `/messages`
 - OpenAI-compatible route 仍按 `route.protocol` 标记主入口
 - 但只要 route 内存在可服务该协议的 provider，网关会额外注册 `/chat/completions` 或 `/responses`
-- 这样 provider 级 `chat_to_responses` / `responses_to_chat` 才能在单个 OpenAI route 上生效，不会被 route 注册阶段提前拦成 404
+- `responses_to_chat` 只对无状态 Responses 请求生效；带 `previous_response_id` 的有状态请求只允许原生 `/responses` 透传，且禁用 failover
 
 ### Hook Boundary Instead of Tool Runtime
 
@@ -261,9 +268,12 @@ OAuth 凭证读取现在只走本地文件：
 
 `/_admin/api/mcp/*` 已移除。
 
+Admin SSE 接口统一返回 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache, no-transform`，并在日志流建立后立即发送注释帧/空闲心跳，减少反向代理对小包 SSE 的缓冲延迟。
+
 ## Build Notes
 
 - `Makefile` 是统一入口
 - `make web` 构建前端静态资源
 - `make build` 使用 `ldflags` 注入版本与构建日期
 - `make test` 运行 `go vet` 与 `go test`
+- 启动时配置加载仍走 `feconf`，但会覆盖默认 decode hook，避免上游默认值 hook 将显式 `false` 误判为零值并在 `prompt_enabled: false` 这类 `*bool` 字段上触发解码 panic

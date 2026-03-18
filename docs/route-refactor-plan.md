@@ -1,6 +1,6 @@
 # Route-Centric Routing Refactor
 
-> Note (2026-03-18): OpenAI-compatible routes no longer hard-cut the alternate `/chat/completions` or `/responses` entry at registration time. `route.protocol` remains the primary protocol surface, but the gateway now also registers the alternate OpenAI endpoint when route providers can serve it directly or through protocol conversion. Anthropic routes still expose only `/messages`.
+> Note (2026-03-18): OpenAI-compatible routes no longer hard-cut the alternate `/chat/completions` or `/responses` entry at registration time. `route.protocol` remains the primary protocol surface, but the gateway now also registers the alternate OpenAI endpoint when route providers can serve it directly or, for stateless Responses only, through `responses_to_chat`. Anthropic routes still expose only `/messages`.
 
 ## Goals
 
@@ -60,10 +60,8 @@ route:
 
 ## Compatibility
 
-- Legacy `route.models`, `route.providers`, and `route.system_prompts` are still accepted temporarily.
-- Validation compiles legacy routes into:
-  - `exact_models`
-  - `wildcard_models`
+- `route.protocol` is required.
+- Only `exact_models`, `wildcard_models`, and `route.<prefix>.hooks` are accepted.
 - Tool hooks are only loaded from `route.<prefix>.hooks`.
 
 ## Status
@@ -74,8 +72,8 @@ route:
 - Completed: admin UI editors for route models/hooks and route/provider split metrics.
 - Completed: `Routes` page now edits route config directly with separate exact/wildcard model sections; `Tool Hooks` remains the dedicated hook editor.
 - Completed: tool hooks now load only from `route.<prefix>.hooks`; no global `tool_hooks` compatibility remains.
+- Completed: legacy `route.models`, `route.providers`, `route.system_prompts`, and empty `route.protocol` compatibility removed.
 
 ## Deferred Follow-Up
 
-- Removal of legacy `route.models`, `route.providers`, and `route.system_prompts`.
 - Further UI polish for large route-model maps if configuration scale grows.

@@ -1,4 +1,6 @@
 > Note (2026-03-13): route 级 MCP 工具注入已移除；本文中与“注入/拦截执行注入工具”相关的段落仅保留为历史设计记录。
+>
+> Note (2026-03-18): `chat_to_responses` 已从当前实现移除。本文只保留为历史方案记录，不代表现行能力。
 
 # OpenAI Provider: Chat 协议转 Responses 协议方案
 
