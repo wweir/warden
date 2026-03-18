@@ -54,6 +54,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	selectedTarget := resolved.target
 	matchedRouteModel := resolved.model
 	allowFailover := explicitProvider == ""
+	var failovers []reqlog.Failover
 	metricLabels := buildMetricLabels(route, config.RouteProtocolResponses, "responses", selectedTarget)
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
@@ -63,7 +64,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	}
 
 	if provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
-		g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried)
+		g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried, failovers)
 		return
 	}
 
@@ -82,6 +83,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
 			Request:     rawReqBody,
 			Response:    respBody,
+			Failovers:   failovers,
 		}
 		if stream && len(respBody) > 0 && errMsg == "" {
 			events := protocol.ParseEvents(respBody)
@@ -110,7 +112,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				continue
 			}
 			if allowFailover {
-				if next := g.tryFailover(err, resolved, &excluded, route, config.RouteProtocolResponses, "responses", model); next != nil {
+				if next := g.tryFailover(err, resolved, &excluded, route, config.RouteProtocolResponses, "responses", model, &failovers); next != nil {
 					resolved = next
 					provCfg = next.prov
 					selectedTarget = next.target
@@ -153,7 +155,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, provCfg *config.ProviderConfig, target *sel.RouteTarget, matchedRouteModel *config.CompiledRouteModel,
 	startTime time.Time, reqID string,
-	allowFailover bool, excluded []string, authRetried map[string]bool,
+	allowFailover bool, excluded []string, authRetried map[string]bool, failovers []reqlog.Failover,
 ) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses via chat", "route", route.Prefix) }()
@@ -177,6 +179,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
 			Request:     rawReqBody,
 			Response:    respBody,
+			Failovers:   failovers,
 		}
 		if stream && len(respBody) > 0 && errMsg == "" {
 			events := protocol.ParseEvents(respBody)
@@ -222,7 +225,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 				}
 				if allowFailover {
 					failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-					if next := g.tryFailover(sendErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel); next != nil {
+					if next := g.tryFailover(sendErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel, &failovers); next != nil {
 						provCfg = next.prov
 						target = next.target
 						chatReq.Model = target.UpstreamModel
@@ -259,7 +262,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			}
 			if allowFailover {
 				failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-				if next := g.tryFailover(forwardErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel); next != nil {
+				if next := g.tryFailover(forwardErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel, &failovers); next != nil {
 					provCfg = next.prov
 					target = next.target
 					chatReq.Model = target.UpstreamModel

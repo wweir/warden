@@ -1,9 +1,15 @@
 package gateway
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
+
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 type encodingQualitySet map[string]float64
@@ -150,8 +156,42 @@ func normalizeContentEncoding(value string) string {
 	return token
 }
 
-func isInspectableResponseBody(contentEncoding string) bool {
-	return contentEncoding == "" || contentEncoding == "identity"
+func decodeResponseBody(contentEncoding string, body []byte) ([]byte, error) {
+	contentEncoding = normalizeContentEncoding(contentEncoding)
+	switch contentEncoding {
+	case "", "identity":
+		return body, nil
+	case "gzip":
+		gr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create gzip reader: %w", err)
+		}
+		defer gr.Close()
+		decoded, err := io.ReadAll(gr)
+		if err != nil {
+			return nil, fmt.Errorf("read gzip body: %w", err)
+		}
+		return decoded, nil
+	case "br":
+		decoded, err := io.ReadAll(brotli.NewReader(bytes.NewReader(body)))
+		if err != nil {
+			return nil, fmt.Errorf("read brotli body: %w", err)
+		}
+		return decoded, nil
+	case "zstd":
+		zr, err := zstd.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create zstd reader: %w", err)
+		}
+		defer zr.Close()
+		decoded, err := io.ReadAll(zr)
+		if err != nil {
+			return nil, fmt.Errorf("read zstd body: %w", err)
+		}
+		return decoded, nil
+	default:
+		return nil, fmt.Errorf("unsupported content encoding %q", contentEncoding)
+	}
 }
 
 func compressedBodyPlaceholder(contentEncoding string, size int) string {

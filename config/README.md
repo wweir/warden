@@ -25,6 +25,7 @@
 ## Compatibility Notes
 
 - route 配置的主结构是 `exact_models` / `wildcard_models`
+- failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
 - 保留 legacy `models` / `providers` / `system_prompts` 到新结构的转换逻辑
 - `route` 的运行时派生字段只在 `Validate()` 后可依赖
 - `mcp` 与 `ssh` 配置块已移除，不再参与配置模型

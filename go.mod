@@ -7,6 +7,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/julienschmidt/httprouter v1.3.0
+	github.com/klauspost/compress v1.18.0
 	github.com/lmittmann/tint v1.1.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2

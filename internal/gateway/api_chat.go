@@ -61,9 +61,10 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 	authRetried := map[string]bool{}
 	allowFailover := explicitProvider == ""
+	var failovers []reqlog.Failover
 
 	if selectedProvider.ChatToResponses && selectedProvider.Protocol == "openai" {
-		g.handleChatViaResponses(w, r, route, rawReqBody, model, stream, selectedProvider, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried)
+		g.handleChatViaResponses(w, r, route, rawReqBody, model, stream, selectedProvider, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried, failovers)
 		return
 	}
 
@@ -82,6 +83,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
 			Request:     rawReqBody,
 			Response:    respBody,
+			Failovers:   failovers,
 		}
 		if stream && len(respBody) > 0 && errMsg == "" {
 			if assembled, err := openai.AssembleChatStream(respBody); err == nil {
@@ -113,7 +115,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				continue
 			}
 			if allowFailover {
-				if next := g.tryFailover(err, resolved, &excluded, route, config.RouteProtocolChat, "chat/completions", model); next != nil {
+				if next := g.tryFailover(err, resolved, &excluded, route, config.RouteProtocolChat, "chat/completions", model, &failovers); next != nil {
 					resolved = next
 					selectedProvider = next.prov
 					selectedTarget = next.target
@@ -158,7 +160,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 // tryFailover checks if an error is retryable and selects the next upstream target.
 // Returns nil if no failover is possible.
-func (g *Gateway) tryFailover(err error, failed *resolvedRouteTarget, excluded *[]string, route *config.RouteConfig, serviceProtocol, endpoint, requestedModel string) *resolvedRouteTarget {
+func (g *Gateway) tryFailover(err error, failed *resolvedRouteTarget, excluded *[]string, route *config.RouteConfig, serviceProtocol, endpoint, requestedModel string, failovers *[]reqlog.Failover) *resolvedRouteTarget {
 	if !sel.IsRetryableError(err) {
 		return nil
 	}
@@ -168,6 +170,15 @@ func (g *Gateway) tryFailover(err error, failed *resolvedRouteTarget, excluded *
 	nextTarget, nextProv, selErr := g.selector.Select(g.cfg, route, serviceProtocol, failed.model, requestedModel, *excluded...)
 	if selErr != nil {
 		return nil
+	}
+	if failovers != nil {
+		*failovers = append(*failovers, reqlog.Failover{
+			FailedProvider:      failed.prov.Name,
+			FailedProviderModel: failed.target.UpstreamModel,
+			NextProvider:        nextProv.Name,
+			NextProviderModel:   nextTarget.UpstreamModel,
+			Error:               err.Error(),
+		})
 	}
 	slog.Warn("Provider failover", "failed", failed.prov.Name, "next", nextProv.Name, "error", err)
 	return &resolvedRouteTarget{
@@ -224,7 +235,7 @@ func (g *Gateway) forwardNonStreamRequest(ctx context.Context, provCfg *config.P
 func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, provCfg *config.ProviderConfig, target *sel.RouteTarget, matchedRouteModel *config.CompiledRouteModel,
 	startTime time.Time, reqID string, allowFailover bool,
-	excluded []string, authRetried map[string]bool,
+	excluded []string, authRetried map[string]bool, failovers []reqlog.Failover,
 ) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle chat via responses", "route", route.Prefix) }()
@@ -247,6 +258,7 @@ func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request,
 			Fingerprint: reqlog.BuildFingerprint(rawReqBody),
 			Request:     rawReqBody,
 			Response:    respBody,
+			Failovers:   failovers,
 		}
 		if stream && len(respBody) > 0 && errMsg == "" {
 			chatSSE := openai.ResponsesSSEToChatSSE(respBody)
@@ -300,7 +312,7 @@ func (g *Gateway) handleChatViaResponses(w http.ResponseWriter, r *http.Request,
 			}
 			if allowFailover {
 				failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-				if next := g.tryFailover(err, failed, &excluded, route, config.RouteProtocolChat, "chat/completions", origModel); next != nil {
+				if next := g.tryFailover(err, failed, &excluded, route, config.RouteProtocolChat, "chat/completions", origModel, &failovers); next != nil {
 					provCfg = next.prov
 					target = next.target
 					respReq.Model = target.UpstreamModel

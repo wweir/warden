@@ -93,13 +93,13 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 			func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 				g.handleModels(w, r, route)
 			})
-		if route.Protocol == "" || route.Protocol == config.RouteProtocolChat {
+		if g.shouldRegisterOpenAIEndpoint(route, config.RouteProtocolChat) {
 			router.Handle(http.MethodPost, prefix+"/chat/completions",
 				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 					g.handleChatCompletion(w, r, route)
 				})
 		}
-		if route.Protocol == "" || route.Protocol == config.RouteProtocolResponses {
+		if g.shouldRegisterOpenAIEndpoint(route, config.RouteProtocolResponses) {
 			router.Handle(http.MethodPost, prefix+"/responses",
 				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 					g.handleResponses(w, r, route)
@@ -132,6 +132,36 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	).Process(router)
 
 	return g
+}
+
+func (g *Gateway) shouldRegisterOpenAIEndpoint(route *config.RouteConfig, serviceProtocol string) bool {
+	switch serviceProtocol {
+	case config.RouteProtocolChat:
+		if route.Protocol == "" || route.Protocol == config.RouteProtocolChat {
+			return true
+		}
+	case config.RouteProtocolResponses:
+		if route.Protocol == "" || route.Protocol == config.RouteProtocolResponses {
+			return true
+		}
+	default:
+		return false
+	}
+
+	if route.Protocol == config.RouteProtocolAnthropic {
+		return false
+	}
+
+	for _, providerName := range route.ProviderNames() {
+		provCfg := g.cfg.Provider[providerName]
+		if provCfg == nil {
+			continue
+		}
+		if config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeHTTP implements http.Handler.
@@ -198,6 +228,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 
 	var excluded []string
 	authRetried := map[string]bool{}
+	var failovers []reqlog.Failover
 	explicitProvider := r.Header.Get("X-Provider")
 	allowFailover := isInferenceEndpoint(r.URL.Path)
 	serviceProtocol := route.Protocol
@@ -269,7 +300,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			}
 			// Only failover for inference endpoints
 			if allowFailover && resolved != nil && explicitProvider == "" {
-				if next := g.tryFailover(err, resolved, &excluded, route, serviceProtocol, endpoint, model); next != nil {
+				if next := g.tryFailover(err, resolved, &excluded, route, serviceProtocol, endpoint, model, &failovers); next != nil {
 					resolved = next
 					provCfg = next.prov
 					target = next.target
@@ -285,9 +316,12 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		contentEncoding := normalizeContentEncoding(resp.Header.Get("Content-Encoding"))
-		inspectableBody := isInspectableResponseBody(contentEncoding)
+		decodedRespBody, decodeErr := decodeResponseBody(contentEncoding, respBody)
+		inspectableBody := decodeErr == nil
 		errBody := string(respBody)
-		if !inspectableBody {
+		if inspectableBody {
+			errBody = string(decodedRespBody)
+		} else {
 			errBody = compressedBodyPlaceholder(contentEncoding, len(respBody))
 		}
 
@@ -296,8 +330,8 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		if resp.StatusCode != http.StatusOK {
 			upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: errBody}
 		} else if inspectableBody {
-			if errType, _ := sel.ParseErrorBody(string(respBody)); errType != "" && sel.IsRetryableByBody(string(respBody)) {
-				upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+			if errType, _ := sel.ParseErrorBody(string(decodedRespBody)); errType != "" && sel.IsRetryableByBody(string(decodedRespBody)) {
+				upErr = &sel.UpstreamError{Code: resp.StatusCode, Body: string(decodedRespBody)}
 			}
 		}
 
@@ -311,7 +345,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			}
 			// Only failover for inference endpoints
 			if allowFailover && resolved != nil && explicitProvider == "" {
-				if next := g.tryFailover(upErr, resolved, &excluded, route, serviceProtocol, endpoint, model); next != nil {
+				if next := g.tryFailover(upErr, resolved, &excluded, route, serviceProtocol, endpoint, model, &failovers); next != nil {
 					resolved = next
 					provCfg = next.prov
 					target = next.target
@@ -336,7 +370,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 		durationMs := time.Since(startTime).Milliseconds()
 		logResp := []byte(errBody)
 		if inspectableBody {
-			logResp = assembleProxyResponse(provCfg.Protocol, respBody)
+			logResp = assembleProxyResponse(provCfg.Protocol, decodedRespBody)
 		}
 
 		// Extract token usage for metrics (only for LLM responses)
@@ -359,6 +393,7 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 			Fingerprint: reqlog.BuildFingerprint(reqBody),
 			Request:     reqBody,
 			Response:    logResp,
+			Failovers:   failovers,
 		}
 		if upErr != nil {
 			rec.Error = upErr.Error()

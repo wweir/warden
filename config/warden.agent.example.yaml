@@ -1,0 +1,96 @@
+addr: ":28080"
+
+# Minimal example for agent-facing routes.
+# /cc prefers Anthropic-compatible upstreams.
+# /codex prefers OpenAI-compatible coder models.
+# /openclaw keeps the same route shape but prefers Qwen first.
+provider:
+  openai:
+    url: "https://api.openai.com/v1"
+    protocol: "openai"
+    api_key: "${OPENAI_API_KEY}"
+    timeout: "120s"
+
+  anthropic:
+    url: "https://api.anthropic.com/v1"
+    protocol: "anthropic"
+    api_key: "${ANTHROPIC_API_KEY}"
+    timeout: "120s"
+
+  qwen:
+    protocol: "qwen"
+    config_dir: "~/.qwen"
+    timeout: "120s"
+    models:
+      - "qwen3-coder-plus"
+      - "qwen3-coder-flash"
+      - "vision-model"
+
+  copilot:
+    protocol: "copilot"
+    config_dir: "~/.config/github-copilot"
+    timeout: "120s"
+    models:
+      # Strong premium models
+      - "gpt-5.4"
+      - "gpt-5.3-codex"
+      - "claude-opus-4-6"
+      - "claude-sonnet-4-6"
+      - "claude-haiku-4-5"
+      # Strong free models
+      - "gpt-5-mini"
+      - "goldeneye"
+      - "raptor-mini"
+      - "grok-code-fast-1"
+
+route:
+  /cc:
+    protocol: "anthropic"
+    exact_models:
+      "claude-opus-4-6":
+        upstreams:
+          - provider: "anthropic"
+            model: "claude-opus-4-6"
+          - provider: "copilot"
+            model: "claude-opus-4-6"
+      "claude-sonnet-4-6":
+        upstreams:
+          - provider: "anthropic"
+            model: "claude-sonnet-4-6"
+          - provider: "copilot"
+            model: "claude-sonnet-4-6"
+      "claude-haiku-4-5":
+        upstreams:
+          - provider: "anthropic"
+            model: "claude-haiku-4-5"
+          - provider: "copilot"
+            model: "claude-haiku-4-5"
+
+  /codex:
+    protocol: "chat"
+    exact_models:
+      "gpt-5.4":
+        upstreams:
+          - provider: "openai"
+            model: "gpt-5.4"
+          - provider: "copilot"
+            model: "gpt-5.4"
+          - provider: "qwen"
+            model: "qwen3-coder-plus"
+      "gpt-5.3-codex":
+        upstreams:
+          - provider: "openai"
+            model: "gpt-5.3-codex"
+          - provider: "copilot"
+            model: "gpt-5.3-codex"
+          - provider: "qwen"
+            model: "qwen3-coder-plus"
+
+  /openclaw:
+    protocol: "chat"
+    wildcard_models:
+      "*":
+        providers:
+          - "qwen"
+          - "openai"
+          - "copilot"

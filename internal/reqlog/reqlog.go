@@ -36,6 +36,7 @@ type Record struct {
 	Fingerprint string          `json:"fingerprint,omitempty"`
 	Request     json.RawMessage `json:"request"`
 	Response    json.RawMessage `json:"response,omitempty"`
+	Failovers   []Failover      `json:"failovers,omitempty"`
 	Steps       []Step          `json:"steps,omitempty"`
 }
 
@@ -362,6 +363,15 @@ type Step struct {
 	ToolResults []ToolResultEntry `json:"tool_results"`
 	LLMRequest  json.RawMessage   `json:"llm_request,omitempty"`
 	LLMResponse json.RawMessage   `json:"llm_response,omitempty"`
+}
+
+// Failover records one upstream switch within the same client request.
+type Failover struct {
+	FailedProvider      string `json:"failed_provider"`
+	FailedProviderModel string `json:"failed_provider_model,omitempty"`
+	NextProvider        string `json:"next_provider"`
+	NextProviderModel   string `json:"next_provider_model,omitempty"`
+	Error               string `json:"error"`
 }
 
 // ToolCallEntry records one tool call from the LLM.

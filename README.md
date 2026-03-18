@@ -137,12 +137,18 @@ curl http://localhost:8080/openai/responses \
   -d '{"model":"gpt-4o","input":"Hello"}'
 ```
 
-对 `protocol: "openai"` 的 provider：
+对 OpenAI-compatible provider：
 
 - `chat_to_responses: true`：本地 `chat/completions` → 上游 `/responses`
 - `responses_to_chat: true`：本地 `responses` → 上游 `/chat/completions`
 
 `responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。
+
+对 route：
+
+- `route.protocol` 表示主协议面
+- `anthropic` route 只暴露 `/messages`
+- OpenAI-compatible route 会按 route 内 provider 能力自动补注册 `/chat/completions` 或 `/responses`，避免 provider 级协议转换在入口层被 404 截断
 
 ## 项目结构
 

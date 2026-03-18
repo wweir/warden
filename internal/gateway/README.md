@@ -10,15 +10,19 @@
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
 - Bridges OpenAI `chat/completions` ↔ `responses` when a provider enables protocol-conversion flags.
+- Logs inspectable upstream response bodies; transparent proxy logs decompress `gzip`/`br`/`zstd` bodies before persistence when possible.
+- Keeps failover trail on request logs, so a single successful client request still shows intermediate upstream switches.
 
 ## Route-Centric Runtime
 
-- `route.protocol` defines the external protocol exposed by a route: `chat`, `responses`, or `anthropic`.
+- `route.protocol` defines the primary external protocol surface of a route: `chat`, `responses`, or `anthropic`.
 - `route.exact_models` and `route.wildcard_models` define the public model surface explicitly.
 - Exact model entries use ordered `upstreams`, while wildcard entries use ordered `providers`.
+- Retryable failures only fail over within the matched route-model candidate list, so HA can be configured for a single public model without affecting unrelated models on the same route.
 - Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
 - Wildcard model entries preserve the request model name and only choose which provider serves it.
 - Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
+- Anthropic routes still expose only `/messages`; OpenAI-compatible routes may expose both `/chat/completions` and `/responses` when the route has provider support for both, so provider-level protocol conversion flags are reachable.
 
 ## Key Interfaces
 

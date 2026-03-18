@@ -1,9 +1,11 @@
 # Route-Centric Routing Refactor
 
+> Note (2026-03-18): OpenAI-compatible routes no longer hard-cut the alternate `/chat/completions` or `/responses` entry at registration time. `route.protocol` remains the primary protocol surface, but the gateway now also registers the alternate OpenAI endpoint when route providers can serve it directly or through protocol conversion. Anthropic routes still expose only `/messages`.
+
 ## Goals
 
 1. Route becomes the primary product surface.
-2. Each route exposes exactly one external protocol: `chat`, `responses`, or `anthropic`.
+2. Each route declares one primary external protocol: `chat`, `responses`, or `anthropic`.
 3. Routing and failover are bound to `route + requested model`, not to the route-wide provider list.
 4. Public model names may differ from upstream model names; renaming is enabled automatically for exact model mappings.
 5. Wildcard route models forward the requested model name unchanged and only choose upstream providers.
@@ -54,6 +56,7 @@ route:
 5. For exact model entries, rewrite the request model to the configured upstream model.
 6. For wildcard entries, keep the request model unchanged.
 7. Retryable failures fail over only within the matched route model candidate list.
+8. A single configured public model can carry its own HA policy by listing multiple upstream targets/providers in that route model.
 
 ## Compatibility
 

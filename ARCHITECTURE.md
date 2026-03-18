@@ -84,6 +84,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 `internal/selector` 负责 provider 选择与状态维护：
 
 - 按 route 模型编译结果选择候选 provider
+- failover 的最小运行单元是单个 route model，不是整个 route
 - 管理 provider 抑制窗口与失败计数
 - 支持 failover
 - 聚合 provider 状态供管理端展示
@@ -140,6 +141,8 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 文件 / HTTP 双后端日志输出
 - SSE 广播
 - 管理端日志流消费
+- 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
+- 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
 
 Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 
@@ -164,10 +167,14 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 配置编辑的当前边界：
 
 - `Providers` 页面负责单个 provider 配置编辑
+- `provider.models` 在管理端中被定义为 provider 可用模型的静态基线与发现失败兜底，并复用运行时已发现模型作为录入建议来源；它不负责声明 route 对外公开模型面
 - `Routes` 页面负责 route 配置编辑，包括 `exact_models` / `wildcard_models`
+- route 编辑器里的 exact upstream model 建议会合并 `provider.models` 静态基线与当前运行时 `/models` 发现结果
+- `Providers` 页面卡片可以直接发起“基于当前 provider 模型创建 route”；该入口会用 provider 的已配置/已发现模型预填 `exact_models`，并让每个 public model 默认回指同名 upstream model
 - route hooks 的主编辑入口是 `Tool Hooks` 页面
 - `Config` 页面承载通用配置、客户端 API 密钥、webhook 与日志目标编辑
 - `Config` 页面不承载 provider / route / hook 编辑
+- `Logs` 页面在整合会话时，优先使用 Responses stateful 请求中的 `previous_response_id -> response.id` 显式关联；没有显式关联时再退回 fingerprint 前缀和旧的时间窗启发式
 
 ## Request Flow
 
@@ -203,6 +210,16 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 - 外部暴露什么模型，由 `route.exact_models` 和 `route.wildcard_models` 决定
 - 上游真实模型名，由 `upstreams[].model` 决定
 - 通配符模型只决定 provider 候选集合，不改写请求模型名
+- 一个配置中的单独 public model 可以通过多个 ordered upstream/provider 获得独立 failover，从而提供该模型自己的 HA，而不会把整个 route 绑成一个统一故障域
+
+### OpenAI Route Endpoint Exposure
+
+`route.protocol` 现在表示 route 的主协议面，而不是对 OpenAI 两个入口做硬切断。
+
+- `anthropic` route 仍只暴露 Anthropic `/messages`
+- OpenAI-compatible route 仍按 `route.protocol` 标记主入口
+- 但只要 route 内存在可服务该协议的 provider，网关会额外注册 `/chat/completions` 或 `/responses`
+- 这样 provider 级 `chat_to_responses` / `responses_to_chat` 才能在单个 OpenAI route 上生效，不会被 route 注册阶段提前拦成 404
 
 ### Hook Boundary Instead of Tool Runtime
 

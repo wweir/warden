@@ -44,9 +44,26 @@ type Record struct {
     Fingerprint string          // 会话指纹，见 BuildFingerprint
     Request     json.RawMessage
     Response    json.RawMessage
+    Failovers   []Failover      // 同一请求内的上游切换轨迹
     Steps       []Step          // 工具调用中间轮次
 }
 ```
+
+### Failover
+
+同一个客户端请求内每次上游切换都会追加一条轨迹：
+
+```go
+type Failover struct {
+    FailedProvider      string
+    FailedProviderModel string
+    NextProvider        string
+    NextProviderModel   string
+    Error               string
+}
+```
+
+这用于补齐 failover 成功场景的请求日志：最终请求虽然成功，但日志仍能看出中间失败的是谁、切到了谁、触发错误是什么。
 
 ### Step
 

@@ -1,74 +1,47 @@
 addr: ":8080"
 
-# Admin panel password (empty to disable admin UI at /_admin/)
-# Stored as base64 in config file, but accepts plaintext on read.
+# Admin password for /_admin/. Empty means disabled.
 # admin_password: "your-secret-password"
 
-# API keys for programmatic access (name -> key)
-# Keys are stored as base64 in config file, but accepts plaintext on read.
-# Manage keys in the Config page of the admin UI.
-# When api_keys is empty, the gateway does not validate client API keys.
-# When api_keys is configured, clients can use Authorization: Bearer <key>, Api-Key, or X-Api-Key.
+# Client API keys. Empty means no client auth.
 # api_keys:
 #   my-app: "generated-api-key"
-#   cli-tool: "another-api-key"
+#   cli: "another-api-key"
 
-# Webhook configurations for HTTP log push targets
+# Optional webhook targets for log push and hook callbacks.
 # webhook:
-#   my-log-sink:
+#   audit-webhook:
 #     url: "https://your-log-sink/api/ingest"
-#     method: POST                           # optional, default POST
+#     method: POST
 #     headers:
 #       Authorization: "Bearer your-token"
 #       X-Source: "warden"
-#     # body_template: Go template for request body.
-#     # - log target: .Record exposes all fields of the log record
-#     # - tool hook http: .CallContext / .Args expose tool call context
-#     # Omit body_template to send caller default JSON.
 #     body_template: |
 #       {
-#         "timestamp": "{{ .Record.Timestamp | date `2006-01-02T15:04:05Z07:00` }}",
 #         "request_id": "{{ .Record.RequestID }}",
 #         "route": "{{ .Record.Route }}",
-#         "model": "{{ .Record.Model }}",
-#         "provider": "{{ .Record.Provider }}",
-#         "duration_ms": {{ .Record.DurationMs }},
-#         "error": "{{ .Record.Error }}"
+#         "provider": "{{ .Record.Provider }}"
 #       }
-#     timeout: "5s"                          # optional, default 5s
-#     retry: 2                               # optional, default 2
+#     timeout: "5s"
+#     retry: 2
 
-# Request/response logging targets (file and/or http)
+# Optional request/response logging.
 # log:
 #   targets:
 #     - type: file
 #       dir: "./logs"
 #     - type: http
-#       webhook: "my-log-sink"              # references webhook above
+#       webhook: "audit-webhook"
 
-
-# Provider 配置 - 上游 LLM API 地址和认证信息
-# timeout: first-token timeout for non-streaming requests (waiting for response headers).
-#          Streaming requests use a fixed 30s first-token timeout.
-#          After headers received, body reading has no time limit.
+# Upstream providers.
 provider:
-  openai-fast:
-    url: "https://api.openai.com/v1"
-    protocol: "openai"
-    api_key: "${OPENAI_API_KEY}"
-    timeout: "60s" # non-streaming first-token timeout
-    # proxy: "socks5://127.0.0.1:1080"      # optional HTTP/SOCKS proxy
-
   openai:
     url: "https://api.openai.com/v1"
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
-    timeout: "120s" # non-streaming first-token timeout
-    # chat_to_responses: true              # route chat/completions to upstream /responses endpoint
-    # enables Responses API features (web search, file search, etc.)
-    # responses_to_chat: true              # route responses to upstream /chat/completions endpoint
-    # only supports chat-compatible subset (string/array input + function tools)
-    # requires protocol: "openai"
+    timeout: "120s"
+    # chat_to_responses: true
+    # responses_to_chat: true
 
   anthropic:
     url: "https://api.anthropic.com/v1"
@@ -76,21 +49,8 @@ provider:
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
 
-  anthropic-fallback:
-    url: "https://api.anthropic.com/v1"
-    protocol: "anthropic"
-    api_key: "${ANTHROPIC_API_KEY}"
-    timeout: "180s" # longer timeout for slow/fallback providers
-
-  ollama:
-    url: "http://localhost:11434/v1"
-    protocol: "ollama"
-    timeout: "180s" # local models may be slow
-
   qwen:
     protocol: "qwen"
-    # url: "https://portal.qwen.ai/v1"  # default (OAuth); set api_key to use dashscope instead
-    # config_dir: "~/.qwen"  # default
     timeout: "120s"
     models:
       - "qwen3-coder-plus"
@@ -99,63 +59,57 @@ provider:
 
   copilot:
     protocol: "copilot"
-    # url: "https://api.githubcopilot.com"  # default
-    # config_dir: "~/.config/github-copilot"  # default; reads hosts.json or apps.json
     timeout: "120s"
     models:
-      - "gpt-4o"
-      - "claude-sonnet-4"
-      - "o3-mini"
-      - "gemini-2.0-flash"
+      # Strong premium models
+      - "gpt-5.4"
+      - "gpt-5.3-codex"
+      - "claude-opus-4-6"
+      - "claude-sonnet-4-6"
+      # Strong free models
+      - "gpt-5-mini"
+      - "goldeneye"
+      - "raptor-mini"
+      - "grok-code-fast-1"
 
-# 路由配置 - route-centric：每个 route 暴露单一协议，并定义公开模型；不再绑定 MCP 工具
+# Route-centric config: each route exposes one protocol and a public model set.
 route:
   /openai:
     protocol: "chat"
-    hooks:
-      - match: "filesystem__write_*"
-        hook:
-          type: http
-          when: post
-          timeout: "5s"
-          webhook: "audit-webhook"
     exact_models:
       gpt-4o:
         system_prompt: "You are a helpful assistant."
         upstreams:
           - provider: "openai"
             model: "gpt-4o"
-          - provider: "anthropic-fallback"
-            model: "claude-sonnet-4"
-      # Public model name can differ from upstream model name.
-      # This exact route model is exposed as `gpt-4o-mini`, but forwarded upstream as `gpt-4.1-mini`.
+          - provider: "qwen"
+            model: "qwen3-coder-plus"
+          - provider: "copilot"
+            model: "gpt-5.4"
       gpt-4o-mini:
         upstreams:
-          - provider: "openai-fast"
+          - provider: "openai"
             model: "gpt-4.1-mini"
+          - provider: "qwen"
+            model: "qwen3-coder-flash"
+          - provider: "copilot"
+            model: "claude-sonnet-4-6"
     wildcard_models:
       "gpt-*":
         providers:
-          - "openai-fast"
           - "openai"
+          - "qwen"
+          - "copilot"
 
   /anthropic:
     protocol: "anthropic"
     exact_models:
-      claude-sonnet-4-5-20250929:
+      claude-sonnet-4:
         upstreams:
           - provider: "anthropic"
-            model: "claude-sonnet-4-5-20250929"
+            model: "claude-sonnet-4"
 
-  /ollama:
-    protocol: "responses"
-    exact_models:
-      llama3.3:
-        upstreams:
-          - provider: "ollama"
-            model: "llama3.3"
-
-# Route hooks 绑定到具体路由。match 匹配的是模型返回的完整工具名；支持 * 通配符，例如 "web_search"、"web_*"、"*"
+# Optional route hooks. match is the full tool name and supports "*".
 # route:
 #   /openai:
 #     hooks:
@@ -176,9 +130,6 @@ route:
 #           prompt: |
 #             You are a security reviewer for tool calls.
 #             Return JSON only: {"allow": true/false, "reason": "short reason"}
-#             Default to allow=false if risk is unclear.
-#             Focus on command execution, secret leakage, privacy violations, malicious downloads,
-#             data exfiltration, and destructive or over-broad actions.
 #             Tool: {{.FullName}}
 #             Arguments: {{.Arguments}}
 #       - match: "filesystem__delete_file"
@@ -186,4 +137,4 @@ route:
 #           type: http
 #           when: pre
 #           timeout: "5s"
-#           webhook: "audit-webhook"   # references webhook.<name>; body uses webhook.body_template or default CallContext JSON
+#           webhook: "audit-webhook"
