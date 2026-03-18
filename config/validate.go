@@ -90,8 +90,11 @@ func (c *ConfigStruct) validateRoutePrefixes() error {
 		}
 
 		route.Prefix = prefix
+		if route.Protocol == "" {
+			return NewValidationError("route %s: protocol is required", prefix)
+		}
 		switch route.Protocol {
-		case "", RouteProtocolChat, RouteProtocolResponses, RouteProtocolAnthropic:
+		case RouteProtocolChat, RouteProtocolResponses, RouteProtocolAnthropic:
 		default:
 			return NewValidationError("route %s: invalid protocol %q (must be chat/responses/anthropic)", prefix, route.Protocol)
 		}
@@ -144,9 +147,6 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			}
 		}
 
-		if prov.ChatToResponses && prov.Protocol != "openai" {
-			return NewValidationError("provider %s: chat_to_responses requires protocol 'openai', got %q", name, prov.Protocol)
-		}
 		if prov.ResponsesToChat && prov.Protocol != "openai" {
 			return NewValidationError("provider %s: responses_to_chat requires protocol 'openai', got %q", name, prov.Protocol)
 		}
@@ -157,9 +157,6 @@ func (c *ConfigStruct) validateProviderConfig() error {
 
 func (c *ConfigStruct) validateRouteConfig() error {
 	for prefix, route := range c.Route {
-		if err := normalizeRouteModels(route); err != nil {
-			return NewValidationError("route %s: %v", prefix, err)
-		}
 		route.exactModels = make(map[string]*CompiledRouteModel)
 		route.wildcards = nil
 
@@ -211,78 +208,6 @@ func (c *ConfigStruct) validateRouteConfig() error {
 	return nil
 }
 
-func normalizeRouteModels(route *RouteConfig) error {
-	hasExplicit := len(route.ExactModels) > 0 || len(route.WildcardModels) > 0
-	hasLegacy := len(route.Models) > 0 || len(route.Providers) > 0 || len(route.SystemPrompts) > 0
-	if hasExplicit && hasLegacy {
-		return fmt.Errorf("cannot mix exact_models/wildcard_models with deprecated models/providers/system_prompts")
-	}
-
-	if hasExplicit {
-		return nil
-	}
-
-	if len(route.Models) > 0 {
-		exactModels := make(map[string]*ExactRouteModelConfig)
-		wildcardModels := make(map[string]*WildcardRouteModelConfig)
-		for modelName, modelCfg := range route.Models {
-			if modelCfg == nil {
-				if hasWildcardPattern(modelName) {
-					wildcardModels[modelName] = nil
-				} else {
-					exactModels[modelName] = nil
-				}
-				continue
-			}
-
-			if hasWildcardPattern(modelName) {
-				if len(modelCfg.Upstreams) > 0 {
-					return fmt.Errorf("deprecated models[%q]: wildcard model cannot define upstreams", modelName)
-				}
-				wildcardModels[modelName] = &WildcardRouteModelConfig{
-					SystemPrompt: modelCfg.SystemPrompt,
-					Providers:    append([]string(nil), modelCfg.Providers...),
-				}
-				continue
-			}
-
-			if len(modelCfg.Upstreams) > 0 && len(modelCfg.Providers) > 0 {
-				return fmt.Errorf("deprecated models[%q]: exact model cannot define both providers and upstreams", modelName)
-			}
-
-			upstreams := cloneRouteUpstreams(modelCfg.Upstreams)
-			if len(upstreams) == 0 && len(modelCfg.Providers) > 0 {
-				for _, providerName := range modelCfg.Providers {
-					upstreams = append(upstreams, &RouteUpstreamConfig{
-						Provider: providerName,
-						Model:    modelName,
-					})
-				}
-			}
-			exactModels[modelName] = &ExactRouteModelConfig{
-				SystemPrompt: modelCfg.SystemPrompt,
-				Upstreams:    upstreams,
-			}
-		}
-		route.ExactModels = exactModels
-		route.WildcardModels = wildcardModels
-		route.Models = nil
-		route.Providers = nil
-		route.SystemPrompts = nil
-		return nil
-	}
-
-	if len(route.Providers) > 0 || len(route.SystemPrompts) > 0 {
-		exactModels, wildcardModels := compileLegacyRouteModels(route)
-		route.ExactModels = exactModels
-		route.WildcardModels = wildcardModels
-		route.Models = nil
-		route.Providers = nil
-		route.SystemPrompts = nil
-	}
-	return nil
-}
-
 func cloneRouteUpstreams(list []*RouteUpstreamConfig) []*RouteUpstreamConfig {
 	if len(list) == 0 {
 		return nil
@@ -312,13 +237,17 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 		return NewValidationError("route %s wildcard model %q: providers is required", prefix, pattern)
 	}
 
+	promptEnabled := routeModelPromptEnabled(modelCfg.PromptEnabled, modelCfg.SystemPrompt)
 	compiled := &CompiledRouteModel{
-		Key:          pattern,
-		Pattern:      pattern,
-		PublicModel:  pattern,
-		SystemPrompt: modelCfg.SystemPrompt,
-		Wildcard:     true,
-		Specificity:  buildPatternSpecificity(pattern),
+		Key:           pattern,
+		Pattern:       pattern,
+		PublicModel:   pattern,
+		PromptEnabled: promptEnabled,
+		Wildcard:      true,
+		Specificity:   buildPatternSpecificity(pattern),
+	}
+	if promptEnabled {
+		compiled.SystemPrompt = modelCfg.SystemPrompt
 	}
 
 	for _, provName := range modelCfg.Providers {
@@ -326,7 +255,7 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 		if !exists {
 			return NewValidationError("route %s wildcard model %q: unknown provider %s", prefix, pattern, provName)
 		}
-		if route.Protocol != "" && !ProviderSupportsRouteProtocol(prov.Protocol, route.Protocol) {
+		if !ProviderSupportsRouteProtocol(prov.Protocol, route.Protocol) {
 			return NewValidationError("route %s wildcard model %q: provider %s does not support route protocol %s", prefix, pattern, provName, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -352,13 +281,17 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 		return NewValidationError("route %s exact model %q: upstreams is required", prefix, modelName)
 	}
 
+	promptEnabled := routeModelPromptEnabled(modelCfg.PromptEnabled, modelCfg.SystemPrompt)
 	compiled := &CompiledRouteModel{
-		Key:          modelName,
-		Pattern:      modelName,
-		PublicModel:  modelName,
-		SystemPrompt: modelCfg.SystemPrompt,
-		Wildcard:     false,
-		Specificity:  buildPatternSpecificity(modelName),
+		Key:           modelName,
+		Pattern:       modelName,
+		PublicModel:   modelName,
+		PromptEnabled: promptEnabled,
+		Wildcard:      false,
+		Specificity:   buildPatternSpecificity(modelName),
+	}
+	if promptEnabled {
+		compiled.SystemPrompt = modelCfg.SystemPrompt
 	}
 
 	for idx, upstream := range upstreams {
@@ -375,7 +308,7 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 		if !exists {
 			return NewValidationError("route %s exact model %q upstreams[%d]: unknown provider %s", prefix, modelName, idx, upstream.Provider)
 		}
-		if route.Protocol != "" && !ProviderSupportsRouteProtocol(prov.Protocol, route.Protocol) {
+		if !ProviderSupportsRouteProtocol(prov.Protocol, route.Protocol) {
 			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s does not support route protocol %s", prefix, modelName, idx, upstream.Provider, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -387,6 +320,13 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 
 	route.exactModels[modelName] = compiled
 	return nil
+}
+
+func routeModelPromptEnabled(explicit *bool, prompt string) bool {
+	if explicit != nil {
+		return *explicit
+	}
+	return strings.TrimSpace(prompt) != ""
 }
 
 // validateHookConfig validates a single HookConfig and parses its timeout.

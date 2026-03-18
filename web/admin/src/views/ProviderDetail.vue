@@ -74,7 +74,6 @@
 					<select v-model="providerConfig.protocol" class="form-input">
 						<option value="openai">openai</option>
 						<option value="anthropic">anthropic</option>
-						<option value="ollama">ollama</option>
 						<option value="qwen">qwen</option>
 						<option value="copilot">copilot</option>
 					</select>
@@ -149,16 +148,6 @@
 					<input v-model="providerConfig.timeout" class="form-input" placeholder="60s" />
 
 					<template v-if="providerConfig.protocol === 'openai'">
-						<label>chat_to_responses</label>
-						<div class="form-hint-row">
-							<input
-								type="checkbox"
-								v-model="providerConfig.chat_to_responses"
-								class="form-checkbox"
-							/>
-							<span class="hint">{{ $t("config.chatToResponsesHint") }}</span>
-						</div>
-
 						<label>responses_to_chat</label>
 						<div class="form-hint-row">
 							<input
@@ -243,10 +232,6 @@
 						<tr>
 							<td>{{ $t("providerDetail.protocol") }}</td>
 							<td>{{ detail.protocol }}</td>
-						</tr>
-						<tr v-if="detail.protocol === 'openai'">
-							<td>chat_to_responses</td>
-							<td>{{ detail.chat_to_responses ? $t("common.on") : $t("common.off") }}</td>
 						</tr>
 						<tr v-if="detail.protocol === 'openai'">
 							<td>responses_to_chat</td>
@@ -499,8 +484,6 @@ function providerUrlPlaceholder(protocol) {
 	switch (protocol) {
 		case "anthropic":
 			return "https://api.anthropic.com";
-		case "ollama":
-			return "http://localhost:11434";
 		case "qwen":
 			return "(defaults to dashscope or portal.qwen.ai)";
 		case "copilot":

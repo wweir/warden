@@ -13,10 +13,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/lmittmann/tint"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/sower-proxy/feconf"
@@ -161,7 +163,7 @@ func main() {
 	reload := flag.Bool("r", false, "reload running service (send SIGHUP)")
 
 	// load configuration
-	cfg, err := feconf.New[config.ConfigStruct]("c", configCandidates...).Parse()
+	cfg, configPath, err := loadConfig()
 	if err != nil {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
@@ -170,9 +172,6 @@ func main() {
 		slog.Error("Failed to validate config", "error", err)
 		os.Exit(1)
 	}
-
-	// detect config file path
-	configPath := detectConfigPath()
 
 	// configure logging output
 	fi, _ := os.Stdout.Stat()
@@ -207,6 +206,61 @@ func main() {
 	if err := application.run(); err != nil {
 		slog.Error("Application error", "error", err)
 		os.Exit(1)
+	}
+}
+
+func loadConfig() (*config.ConfigStruct, string, error) {
+	conf := feconf.New[config.ConfigStruct]("c", configCandidates...)
+	conf.ParserConf = buildConfigParserConfig()
+	cfg, err := safeParseConfig(conf)
+	configPath := detectConfigPath()
+	return cfg, configPath, err
+}
+
+func safeParseConfig(conf *feconf.ConfOpt[config.ConfigStruct]) (cfg *config.ConfigStruct, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("feconf parse panic: %v", r)
+		}
+	}()
+	return conf.Parse()
+}
+
+func buildConfigParserConfig() mapstructure.DecoderConfig {
+	cfg := feconf.DefaultParserConfig
+	cfg.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+		hookFuncNilDefault(),
+		feconf.HookFuncEnvRender(),
+		feconf.HookFuncStringToBool(),
+		feconf.HookFuncStringToSlogLevel(),
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+		mapstructure.StringToBasicTypeHookFunc(),
+	)
+	return cfg
+}
+
+func hookFuncNilDefault() mapstructure.DecodeHookFuncType {
+	return func(_ reflect.Type, t reflect.Type, data any) (any, error) {
+		if data != nil {
+			return data, nil
+		}
+		switch t.Kind() {
+		case reflect.String:
+			return "", nil
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return int64(0), nil
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return uint64(0), nil
+		case reflect.Float32, reflect.Float64:
+			return float64(0), nil
+		case reflect.Bool:
+			return false, nil
+		case reflect.Struct:
+			return reflect.Zero(t).Interface(), nil
+		default:
+			return nil, nil
+		}
 	}
 }
 

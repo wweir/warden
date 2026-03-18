@@ -140,7 +140,7 @@
 						</td>
 						<td>
 							<span class="badge" :class="r.protocol ? 'badge-ok' : 'badge-warn'">
-								{{ r.protocol || "legacy" }}
+								{{ r.protocol || "-" }}
 							</span>
 						</td>
 						<td class="metric-cell">{{ (r.models || []).length }}</td>

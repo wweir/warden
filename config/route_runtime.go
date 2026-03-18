@@ -13,13 +13,14 @@ const (
 )
 
 type CompiledRouteModel struct {
-	Key          string
-	Pattern      string
-	PublicModel  string
-	SystemPrompt string
-	Wildcard     bool
-	Specificity  routePatternSpecificity
-	Upstreams    []CompiledRouteUpstream
+	Key           string
+	Pattern       string
+	PublicModel   string
+	PromptEnabled bool
+	SystemPrompt  string
+	Wildcard      bool
+	Specificity   routePatternSpecificity
+	Upstreams     []CompiledRouteUpstream
 }
 
 type CompiledRouteUpstream struct {
@@ -45,9 +46,6 @@ func SupportedRouteProtocols(providerProtocol string) []string {
 }
 
 func ProviderSupportsRouteProtocol(providerProtocol, routeProtocol string) bool {
-	if routeProtocol == "" {
-		return true
-	}
 	return slices.Contains(SupportedRouteProtocols(providerProtocol), routeProtocol)
 }
 
@@ -127,32 +125,6 @@ func buildPatternSpecificity(pattern string) routePatternSpecificity {
 		spec.literalCount++
 	}
 	return spec
-}
-
-func compileLegacyRouteModels(route *RouteConfig) (map[string]*ExactRouteModelConfig, map[string]*WildcardRouteModelConfig) {
-	exactModels := make(map[string]*ExactRouteModelConfig, len(route.SystemPrompts))
-	wildcardModels := make(map[string]*WildcardRouteModelConfig)
-	if len(route.Providers) > 0 {
-		wildcardModels["*"] = &WildcardRouteModelConfig{
-			Providers: append([]string(nil), route.Providers...),
-		}
-	}
-	for model, prompt := range route.SystemPrompts {
-		exactModels[model] = &ExactRouteModelConfig{
-			SystemPrompt: prompt,
-			Upstreams:    nil,
-		}
-		if len(route.Providers) > 0 {
-			exactModels[model].Upstreams = make([]*RouteUpstreamConfig, 0, len(route.Providers))
-			for _, providerName := range route.Providers {
-				exactModels[model].Upstreams = append(exactModels[model].Upstreams, &RouteUpstreamConfig{
-					Provider: providerName,
-					Model:    model,
-				})
-			}
-		}
-	}
-	return exactModels, wildcardModels
 }
 
 func hasWildcardPattern(model string) bool {

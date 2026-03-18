@@ -83,7 +83,6 @@ type ProviderConfig struct {
 	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers         map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models          []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ChatToResponses bool              `json:"chat_to_responses" usage:"Route chat/completions to upstream /responses for openai protocol"`
 	ResponsesToChat bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
@@ -167,33 +166,25 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 
 type RouteConfig struct {
 	Prefix         string                               `json:"-"` // populated from map key
-	Protocol       string                               `json:"protocol" usage:"Service protocol exposed by this route: chat, responses, anthropic; empty keeps legacy chat+responses behavior"`
+	Protocol       string                               `json:"protocol" usage:"Service protocol exposed by this route: chat, responses, anthropic"`
 	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings; each entry rewrites to ordered upstream provider/model targets"`
 	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings; each pattern selects ordered providers and forwards the requested model unchanged"`
 	Hooks          []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`
-
-	Providers     []string                     `json:"providers,omitempty" usage:"Deprecated legacy provider list; converted to wildcard models when explicit model fields are empty"`
-	SystemPrompts map[string]string            `json:"system_prompts,omitempty" usage:"Deprecated legacy per-model system prompts; converted to exact model configs when explicit model fields are empty"`
-	Models        map[string]*RouteModelConfig `json:"models,omitempty" usage:"Deprecated mixed route model map; split into exact_models and wildcard_models during validation"`
 
 	exactModels map[string]*CompiledRouteModel
 	wildcards   []*CompiledRouteModel
 }
 
 type ExactRouteModelConfig struct {
-	SystemPrompt string                 `json:"system_prompt" usage:"System prompt injected for this exact route model"`
-	Upstreams    []*RouteUpstreamConfig `json:"upstreams" usage:"Ordered upstream provider/model mappings for this exact public model"`
+	PromptEnabled *bool                  `json:"prompt_enabled,omitempty" usage:"Whether extra system prompt injection is enabled for this exact route model; nil keeps legacy behavior based on system_prompt presence"`
+	SystemPrompt  string                 `json:"system_prompt" usage:"System prompt injected for this exact route model when prompt_enabled is true"`
+	Upstreams     []*RouteUpstreamConfig `json:"upstreams" usage:"Ordered upstream provider/model mappings for this exact public model"`
 }
 
 type WildcardRouteModelConfig struct {
-	SystemPrompt string   `json:"system_prompt" usage:"System prompt injected for this wildcard route model"`
-	Providers    []string `json:"providers" usage:"Ordered upstream providers for this wildcard route model; requested model is forwarded unchanged"`
-}
-
-type RouteModelConfig struct {
-	SystemPrompt string                 `json:"system_prompt" usage:"System prompt injected for this route model"`
-	Upstreams    []*RouteUpstreamConfig `json:"upstreams" usage:"Ordered upstream provider/model mappings for exact route models"`
-	Providers    []string               `json:"providers" usage:"Ordered upstream providers for wildcard route models; requested model is forwarded unchanged"`
+	PromptEnabled *bool    `json:"prompt_enabled,omitempty" usage:"Whether extra system prompt injection is enabled for this wildcard route model; nil keeps legacy behavior based on system_prompt presence"`
+	SystemPrompt  string   `json:"system_prompt" usage:"System prompt injected for this wildcard route model when prompt_enabled is true"`
+	Providers     []string `json:"providers" usage:"Ordered upstream providers for this wildcard route model; requested model is forwarded unchanged"`
 }
 
 type RouteUpstreamConfig struct {

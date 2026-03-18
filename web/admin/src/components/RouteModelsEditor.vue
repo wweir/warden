@@ -23,116 +23,133 @@
           </button>
         </div>
 
-        <div class="field-grid">
-          <div class="field-row field-span-2">
-            <label class="field-label">{{ $t('routeDetail.modelName') }}</label>
-            <input
-              :value="entry.name"
-              class="form-input"
-              spellcheck="false"
-              placeholder="gpt-4o-mini"
-              @change="renameExactModel(entry.id, $event.target.value)"
-            />
-            <span class="field-hint">{{ $t('routeDetail.modelNameHint') }}</span>
+        <div class="model-layout">
+          <div class="model-column">
+            <div class="field-row">
+              <label class="field-label">{{ $t('routeDetail.modelName') }}</label>
+              <input
+                :value="entry.name"
+                class="form-input"
+                spellcheck="false"
+                placeholder="gpt-4o-mini"
+                @change="renameExactModel(entry.id, $event.target.value)"
+              />
+              <span class="field-hint">{{ $t('routeDetail.modelNameHint') }}</span>
+            </div>
+
+            <div class="prompt-toggle">
+              <label class="checkbox-row">
+                <input
+                  :checked="isExactPromptEnabled(entry)"
+                  class="form-checkbox"
+                  type="checkbox"
+                  @change="toggleExactPrompt(entry.id, $event.target.checked)"
+                />
+                <span class="field-label">{{ $t('routeDetail.promptToggleLabel') }}</span>
+              </label>
+              <span class="field-hint">{{ $t('routeDetail.promptToggleHint') }}</span>
+            </div>
+
+            <div v-if="isExactPromptEnabled(entry)" class="field-row">
+              <div class="field-headline">
+                <label class="field-label">{{ $t('routeDetail.promptCol') }}</label>
+                <button
+                  v-if="entry.systemPrompt"
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  @click="updateExactField(entry.id, 'systemPrompt', '')"
+                >
+                  {{ $t('config.clearField') }}
+                </button>
+              </div>
+              <textarea
+                :value="entry.systemPrompt"
+                class="form-input prompt-input"
+                rows="4"
+                spellcheck="false"
+                :placeholder="$t('routeDetail.systemPromptPlaceholder')"
+                @input="updateExactField(entry.id, 'systemPrompt', $event.target.value)"
+              ></textarea>
+            </div>
           </div>
 
-          <div class="field-row field-span-2">
-            <div class="field-headline">
-              <label class="field-label">{{ $t('routeDetail.promptCol') }}</label>
-              <button
-                v-if="entry.systemPrompt"
-                class="btn btn-secondary btn-sm"
-                type="button"
-                @click="updateExactField(entry.id, 'systemPrompt', '')"
-              >
-                {{ $t('config.clearField') }}
+          <div class="model-column model-column-upstreams">
+            <div class="subsection-head">
+              <div>
+                <label class="field-label">{{ $t('routeDetail.upstreamsCol') }}</label>
+                <div class="field-hint">{{ $t('routeDetail.upstreamsHint') }}</div>
+              </div>
+              <button class="btn btn-secondary btn-sm" type="button" @click="addUpstream(entry.id)">
+                {{ $t('routeDetail.addUpstream') }}
               </button>
             </div>
-            <textarea
-              :value="entry.systemPrompt"
-              class="form-input prompt-input"
-              rows="4"
-              spellcheck="false"
-              :placeholder="$t('routeDetail.systemPromptPlaceholder')"
-              @input="updateExactField(entry.id, 'systemPrompt', $event.target.value)"
-            ></textarea>
-          </div>
-        </div>
 
-        <div class="subsection-head">
-          <div>
-            <label class="field-label">{{ $t('routeDetail.upstreamsCol') }}</label>
-            <div class="field-hint">{{ $t('routeDetail.upstreamsHint') }}</div>
-          </div>
-          <button class="btn btn-secondary btn-sm" type="button" @click="addUpstream(entry.id)">
-            {{ $t('routeDetail.addUpstream') }}
-          </button>
-        </div>
+            <div v-if="entry.upstreams.length === 0" class="editor-empty editor-empty-compact">
+              {{ $t('routeDetail.noUpstreams') }}
+            </div>
 
-        <div v-if="entry.upstreams.length === 0" class="editor-empty editor-empty-compact">
-          {{ $t('routeDetail.noUpstreams') }}
-        </div>
-
-        <div
-          v-for="(upstream, idx) in entry.upstreams"
-          :key="`${entry.name}/${idx}`"
-          class="upstream-row"
-        >
-          <div class="upstream-priority">
-            <span class="priority-chip">{{ $t('routeDetail.priorityValue', { n: idx + 1 }) }}</span>
+            <div
+              v-for="(upstream, idx) in entry.upstreams"
+              :key="`${entry.name}/${idx}`"
+              class="upstream-row"
+            >
+              <div class="upstream-priority">
+                <span class="priority-chip">{{ $t('routeDetail.priorityValue', { n: idx + 1 }) }}</span>
+              </div>
+              <select
+                :value="upstream.provider"
+                class="form-input"
+                @change="updateUpstreamProvider(entry.id, idx, $event.target.value)"
+              >
+                <option value="">{{ $t('routeDetail.selectProvider') }}</option>
+                <option
+                  v-for="provider in providerOptions(upstream.provider)"
+                  :key="provider"
+                  :value="provider"
+                >
+                  {{ provider }}
+                </option>
+              </select>
+              <ModelCombobox
+                :model-value="upstream.model"
+                :models="providerModelOptions(upstream.provider, upstream.model)"
+                :placeholder="upstreamModelPlaceholder(entry.name, upstream.provider)"
+                input-class="upstream-model-input"
+                @update:modelValue="updateUpstreamModel(entry.id, idx, $event)"
+              />
+              <div class="upstream-actions">
+                <button
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  :disabled="idx === 0"
+                  :title="$t('common.moveUp')"
+                  :aria-label="$t('common.moveUp')"
+                  @click="moveUpstream(entry.id, idx, -1)"
+                >
+                  Up
+                </button>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  :disabled="idx === entry.upstreams.length - 1"
+                  :title="$t('common.moveDown')"
+                  :aria-label="$t('common.moveDown')"
+                  @click="moveUpstream(entry.id, idx, 1)"
+                >
+                  Down
+                </button>
+              </div>
+              <button
+                class="btn-icon upstream-delete"
+                type="button"
+                :title="$t('common.delete')"
+                :aria-label="$t('common.delete')"
+                @click="removeUpstream(entry.id, idx)"
+              >
+                &times;
+              </button>
+            </div>
           </div>
-          <select
-            :value="upstream.provider"
-            class="form-input"
-            @change="updateUpstreamProvider(entry.id, idx, $event.target.value)"
-          >
-            <option value="">{{ $t('routeDetail.selectProvider') }}</option>
-            <option
-              v-for="provider in providerOptions(upstream.provider)"
-              :key="provider"
-              :value="provider"
-            >
-              {{ provider }}
-            </option>
-          </select>
-          <ModelCombobox
-            :model-value="upstream.model"
-            :models="providerModelOptions(upstream.provider, upstream.model)"
-            :placeholder="upstreamModelPlaceholder(entry.name, upstream.provider)"
-            input-class="upstream-model-input"
-            @update:modelValue="updateUpstreamModel(entry.id, idx, $event)"
-          />
-          <div class="upstream-actions">
-            <button
-              class="btn btn-secondary btn-sm"
-              type="button"
-              :disabled="idx === 0"
-              :title="$t('common.moveUp')"
-              :aria-label="$t('common.moveUp')"
-              @click="moveUpstream(entry.id, idx, -1)"
-            >
-              Up
-            </button>
-            <button
-              class="btn btn-secondary btn-sm"
-              type="button"
-              :disabled="idx === entry.upstreams.length - 1"
-              :title="$t('common.moveDown')"
-              :aria-label="$t('common.moveDown')"
-              @click="moveUpstream(entry.id, idx, 1)"
-            >
-              Down
-            </button>
-          </div>
-          <button
-            class="btn-icon upstream-delete"
-            type="button"
-            :title="$t('common.delete')"
-            :aria-label="$t('common.delete')"
-            @click="removeUpstream(entry.id, idx)"
-          >
-            &times;
-          </button>
         </div>
       </div>
     </section>
@@ -164,51 +181,71 @@
           </button>
         </div>
 
-        <div class="field-grid">
-          <div class="field-row field-span-2">
-            <label class="field-label">{{ $t('routeDetail.patternCol') }}</label>
-            <input
-              :value="entry.pattern"
-              class="form-input"
-              spellcheck="false"
-              placeholder="gpt-*"
-              @change="renameWildcardModel(entry.pattern, $event.target.value)"
-            />
-            <span class="field-hint">{{ $t('routeDetail.patternHint') }}</span>
-          </div>
-
-          <div class="field-row field-span-2">
-            <div class="field-headline">
-              <label class="field-label">{{ $t('routeDetail.promptCol') }}</label>
-              <button
-                v-if="entry.systemPrompt"
-                class="btn btn-secondary btn-sm"
-                type="button"
-                @click="updateWildcardField(entry.pattern, 'systemPrompt', '')"
-              >
-                {{ $t('config.clearField') }}
-              </button>
+        <div class="model-layout">
+          <div class="model-column">
+            <div class="field-row">
+              <label class="field-label">{{ $t('routeDetail.patternCol') }}</label>
+              <input
+                :value="entry.pattern"
+                class="form-input"
+                spellcheck="false"
+                placeholder="gpt-*"
+                @change="renameWildcardModel(entry.pattern, $event.target.value)"
+              />
+              <span class="field-hint">{{ $t('routeDetail.patternHint') }}</span>
             </div>
-            <textarea
-              :value="entry.systemPrompt"
-              class="form-input prompt-input"
-              rows="4"
-              spellcheck="false"
-              :placeholder="$t('routeDetail.systemPromptPlaceholder')"
-              @input="updateWildcardField(entry.pattern, 'systemPrompt', $event.target.value)"
-            ></textarea>
+
+            <div class="prompt-toggle">
+              <label class="checkbox-row">
+                <input
+                  :checked="isWildcardPromptEnabled(entry)"
+                  class="form-checkbox"
+                  type="checkbox"
+                  @change="toggleWildcardPrompt(entry.pattern, $event.target.checked)"
+                />
+                <span class="field-label">{{ $t('routeDetail.promptToggleLabel') }}</span>
+              </label>
+              <span class="field-hint">{{ $t('routeDetail.promptToggleHint') }}</span>
+            </div>
+
+            <div v-if="isWildcardPromptEnabled(entry)" class="field-row">
+              <div class="field-headline">
+                <label class="field-label">{{ $t('routeDetail.promptCol') }}</label>
+                <button
+                  v-if="entry.systemPrompt"
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  @click="updateWildcardField(entry.pattern, 'systemPrompt', '')"
+                >
+                  {{ $t('config.clearField') }}
+                </button>
+              </div>
+              <textarea
+                :value="entry.systemPrompt"
+                class="form-input prompt-input"
+                rows="4"
+                spellcheck="false"
+                :placeholder="$t('routeDetail.systemPromptPlaceholder')"
+                @input="updateWildcardField(entry.pattern, 'systemPrompt', $event.target.value)"
+              ></textarea>
+            </div>
           </div>
 
-          <div class="field-row field-span-2">
-            <label class="field-label">{{ $t('routeDetail.providersCol') }}</label>
-            <TagListEditor
-              :model-value="entry.providers"
-              :suggestions="providerOptions()"
-              :allow-reorder="true"
-              :placeholder="$t('routeDetail.providersPlaceholder')"
-              @update:modelValue="updateWildcardProviders(entry.pattern, $event)"
-            />
-            <span class="field-hint">{{ $t('routeDetail.wildcardProvidersHint') }}</span>
+          <div class="model-column model-column-upstreams">
+            <div class="column-head">
+              <div class="column-title">{{ $t('routeDetail.providersCol') }}</div>
+              <p class="column-desc">{{ $t('routeDetail.wildcardProvidersHint') }}</p>
+            </div>
+
+            <div class="field-row">
+              <TagListEditor
+                :model-value="entry.providers"
+                :suggestions="providerOptions()"
+                :allow-reorder="true"
+                :placeholder="$t('routeDetail.providersPlaceholder')"
+                @update:modelValue="updateWildcardProviders(entry.pattern, $event)"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -240,6 +277,7 @@ let exactEmitPending = false
 const wildcardEntries = computed(() =>
   Object.entries(props.wildcardModels || {}).map(([pattern, cfg]) => ({
     pattern,
+    promptEnabled: cfg?.prompt_enabled ?? !!cfg?.system_prompt,
     systemPrompt: cfg?.system_prompt || '',
     providers: [...(cfg?.providers || [])],
   })),
@@ -269,6 +307,7 @@ function buildExactEntries(exactModels) {
   return Object.entries(exactModels || {}).map(([name, cfg]) => ({
     id: `exact-${nextExactEntryID += 1}`,
     name,
+    promptEnabled: cfg?.prompt_enabled ?? !!cfg?.system_prompt,
     systemPrompt: cfg?.system_prompt || '',
     upstreams: (cfg?.upstreams || []).map((upstream) => ({
       provider: upstream?.provider || '',
@@ -282,8 +321,8 @@ function serializeExactEntries(entries) {
   for (const entry of entries || []) {
     const name = normalizeText(entry.name)
     if (!name) continue
-    out[name] = {}
-    if (entry.systemPrompt) out[name].system_prompt = entry.systemPrompt
+    out[name] = { prompt_enabled: !!entry.promptEnabled }
+    if (entry.promptEnabled && entry.systemPrompt) out[name].system_prompt = entry.systemPrompt
     const upstreams = (entry.upstreams || [])
       .map((upstream) => ({
         provider: normalizeText(upstream.provider),
@@ -313,7 +352,7 @@ watch(
 
 function supportedRouteProtocols(providerProtocol) {
   if (providerProtocol === 'anthropic') return ['anthropic']
-  if (['openai', 'ollama', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
+  if (['openai', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
   return []
 }
 
@@ -343,6 +382,14 @@ function providerModelOptions(providerName, currentModel = '') {
   return sortValues(dedupeNonEmpty([...(availableProviderModels(providerName) || []), currentModel]))
 }
 
+function isExactPromptEnabled(entry) {
+  return !!entry?.promptEnabled
+}
+
+function isWildcardPromptEnabled(entry) {
+  return !!entry?.promptEnabled
+}
+
 function upstreamModelPlaceholder(publicModelName, providerName) {
   if (!providerName) return t('routeDetail.selectProviderFirst')
   if (availableProviderModels(providerName).length > 0) {
@@ -362,8 +409,8 @@ function emitWildcard(nextEntries) {
   for (const entry of nextEntries) {
     const pattern = normalizeText(entry.pattern)
     if (!pattern) continue
-    out[pattern] = {}
-    if (entry.systemPrompt) out[pattern].system_prompt = entry.systemPrompt
+    out[pattern] = { prompt_enabled: !!entry.promptEnabled }
+    if (entry.promptEnabled && entry.systemPrompt) out[pattern].system_prompt = entry.systemPrompt
     const providers = dedupeNonEmpty(entry.providers)
     if (providers.length > 0) out[pattern].providers = providers
   }
@@ -374,6 +421,7 @@ function cloneExactEntries() {
   return exactEntries.value.map((entry) => ({
     id: entry.id,
     name: entry.name,
+    promptEnabled: !!entry.promptEnabled,
     systemPrompt: entry.systemPrompt,
     upstreams: entry.upstreams.map((upstream) => ({ ...upstream })),
   }))
@@ -382,6 +430,7 @@ function cloneExactEntries() {
 function cloneWildcardEntries() {
   return wildcardEntries.value.map((entry) => ({
     pattern: entry.pattern,
+    promptEnabled: !!entry.promptEnabled,
     systemPrompt: entry.systemPrompt,
     providers: [...entry.providers],
   }))
@@ -412,6 +461,7 @@ function addExactModel() {
     {
       id: `exact-${nextExactEntryID += 1}`,
       name: '',
+      promptEnabled: false,
       systemPrompt: '',
       upstreams: [{ provider: defaultProvider(), model: '' }],
     },
@@ -424,6 +474,7 @@ function addWildcardModel() {
     ...cloneWildcardEntries(),
     {
       pattern: uniqueWildcardPattern(),
+      promptEnabled: false,
       systemPrompt: '',
       providers: provider ? [provider] : [],
     },
@@ -497,6 +548,26 @@ function updateWildcardProviders(pattern, providers) {
   emitWildcard(
     cloneWildcardEntries().map((entry) =>
       entry.pattern === pattern ? { ...entry, providers: [...providers] } : entry,
+    ),
+  )
+}
+
+function toggleExactPrompt(entryID, checked) {
+  emitExact(
+    cloneExactEntries().map((entry) =>
+      entry.id === entryID
+        ? { ...entry, promptEnabled: checked, systemPrompt: checked ? entry.systemPrompt : '' }
+        : entry,
+    ),
+  )
+}
+
+function toggleWildcardPrompt(pattern, checked) {
+  emitWildcard(
+    cloneWildcardEntries().map((entry) =>
+      entry.pattern === pattern
+        ? { ...entry, promptEnabled: checked, systemPrompt: checked ? entry.systemPrompt : '' }
+        : entry,
     ),
   )
 }
@@ -618,6 +689,23 @@ function removeUpstream(entryID, idx) {
   background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
 }
 
+.model-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.model-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.model-column-upstreams {
+  min-width: 0;
+}
+
 .editor-empty {
   border: 1px dashed var(--c-border);
   border-radius: var(--radius-sm);
@@ -631,21 +719,10 @@ function removeUpstream(entryID, idx) {
   padding: 10px 12px;
 }
 
-.field-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
 .field-row {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-.field-span-2 {
-  grid-column: 1 / -1;
 }
 
 .field-label {
@@ -665,8 +742,30 @@ function removeUpstream(entryID, idx) {
   resize: vertical;
 }
 
+.prompt-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .subsection-head {
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .upstream-row {
@@ -714,7 +813,7 @@ function removeUpstream(entryID, idx) {
     align-items: stretch;
   }
 
-  .field-grid,
+  .model-layout,
   .upstream-row {
     grid-template-columns: 1fr;
   }

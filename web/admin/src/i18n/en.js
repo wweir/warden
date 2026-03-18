@@ -152,7 +152,7 @@ export default {
 		hideExamples: "Hide Examples",
 		about: "About",
 		aboutDesc:
-			"Route hooks observe tool calls returned on the current route. Pattern format: {pattern}. Use {wildcard} as wildcard (e.g. {example1} or {example2} to match all tools). Route-level MCP tool execution has been removed, so hooks are mainly for audit and policy checks.",
+			"Route hooks observe tool calls returned on the current route. Pattern format: {pattern}. Use {wildcard} as wildcard (e.g. {example1} or {example2} to match all tools). Hooks are mainly for audit and policy checks.",
 		quickStartTitle: "Quick Start",
 		quickStartDesc:
 			"Start by narrowing the match scope, then choose the hook type and fill only the needed parameters.",
@@ -194,7 +194,7 @@ export default {
 		noRules: "No hook rules configured.",
 		remove: "Remove",
 		matchPattern: "Match Pattern",
-		matchPlaceholder: "mcp_name__tool_name  or  *",
+		matchPlaceholder: "namespace__tool_name  or  *",
 		matchHint: "Matches the full tool name. Examples: filesystem__write_file, filesystem__*, *",
 		type: "Type",
 		typeHint: "exec runs a local program, ai asks an LLM, http calls a webhook.",
@@ -232,7 +232,7 @@ export default {
 		sampleArgs: "Recent Arguments",
 		routeHints: "Route Hints",
 		toolNameLabel: "Tool",
-		mcpNameLabel: "MCP",
+		mcpNameLabel: "Namespace",
 		useRouteHint: "Use This Route",
 		addAiRule: "Add AI Rule",
 		fillAiRule: "Fill AI Rule",
@@ -304,10 +304,8 @@ export default {
 		externalChangeError:
 			"Config file changed externally. Please reload to get the latest version.",
 		savingDisabled: "Config was not loaded from a file, saving is disabled",
-		chatToResponsesHint:
-			"Route chat/completions to upstream /responses endpoint (enables web search, file search, etc.)",
 		responsesToChatHint:
-			"Route responses to upstream /chat/completions endpoint (function-tools subset only)",
+			"Route stateless responses to upstream /chat/completions endpoint (function-tools subset only)",
 		clearField: "Clear",
 	},
 	logs: {
@@ -324,6 +322,7 @@ export default {
 		provider: "Provider",
 		duration: "Duration",
 		status: "Status",
+		streaming: "Streaming",
 		noMatchingLogs: "No matching logs.",
 		noLogsYet: "No logs yet.",
 		requestDetail: "Request Detail",
@@ -362,6 +361,7 @@ export default {
 		confirmDeleteRoute: "Delete route {prefix}?",
 		savedMsg: "Saved and applied route {prefix}",
 		protocol: "Protocol",
+		selectProtocol: "Select protocol",
 		protocolHint: "Controls the external protocol exposed by this route.",
 		hookCount: "Hook Count",
 		exactModels: "Exact Models",
@@ -391,6 +391,9 @@ export default {
 		wildcardProvidersHint: "Select providers only. The request model name is not rewritten, and list order defines priority.",
 		priorityValue: "P{n}",
 		promptCol: "Prompt",
+		promptToggleLabel: "Enable Extra Prompt",
+		promptToggleHint:
+			"Off by default. Turn this on only when the current route model needs an extra system prompt. Turning it off clears the current prompt.",
 		systemPromptPlaceholder: "Optional. Inject an extra system prompt only for this route model.",
 		providers: "Providers ({n})",
 		noProviders: "No providers configured",

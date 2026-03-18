@@ -40,7 +40,6 @@ provider:
     protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"
-    # chat_to_responses: true
     # responses_to_chat: true
 
   anthropic:
@@ -78,6 +77,7 @@ route:
     protocol: "chat"
     exact_models:
       gpt-4o:
+        prompt_enabled: true
         system_prompt: "You are a helpful assistant."
         upstreams:
           - provider: "openai"

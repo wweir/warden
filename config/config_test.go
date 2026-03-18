@@ -46,7 +46,7 @@ func TestValidateToolHookHTTPType(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 				Hooks: []*HookRuleConfig{{
@@ -76,7 +76,7 @@ func TestValidateToolHookHTTPTypeUnknownWebhook(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 				Hooks: []*HookRuleConfig{{
@@ -104,7 +104,7 @@ func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 				Hooks: []*HookRuleConfig{{
@@ -134,7 +134,12 @@ func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 			},
 		},
 		Route: map[string]*RouteConfig{
-			"/anthropic": {Providers: []string{"anthropic"}},
+			"/anthropic": {
+				Protocol: "anthropic",
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"anthropic"}},
+				},
+			},
 		},
 	}
 
@@ -155,7 +160,7 @@ func TestValidateProviderRequiresAbsoluteURL(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 			},
@@ -182,7 +187,7 @@ func TestValidateWebhookRequiresAbsoluteURL(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 			},
@@ -210,7 +215,7 @@ func TestValidateProviderRejectsUnsupportedProxyScheme(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/test": {
 				Protocol: "chat",
-				Models: map[string]*RouteModelConfig{
+				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}}},
 				},
 			},
@@ -256,7 +261,8 @@ func TestValidateRouteConfigExplicitModelSections(t *testing.T) {
 	}
 }
 
-func TestValidateRouteConfigRejectsMixedLegacyAndExplicitModelFields(t *testing.T) {
+func TestValidateRouteConfigPromptEnabledExplicitFalseDisablesInjection(t *testing.T) {
+	disabled := false
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
@@ -266,12 +272,75 @@ func TestValidateRouteConfigRejectsMixedLegacyAndExplicitModelFields(t *testing.
 				Protocol: "chat",
 				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {
-						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
+						PromptEnabled: &disabled,
+						SystemPrompt:  "should not be injected",
+						Upstreams:     []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
 					},
 				},
-				Models: map[string]*RouteModelConfig{
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	matched := cfg.Route["/test"].MatchModel("gpt-4o")
+	if matched == nil {
+		t.Fatal("expected exact model to be compiled")
+	}
+	if matched.PromptEnabled {
+		t.Fatal("PromptEnabled = true, want false")
+	}
+	if matched.SystemPrompt != "" {
+		t.Fatalf("SystemPrompt = %q, want empty", matched.SystemPrompt)
+	}
+}
+
+func TestValidateRouteConfigPromptEnabledLegacyInference(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: "chat",
+				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"gpt-*": {
-						Providers: []string{"openai"},
+						SystemPrompt: "legacy prompt",
+						Providers:    []string{"openai"},
+					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	matched := cfg.Route["/test"].MatchModel("gpt-4o")
+	if matched == nil {
+		t.Fatal("expected wildcard model to be compiled")
+	}
+	if !matched.PromptEnabled {
+		t.Fatal("PromptEnabled = false, want true for legacy non-empty system_prompt")
+	}
+	if matched.SystemPrompt != "legacy prompt" {
+		t.Fatalf("SystemPrompt = %q, want legacy prompt", matched.SystemPrompt)
+	}
+}
+
+func TestValidateRouteConfigRequiresProtocol(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
 					},
 				},
 			},
@@ -282,7 +351,7 @@ func TestValidateRouteConfigRejectsMixedLegacyAndExplicitModelFields(t *testing.
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "cannot mix exact_models/wildcard_models") {
+	if !strings.Contains(err.Error(), "protocol is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -46,6 +46,7 @@
           <div class="field-row">
             <label class="field-label">{{ $t('routeDetail.protocol') }}</label>
             <select v-model="routeConfig.protocol" class="form-input">
+              <option value="" disabled>{{ $t('routeDetail.selectProtocol') }}</option>
               <option value="chat">chat</option>
               <option value="responses">responses</option>
               <option value="anthropic">anthropic</option>
@@ -93,7 +94,7 @@
         <h3>{{ $t('routeDetail.basicInfo') }}</h3>
         <table class="info-table">
           <tr><td>{{ $t('routeDetail.prefix') }}</td><td><code>{{ detail.prefix }}</code></td></tr>
-          <tr><td>{{ $t('routeDetail.protocol') }}</td><td><code>{{ detail.protocol || 'legacy' }}</code></td></tr>
+          <tr><td>{{ $t('routeDetail.protocol') }}</td><td><code>{{ detail.protocol || '-' }}</code></td></tr>
           <tr><td>{{ $t('routeDetail.hookCount') }}</td><td>{{ detail.hook_count || 0 }}</td></tr>
         </table>
       </section>
@@ -284,7 +285,7 @@ function deepClone(value) {
 
 function supportedRouteProtocols(providerProtocol) {
   if (providerProtocol === 'anthropic') return ['anthropic']
-  if (['openai', 'ollama', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
+  if (['openai', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
   return []
 }
 
@@ -338,12 +339,13 @@ function createProviderSeededRouteConfig(providerName, providerConfigMap = {}, d
 
 function normalizeEditableRoute(route) {
   const normalized = createEmptyRouteConfig(providerMap.value)
-  normalized.protocol = route?.protocol || 'chat'
+  normalized.protocol = typeof route?.protocol === 'string' ? route.protocol : ''
   normalized.exact_models = deepClone(route?.exact_models || {})
   normalized.wildcard_models = deepClone(route?.wildcard_models || {})
   if (
     Object.keys(normalized.exact_models).length === 0 &&
-    Object.keys(normalized.wildcard_models).length === 0
+    Object.keys(normalized.wildcard_models).length === 0 &&
+    normalized.protocol
   ) {
     const provider = defaultProviderForProtocol(normalized.protocol, providerMap.value)
     normalized.wildcard_models = provider ? { '*': { providers: [provider] } } : {}
