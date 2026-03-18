@@ -29,6 +29,7 @@ type Record struct {
 	Endpoint    string          `json:"endpoint"`
 	Model       string          `json:"model"`
 	Stream      bool            `json:"stream"`
+	Pending     bool            `json:"pending,omitempty"`
 	Provider    string          `json:"provider"`
 	UserAgent   string          `json:"user_agent,omitempty"`
 	DurationMs  int64           `json:"duration_ms"`

@@ -325,9 +325,11 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { useI18n } from "vue-i18n";
 import { createLogStream } from "../api.js";
 import { formatDuration } from "../utils.js";
 
+const { t } = useI18n();
 const logs = ref([]);
 const paused = ref(false);
 const error = ref("");
@@ -467,6 +469,21 @@ function togglePause() {
 
 function clear() {
 	logs.value = [];
+}
+
+function upsertLog(log) {
+	const idx = logs.value.findIndex((item) => item.request_id === log.request_id);
+	if (idx >= 0) {
+		logs.value[idx] = log;
+	} else {
+		logs.value.push(log);
+	}
+	if (selected.value?.request_id === log.request_id) {
+		selected.value = log;
+	}
+	if (logs.value.length > MAX_LOGS) {
+		logs.value = logs.value.slice(-MAX_LOGS);
+	}
 }
 
 function showDetail(log) {
@@ -1255,6 +1272,7 @@ function chainStatus(chain) {
 
 // single-log status text: includes step count if any
 function statusText(log) {
+	if (log.pending) return t("logs.streaming");
 	if (log.error) return log.error;
 	const steps = log.steps?.length;
 	return steps ? "OK · " + steps + " steps" : "OK";
@@ -1368,10 +1386,7 @@ onMounted(() => {
 	stopStream = stream.start(
 		(data) => {
 			if (paused.value) return;
-			logs.value.push(data);
-			if (logs.value.length > MAX_LOGS) {
-				logs.value = logs.value.slice(-MAX_LOGS);
-			}
+			upsertLog(data);
 			scrollToBottom();
 		},
 		(err) => {

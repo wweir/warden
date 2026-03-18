@@ -31,6 +31,8 @@ import (
 
 const redactedPlaceholder = "__REDACTED__"
 
+const adminSSEHeartbeatInterval = 15 * time.Second
+
 // registerAdminRoutes registers all /_admin/ routes with Basic Auth.
 // Uses an internal http.ServeMux for sub-routing to avoid httprouter
 // wildcard conflicts between /_admin/*filepath and /_admin/api/* routes.
@@ -160,11 +162,7 @@ func (g *Gateway) basicAuth(next httprouter.Handle) httprouter.Handle {
 
 // handleAdminStatus streams provider statuses and route info via SSE.
 func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
+	flusher, ok := prepareSSEWriter(w)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
@@ -344,24 +342,34 @@ func (g *Gateway) handleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 
 // handleLogStream serves SSE real-time log events.
 func (g *Gateway) handleLogStream(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := prepareSSEWriter(w)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
 
 	ch := g.broadcaster.Subscribe()
 	defer g.broadcaster.Unsubscribe(ch)
+	heartbeat := time.NewTicker(adminSSEHeartbeatInterval)
+	defer heartbeat.Stop()
+
+	writeSSEComment(w, "stream-open")
+	flusher.Flush()
 
 	// send recent history first
 	for _, rec := range g.broadcaster.Recent() {
 		writeSSE(w, rec)
 	}
-	w.(http.Flusher).Flush()
+	flusher.Flush()
 
 	for {
 		select {
 		case rec := <-ch:
 			writeSSE(w, rec)
-			w.(http.Flusher).Flush()
+			flusher.Flush()
+		case <-heartbeat.C:
+			writeSSEComment(w, "keepalive")
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}
@@ -380,6 +388,23 @@ func writeSSE(w http.ResponseWriter, r reqlog.Record) {
 		return
 	}
 	fmt.Fprintf(w, "data: %s\n\n", data)
+}
+
+func prepareSSEWriter(w http.ResponseWriter) (http.Flusher, bool) {
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	return flusher, ok
+}
+
+func writeSSEComment(w http.ResponseWriter, comment string) {
+	if comment == "" {
+		comment = "keepalive"
+	}
+	fmt.Fprintf(w, ": %s\n\n", comment)
 }
 
 // injectSecrets writes real secret values from cfg into cfgMap,
@@ -519,7 +544,6 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"protocol":          provCfg.Protocol,
 		"timeout":           provCfg.Timeout,
 		"has_api_key":       provCfg.APIKey.Value() != "",
-		"chat_to_responses": provCfg.ChatToResponses,
 		"responses_to_chat": provCfg.ResponsesToChat,
 		"models":            models,
 		"status":            status,
@@ -652,11 +676,7 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 
 // handleMetricsStream serves SSE real-time metrics for dashboard charts.
 func (g *Gateway) handleMetricsStream(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
+	flusher, ok := prepareSSEWriter(w)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return

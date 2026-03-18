@@ -29,11 +29,15 @@ func NewBroadcaster() *Broadcaster {
 // Publish stores a Record in the ring buffer and sends it to all subscribers (non-blocking).
 func (b *Broadcaster) Publish(r Record) {
 	b.mu.Lock()
-	b.recent[b.pos] = r
-	b.pos++
-	if b.pos >= recentSize {
-		b.pos = 0
-		b.full = true
+	if idx, ok := b.findRecentIndexLocked(r.RequestID); ok {
+		b.recent[idx] = r
+	} else {
+		b.recent[b.pos] = r
+		b.pos++
+		if b.pos >= recentSize {
+			b.pos = 0
+			b.full = true
+		}
 	}
 
 	// fan-out: non-blocking send to all subscribers
@@ -45,6 +49,23 @@ func (b *Broadcaster) Publish(r Record) {
 		}
 	}
 	b.mu.Unlock()
+}
+
+func (b *Broadcaster) findRecentIndexLocked(requestID string) (int, bool) {
+	if requestID == "" {
+		return 0, false
+	}
+
+	limit := b.pos
+	if b.full {
+		limit = recentSize
+	}
+	for i := 0; i < limit; i++ {
+		if b.recent[i].RequestID == requestID {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // Subscribe returns a channel that receives Record events.

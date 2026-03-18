@@ -3,6 +3,7 @@ package reqlog
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestHashN(t *testing.T) {
@@ -266,6 +267,42 @@ func TestUserMessageText(t *testing.T) {
 	}
 }
 
+func TestBroadcasterPublishReplacesRecentByRequestID(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	first := Record{
+		Timestamp: time.Unix(100, 0),
+		RequestID: "req_1",
+		Model:     "gpt-4o",
+		Pending:   true,
+	}
+	final := Record{
+		Timestamp:  time.Unix(100, 0),
+		RequestID:  "req_1",
+		Model:      "gpt-4o",
+		Provider:   "openai",
+		DurationMs: 123,
+	}
+
+	b.Publish(first)
+	b.Publish(final)
+
+	recent := b.Recent()
+	if len(recent) != 1 {
+		t.Fatalf("recent count = %d, want 1", len(recent))
+	}
+	if recent[0].Pending {
+		t.Fatalf("recent[0].Pending = true, want false")
+	}
+	if recent[0].DurationMs != 123 {
+		t.Fatalf("recent[0].DurationMs = %d, want 123", recent[0].DurationMs)
+	}
+	if recent[0].Provider != "openai" {
+		t.Fatalf("recent[0].Provider = %q, want openai", recent[0].Provider)
+	}
+}
+
 func TestAnthropicToolUseText(t *testing.T) {
 	raw := `[{"type":"tool_use","name":"get_weather","input":{"city":"SF"}}]`
 	got := anthropicToolUseText(json.RawMessage(raw))
@@ -277,24 +314,24 @@ func TestAnthropicToolUseText(t *testing.T) {
 
 func TestFilterBillingHeader(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
-		want string
+		want  string
 	}{
 		{
-			name: "removes billing header",
+			name:  "removes billing header",
 			input: "x-anthropic-billing-header: cc_version=1.0; cch=abc123;\nYou are helpful.",
-			want: "You are helpful.",
+			want:  "You are helpful.",
 		},
 		{
-			name: "no billing header",
+			name:  "no billing header",
 			input: "You are helpful.",
-			want: "You are helpful.",
+			want:  "You are helpful.",
 		},
 		{
-			name: "multiple billing headers",
+			name:  "multiple billing headers",
 			input: "x-anthropic-billing-header: cch=abc;\nOther text\nx-anthropic-billing-header: cch=def;\nMore text",
-			want: "Other text\nMore text",
+			want:  "Other text\nMore text",
 		},
 	}
 
