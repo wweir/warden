@@ -214,7 +214,7 @@ const filtered = computed(() => {
 	return routes.filter(
 		(r) =>
 			r.prefix.toLowerCase().includes(q) ||
-			(r.protocol || "").toLowerCase().includes(q) ||
+			String(r.protocol || "").toLowerCase().includes(q) ||
 			(r.models || []).some((m) => m.toLowerCase().includes(q)) ||
 			(r.providers || []).some((p) => p.toLowerCase().includes(q)),
 	);

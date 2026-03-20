@@ -70,23 +70,25 @@
 					/>
 					<input v-else :value="providerName" class="form-input" readonly />
 
-					<label>protocol <span class="req">*</span></label>
-					<select v-model="providerConfig.protocol" class="form-input">
+					<label>{{ $t("providerDetail.family") }} <span class="req">*</span></label>
+					<select v-model="providerConfig.family" class="form-input">
+						<option value="">{{ $t("providerDetail.selectFamily") }}</option>
 						<option value="openai">openai</option>
 						<option value="anthropic">anthropic</option>
 						<option value="qwen">qwen</option>
 						<option value="copilot">copilot</option>
+						<option value="ollama">ollama</option>
 					</select>
 
 					<template
-						v-if="!['qwen', 'copilot'].includes(providerConfig.protocol || 'openai')"
+						v-if="!['qwen', 'copilot'].includes(providerFamily(providerConfig) || 'openai')"
 					>
 						<label>url <span class="req">*</span></label>
 						<div class="url-field">
 							<input
 								v-model="providerConfig.url"
 								class="form-input"
-								:placeholder="providerUrlPlaceholder(providerConfig.protocol)"
+								:placeholder="providerUrlPlaceholder(providerFamily(providerConfig))"
 							/>
 							<input
 								v-model="providerConfig.proxy"
@@ -124,13 +126,13 @@
 						</div>
 					</template>
 
-					<template v-if="['qwen', 'copilot'].includes(providerConfig.protocol)">
+					<template v-if="['qwen', 'copilot'].includes(providerFamily(providerConfig))">
 						<label>config_dir</label>
 						<input
 							v-model="providerConfig.config_dir"
 							class="form-input"
 							:placeholder="
-								providerConfig.protocol === 'qwen'
+								providerFamily(providerConfig) === 'qwen'
 									? '~/.qwen'
 									: '~/.config/github-copilot'
 							"
@@ -147,7 +149,7 @@
 					<label>timeout</label>
 					<input v-model="providerConfig.timeout" class="form-input" placeholder="60s" />
 
-					<template v-if="providerConfig.protocol === 'openai'">
+					<template v-if="providerFamily(providerConfig) === 'openai'">
 						<label>responses_to_chat</label>
 						<div class="form-hint-row">
 							<input
@@ -160,7 +162,7 @@
 					</template>
 
 					<template
-						v-if="!['qwen', 'copilot'].includes(providerConfig.protocol || 'openai')"
+						v-if="!['qwen', 'copilot'].includes(providerFamily(providerConfig) || 'openai')"
 					>
 						<label>headers</label>
 						<KeyValueEditor
@@ -212,6 +214,20 @@
 							{{ $t("providerDetail.modelsBehaviorHint") }}
 						</p>
 					</div>
+
+					<label>{{ $t("providerDetail.enabledProtocols") }}</label>
+					<TagListEditor
+						v-model="providerConfig.enabled_protocols"
+						:suggestions="providerProtocolSuggestions(providerConfig)"
+						:placeholder="$t('providerDetail.protocolsPlaceholder')"
+					/>
+
+					<label>{{ $t("providerDetail.disabledProtocols") }}</label>
+					<TagListEditor
+						v-model="providerConfig.disabled_protocols"
+						:suggestions="providerProtocolSuggestions(providerConfig)"
+						:placeholder="$t('providerDetail.protocolsPlaceholder')"
+					/>
 				</div>
 			</section>
 
@@ -230,10 +246,26 @@
 							</td>
 						</tr>
 						<tr>
-							<td>{{ $t("providerDetail.protocol") }}</td>
-							<td>{{ detail.protocol }}</td>
+							<td>{{ $t("providerDetail.family") }}</td>
+							<td>{{ detail.family || detail.protocol }}</td>
 						</tr>
-						<tr v-if="detail.protocol === 'openai'">
+						<tr>
+							<td>{{ $t("providerDetail.supportedProtocols") }}</td>
+							<td>{{ (detail.supported_protocols || []).join(", ") || "-" }}</td>
+						</tr>
+						<tr>
+							<td>{{ $t("providerDetail.candidateProtocols") }}</td>
+							<td>{{ (detail.candidate_protocols || []).join(", ") || "-" }}</td>
+						</tr>
+						<tr>
+							<td>{{ $t("providerDetail.configuredProtocols") }}</td>
+							<td>{{ (detail.configured_protocols || []).join(", ") || "-" }}</td>
+						</tr>
+						<tr>
+							<td>{{ $t("providerDetail.displayProtocols") }}</td>
+							<td>{{ (detail.display_protocols || []).join(", ") || "-" }}</td>
+						</tr>
+						<tr v-if="(detail.family || detail.protocol) === 'openai'">
 							<td>responses_to_chat</td>
 							<td>{{ detail.responses_to_chat ? $t("common.on") : $t("common.off") }}</td>
 						</tr>
@@ -327,6 +359,71 @@
 					</table>
 				</section>
 
+				<section class="info-section">
+					<h3>Protocol Detection</h3>
+					<div class="runtime-actions">
+						<button
+							@click="runProtocolDetect"
+							class="btn btn-secondary"
+							:disabled="detectingProtocols"
+						>
+							{{ detectingProtocols ? "Detecting..." : "Detect Display Protocols" }}
+						</button>
+						<span v-if="detail.last_protocol_probe" class="hint">
+							{{ detail.last_protocol_probe.status }} · {{ formatTime(detail.last_protocol_probe.checked_at) }}
+							<span v-if="detail.last_protocol_probe.error"> · {{ detail.last_protocol_probe.error }}</span>
+						</span>
+					</div>
+
+					<div class="probe-grid">
+						<select v-model="selectedProbeModel" class="form-input">
+							<option value="">Select model</option>
+							<option v-for="model in probeableModels" :key="model" :value="model">
+								{{ model }}
+							</option>
+						</select>
+						<select v-model="selectedProbeProtocol" class="form-input">
+							<option value="chat">chat</option>
+							<option value="responses_stateless">responses_stateless</option>
+							<option value="responses_stateful">responses_stateful</option>
+							<option value="anthropic">anthropic</option>
+						</select>
+						<button
+							@click="runExactProtocolProbe"
+							class="btn btn-primary"
+							:disabled="exactProbing || !selectedProbeModel"
+						>
+							{{ exactProbing ? "Probing..." : "Probe Model Protocol" }}
+						</button>
+					</div>
+
+					<div v-if="protocolProbeResult" class="hint" :class="protocolProbeResult.status === 'supported' ? 'text-success' : protocolProbeResult.status === 'unsupported' ? 'text-error' : 'text-warning'">
+						{{ protocolProbeResult.model }} · {{ protocolProbeResult.protocol }} · {{ protocolProbeResult.status }}
+						<span v-if="protocolProbeResult.error"> · {{ protocolProbeResult.error }}</span>
+					</div>
+
+					<table v-if="exactProbeResults.length > 0" class="data-table" style="margin-top: 12px;">
+						<thead>
+							<tr>
+								<th>model</th>
+								<th>protocol</th>
+								<th>status</th>
+								<th>checked_at</th>
+								<th>error</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr v-for="probe in exactProbeResults" :key="`${probe.model}/${probe.protocol}`">
+								<td><code>{{ probe.model }}</code></td>
+								<td><code>{{ probe.protocol }}</code></td>
+								<td>{{ probe.status }}</td>
+								<td>{{ formatTime(probe.checked_at) }}</td>
+								<td>{{ probe.error || "-" }}</td>
+							</tr>
+						</tbody>
+					</table>
+				</section>
+
 				<div class="actions runtime-actions">
 					<button @click="runHealthCheck" class="btn btn-primary" :disabled="checking">
 						{{
@@ -381,6 +478,8 @@ import {
 	fetchProviderDetail,
 	healthCheck,
 	setProviderSuppress,
+	detectProviderProtocols,
+	probeProviderModelProtocol,
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
 import TagListEditor from "../components/TagListEditor.vue";
@@ -411,6 +510,11 @@ const showAPIKey = ref(false);
 const configFileChanged = ref(false);
 const waitingAlive = ref(false);
 const waitingElapsed = ref(0);
+const detectingProtocols = ref(false);
+const selectedProbeModel = ref("");
+const selectedProbeProtocol = ref("chat");
+const protocolProbeResult = ref(null);
+const exactProbing = ref(false);
 
 watch(
 	[providerName, providerConfig],
@@ -460,6 +564,19 @@ const missingDiscoveredModelIds = computed(() =>
 	discoveredModelIds.value.filter((id) => !(providerConfig.value.models || []).includes(id)),
 );
 
+const probeableModels = computed(() =>
+	discoveredModelIds.value.length > 0 ? discoveredModelIds.value : [...(providerConfig.value.models || [])],
+);
+
+const exactProbeResults = computed(() => {
+	const entries = detail.value?.model_protocol_probes || [];
+	return [...entries].sort((a, b) => {
+		const modelCmp = String(a.model || "").localeCompare(String(b.model || ""));
+		if (modelCmp !== 0) return modelCmp;
+		return String(a.protocol || "").localeCompare(String(b.protocol || ""));
+	});
+});
+
 function cloneData(value) {
 	return JSON.parse(JSON.stringify(value ?? {}));
 }
@@ -467,9 +584,30 @@ function cloneData(value) {
 function createEmptyProviderConfig() {
 	return {
 		url: "",
-		protocol: "openai",
+		family: "",
 		models: [],
+		enabled_protocols: [],
+		disabled_protocols: [],
 	};
+}
+
+function providerFamily(provider) {
+	return String(provider?.family || provider?.protocol || "").trim().toLowerCase();
+}
+
+function providerProtocolSuggestions(provider) {
+	switch (providerFamily(provider)) {
+		case "anthropic":
+			return ["chat", "anthropic"];
+		case "openai":
+			return ["chat", "responses_stateless", "responses_stateful"];
+		case "qwen":
+		case "copilot":
+		case "ollama":
+			return ["chat"];
+		default:
+			return ["chat", "responses_stateless", "responses_stateful", "anthropic"];
+	}
 }
 
 function secretDisplay(val) {
@@ -482,6 +620,8 @@ function isSecretConfigured(val) {
 
 function providerUrlPlaceholder(protocol) {
 	switch (protocol) {
+		case "":
+			return "Select family first";
 		case "anthropic":
 			return "https://api.anthropic.com";
 		case "qwen":
@@ -537,31 +677,21 @@ function pruneProviderReferences(nextConfig, targetProvider) {
 		const nextExactModels = {};
 		for (const [modelName, modelCfg] of Object.entries(route.exact_models || {})) {
 			if (!modelCfg || typeof modelCfg !== "object") continue;
-
 			const upstreams = (modelCfg.upstreams || []).filter(
 				(upstream) => upstream?.provider !== targetProvider,
 			);
 			if (upstreams.length === 0) continue;
-
-			nextExactModels[modelName] = {
-				...modelCfg,
-				upstreams,
-			};
+			nextExactModels[modelName] = { ...modelCfg, upstreams };
 		}
 
 		const nextWildcardModels = {};
 		for (const [pattern, modelCfg] of Object.entries(route.wildcard_models || {})) {
 			if (!modelCfg || typeof modelCfg !== "object") continue;
-
 			const providers = (modelCfg.providers || []).filter(
 				(provider) => provider !== targetProvider,
 			);
 			if (providers.length === 0) continue;
-
-			nextWildcardModels[pattern] = {
-				...modelCfg,
-				providers,
-			};
+			nextWildcardModels[pattern] = { ...modelCfg, providers };
 		}
 
 		if (Object.keys(nextExactModels).length === 0 && Object.keys(nextWildcardModels).length === 0) {
@@ -598,9 +728,15 @@ async function load() {
 			providerConfig.value = {
 				...createEmptyProviderConfig(),
 				...cloneData(provider),
+				family: provider.family || provider.protocol || "",
 				models: [...(provider.models || [])],
+				enabled_protocols: [...(provider.enabled_protocols || [])],
+				disabled_protocols: [...(provider.disabled_protocols || [])],
 			};
 			detail.value = await fetchProviderDetail(props.name);
+			if (!selectedProbeModel.value && discoveredModelIds.value.length > 0) {
+				selectedProbeModel.value = discoveredModelIds.value[0];
+			}
 		}
 
 		dirty.value = false;
@@ -657,6 +793,10 @@ async function apply() {
 			error.value = t("providerDetail.nameRequired");
 			return;
 		}
+		if (!providerFamily(providerConfig.value)) {
+			error.value = t("providerDetail.familyRequired");
+			return;
+		}
 
 		const nextConfig = cloneData(configDoc.value);
 		nextConfig.provider = nextConfig.provider || {};
@@ -666,7 +806,10 @@ async function apply() {
 			return;
 		}
 
-		nextConfig.provider[name] = cloneData(providerConfig.value);
+		const nextProviderConfig = cloneData(providerConfig.value);
+		nextProviderConfig.family = providerFamily(nextProviderConfig);
+		delete nextProviderConfig.protocol;
+		nextConfig.provider[name] = nextProviderConfig;
 
 		const cleaned = cleanConfig(nextConfig);
 		const result = await validateConfig(cleaned);
@@ -772,6 +915,39 @@ async function runHealthCheck() {
 	}
 }
 
+async function runProtocolDetect() {
+	if (!props.name) return;
+	detectingProtocols.value = true;
+	error.value = "";
+	try {
+		await detectProviderProtocols(props.name);
+		await load();
+	} catch (e) {
+		error.value = e.message;
+	} finally {
+		detectingProtocols.value = false;
+	}
+}
+
+async function runExactProtocolProbe() {
+	if (!props.name || !selectedProbeModel.value) return;
+	exactProbing.value = true;
+	error.value = "";
+	protocolProbeResult.value = null;
+	try {
+		protocolProbeResult.value = await probeProviderModelProtocol(
+			props.name,
+			selectedProbeModel.value,
+			selectedProbeProtocol.value,
+		);
+		await load();
+	} catch (e) {
+		error.value = e.message;
+	} finally {
+		exactProbing.value = false;
+	}
+}
+
 async function suppressProvider() {
 	try {
 		await setProviderSuppress(props.name, true);
@@ -820,6 +996,14 @@ async function unsuppressProvider() {
 
 .health-result {
 	font-size: 13px;
+}
+
+.probe-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
+	gap: 10px;
+	align-items: center;
+	margin-top: 12px;
 }
 
 .form-grid {
@@ -926,6 +1110,10 @@ async function unsuppressProvider() {
 	}
 
 	.form-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.probe-grid {
 		grid-template-columns: 1fr;
 	}
 

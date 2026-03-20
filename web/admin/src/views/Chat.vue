@@ -125,12 +125,16 @@ import ModelCombobox from '../components/ModelCombobox.vue'
 
 const { t } = useI18n()
 
+const RESPONSE_ROUTE_PROTOCOLS = new Set(['responses_stateless', 'responses_stateful'])
+const STATEFUL_RESPONSES_PROTOCOL = 'responses_stateful'
+
 // --- State ---
 const sidebarOpen = ref(false)
 const conversations = ref([])
 const currentId = ref(null)
 const routes = ref([])
 const routeProviders = ref({}) // route prefix -> provider names
+const routeProtocols = ref({}) // route prefix -> configured protocol
 const providers = ref([])
 const models = ref([])
 const currentRoute = ref('')
@@ -157,18 +161,443 @@ function renderMarkdown(text) {
 }
 
 function getTextContent(msg) {
-  if (typeof msg.content === 'string') return msg.content
-  if (Array.isArray(msg.content)) {
-    return msg.content.filter(p => p.type === 'text').map(p => p.text).join('')
+  return getTextContentFromValue(msg?.content)
+}
+
+function normalizeConversation(conv) {
+  if (!conv || typeof conv !== 'object') return null
+  return {
+    ...conv,
+    route: typeof conv.route === 'string' ? conv.route : '',
+    provider: typeof conv.provider === 'string' ? conv.provider : '',
+    model: typeof conv.model === 'string' ? conv.model : '',
+    messages: Array.isArray(conv.messages) ? conv.messages : [],
+    stateful_response_id: typeof conv.stateful_response_id === 'string' ? conv.stateful_response_id : '',
+  }
+}
+
+function getTextContentFromValue(content) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter(part => part?.type === 'text' || part?.type === 'output_text' || part?.type === 'input_text')
+      .map(part => part?.text || '')
+      .join('')
   }
   return ''
+}
+
+function normalizeContentParts(content) {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : []
+  }
+  if (!Array.isArray(content)) {
+    return content == null ? [] : [{ type: 'text', text: String(content) }]
+  }
+
+  const parts = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+    if (part.type === 'text' && typeof part.text === 'string') {
+      parts.push({ type: 'text', text: part.text })
+      continue
+    }
+    if (part.type === 'image_url') {
+      const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url
+      if (url) {
+        parts.push({ type: 'image_url', url })
+      }
+    }
+  }
+  return parts
+}
+
+function parseDataURL(url) {
+  if (typeof url !== 'string') return null
+  const matched = url.match(/^data:([^;,]+);base64,(.+)$/)
+  if (!matched) return null
+  return {
+    mediaType: matched[1],
+    data: matched[2],
+  }
+}
+
+function resolveRouteProtocol(route = currentRoute.value) {
+  return routeProtocols.value[route] || 'chat'
+}
+
+function isStatefulResponsesProtocol(protocol) {
+  return protocol === STATEFUL_RESPONSES_PROTOCOL
+}
+
+function clearConversationStatefulResponse(conv) {
+  if (!conv || typeof conv !== 'object') return
+  conv.stateful_response_id = ''
+}
+
+function currentConversationStatefulResponseID() {
+  return currentConv()?.stateful_response_id || ''
+}
+
+function toResponsesContent(content, role) {
+  const parts = normalizeContentParts(content)
+  if (parts.length === 0) return ''
+  if (typeof content === 'string' && parts.every(part => part.type === 'text')) {
+    return parts.map(part => part.text).join('')
+  }
+  const textType = role === 'assistant' ? 'output_text' : 'input_text'
+  return parts.map(part => (
+    part.type === 'text'
+      ? { type: textType, text: part.text }
+      : { type: 'input_image', image_url: part.url }
+  ))
+}
+
+function toResponsesInputItem(message) {
+  return {
+    type: 'message',
+    role: message.role,
+    content: toResponsesContent(message.content, message.role),
+  }
+}
+
+function buildResponsesInput(messages) {
+  return messages
+    .filter(message => ['system', 'user', 'assistant'].includes(message?.role))
+    .map(toResponsesInputItem)
+}
+
+function latestResponsesTurnInput(messages) {
+  for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+    const message = messages[idx]
+    if (!['system', 'user', 'assistant'].includes(message?.role)) continue
+    return [toResponsesInputItem(message)]
+  }
+  return []
+}
+
+function buildResponsesRequest(protocol, model, messages, previousResponseID = '') {
+  const body = {
+    model,
+    stream: true,
+  }
+
+  if (isStatefulResponsesProtocol(protocol) && previousResponseID) {
+    body.input = latestResponsesTurnInput(messages)
+    body.previous_response_id = previousResponseID
+  } else {
+    body.input = buildResponsesInput(messages)
+  }
+
+  return {
+    endpoint: 'responses',
+    body,
+  }
+}
+
+function toAnthropicContent(content) {
+  const parts = normalizeContentParts(content)
+  if (parts.length === 0) return ''
+  if (typeof content === 'string' && parts.every(part => part.type === 'text')) {
+    return parts.map(part => part.text).join('')
+  }
+  return parts.map(part => {
+    if (part.type === 'text') {
+      return { type: 'text', text: part.text }
+    }
+    const dataURL = parseDataURL(part.url)
+    if (!dataURL) {
+      throw new Error(t('chat.unsupportedAnthropicImage'))
+    }
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: dataURL.mediaType,
+        data: dataURL.data,
+      },
+    }
+  })
+}
+
+function buildAnthropicRequest(model, messages) {
+  const systemTexts = []
+  const anthropicMessages = []
+
+  for (const message of messages) {
+    if (message?.role === 'system') {
+      const text = getTextContent(message)
+      if (text) systemTexts.push(text)
+      continue
+    }
+    if (!['user', 'assistant'].includes(message?.role)) continue
+    anthropicMessages.push({
+      role: message.role,
+      content: toAnthropicContent(message.content),
+    })
+  }
+
+  const body = {
+    model,
+    messages: anthropicMessages,
+    stream: true,
+    max_tokens: 4096,
+  }
+  if (systemTexts.length === 1) {
+    body.system = systemTexts[0]
+  } else if (systemTexts.length > 1) {
+    body.system = systemTexts.join('\n\n')
+  }
+
+  return {
+    endpoint: 'messages',
+    body,
+  }
+}
+
+function buildProtocolRequest(protocol, model, messages) {
+  if (protocol === 'chat') {
+    return {
+      endpoint: 'chat/completions',
+      body: {
+        model,
+        messages,
+        stream: true,
+      },
+    }
+  }
+  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+    return buildResponsesRequest(protocol, model, messages, currentConversationStatefulResponseID())
+  }
+  if (protocol === 'anthropic') {
+    return buildAnthropicRequest(model, messages)
+  }
+  throw new Error(t('chat.unsupportedProtocol', { protocol }))
+}
+
+function extractChatResponseText(payload) {
+  const message = payload?.choices?.[0]?.message
+  if (!message) return ''
+  return getTextContentFromValue(message.content)
+}
+
+function extractResponsesResponseText(payload) {
+  const response = payload?.response || payload
+  const output = response?.output
+  if (!Array.isArray(output)) return ''
+
+  const parts = []
+  for (const item of output) {
+    if (typeof item === 'string') {
+      parts.push(item)
+      continue
+    }
+    if (item?.type === 'message') {
+      if (typeof item.content === 'string') {
+        parts.push(item.content)
+        continue
+      }
+      if (Array.isArray(item.content)) {
+        parts.push(
+          item.content
+            .filter(part => part?.type === 'text' || part?.type === 'output_text' || part?.type === 'input_text')
+            .map(part => part?.text || '')
+            .join(''),
+        )
+      }
+    }
+  }
+  return parts.join('\n')
+}
+
+function extractResponsesResponseID(payload) {
+  const response = payload?.response || payload
+  return typeof response?.id === 'string' ? response.id : ''
+}
+
+function extractAnthropicResponseText(payload) {
+  const message = payload?.message || payload
+  const content = message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(part => part?.type === 'text')
+    .map(part => part?.text || '')
+    .join('')
+}
+
+function extractProtocolResponseText(payload, protocol) {
+  if (protocol === 'chat') return extractChatResponseText(payload)
+  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) return extractResponsesResponseText(payload)
+  if (protocol === 'anthropic') return extractAnthropicResponseText(payload)
+  return ''
+}
+
+function extractProtocolResponseID(payload, protocol) {
+  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) return extractResponsesResponseID(payload)
+  return ''
+}
+
+function parseJSON(value) {
+  if (typeof value !== 'string') return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function sseDataLine(line) {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data: ')) return null
+  return trimmed.slice(6)
+}
+
+function extractProtocolDeltaText(payload, protocol) {
+  if (protocol === 'chat') {
+    return getTextContentFromValue(payload?.choices?.[0]?.delta?.content)
+  }
+  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+    if (payload?.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
+      return payload.delta
+    }
+    return ''
+  }
+  if (protocol === 'anthropic') {
+    if (payload?.type === 'content_block_delta' && payload?.delta?.type === 'text_delta') {
+      return payload.delta?.text || ''
+    }
+  }
+  return ''
+}
+
+function extractProtocolFinalEventText(payload, protocol) {
+  if (protocol === 'chat') {
+    return extractChatResponseText(payload)
+  }
+  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+    return extractResponsesResponseText(payload)
+  }
+  if (protocol === 'anthropic') {
+    return extractAnthropicResponseText(payload)
+  }
+  return ''
+}
+
+function createStreamState(protocol) {
+  return {
+    protocol,
+    buffer: '',
+    raw: '',
+    content: '',
+    finalText: '',
+    responseID: '',
+  }
+}
+
+function consumeProtocolStreamLine(state, line) {
+  const data = sseDataLine(line)
+  if (data == null || data === '[DONE]') return
+
+  const payload = parseJSON(data)
+  if (!payload) return
+
+  const deltaText = extractProtocolDeltaText(payload, state.protocol)
+  if (deltaText) {
+    state.content += deltaText
+    state.sawDelta = true
+  }
+
+  const finalText = extractProtocolFinalEventText(payload, state.protocol)
+  if (finalText) {
+    state.finalText = finalText
+  }
+
+  const responseID = extractProtocolResponseID(payload, state.protocol)
+  if (responseID) {
+    state.responseID = responseID
+  }
+}
+
+function consumeProtocolStreamChunk(state, chunk) {
+  state.raw += chunk
+  state.buffer += chunk
+  const lines = state.buffer.split('\n')
+  state.buffer = lines.pop() || ''
+  for (const line of lines) {
+    consumeProtocolStreamLine(state, line)
+  }
+}
+
+function flushProtocolStream(state) {
+  if (!state.buffer) return
+  consumeProtocolStreamLine(state, state.buffer)
+  state.buffer = ''
+}
+
+function extractProtocolTextFromRaw(rawText, protocol) {
+  const trimmed = rawText.trim()
+  if (!trimmed) return { text: '', responseID: '' }
+
+  if (trimmed.startsWith('data:') || trimmed.startsWith('event:')) {
+    const state = createStreamState(protocol)
+    consumeProtocolStreamChunk(state, trimmed)
+    flushProtocolStream(state)
+    return {
+      text: state.content || state.finalText,
+      responseID: state.responseID,
+    }
+  }
+
+  const payload = parseJSON(trimmed)
+  if (!payload) return { text: '', responseID: '' }
+  return {
+    text: extractProtocolResponseText(payload, protocol),
+    responseID: extractProtocolResponseID(payload, protocol),
+  }
+}
+
+async function readProtocolStream(res, protocol) {
+  const reader = res.body?.getReader()
+  if (!reader) return { text: '', responseID: '' }
+
+  const decoder = new TextDecoder()
+  const state = createStreamState(protocol)
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const chunk = decoder.decode(value, { stream: true })
+    consumeProtocolStreamChunk(state, chunk)
+    streamContent.value = state.content || state.finalText || '...'
+    nextTick(scrollToBottom)
+  }
+
+  const tail = decoder.decode()
+  if (tail) {
+    consumeProtocolStreamChunk(state, tail)
+  }
+  flushProtocolStream(state)
+
+  if (state.content || state.finalText || state.responseID) {
+    return {
+      text: state.content || state.finalText,
+      responseID: state.responseID,
+    }
+  }
+  return extractProtocolTextFromRaw(state.raw, protocol)
 }
 
 // --- Conversations ---
 function loadConversations() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) conversations.value = JSON.parse(raw)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      conversations.value = Array.isArray(parsed)
+        ? parsed.map(normalizeConversation).filter(Boolean)
+        : []
+    }
   } catch { /* ignore */ }
 }
 
@@ -196,6 +625,7 @@ function newConversation() {
     route: currentRoute.value,
     provider: currentProvider.value,
     model: modelQuery.value,
+    stateful_response_id: '',
     messages: [],
     createdAt: new Date().toISOString(),
   }
@@ -227,9 +657,13 @@ function deleteConversation(id) {
 function updateConvMeta() {
   const c = currentConv()
   if (!c) return
+  const metaChanged = c.route !== currentRoute.value || c.provider !== currentProvider.value || c.model !== modelQuery.value
   c.route = currentRoute.value
   c.provider = currentProvider.value
   c.model = modelQuery.value
+  if (metaChanged) {
+    clearConversationStatefulResponse(c)
+  }
   if (!c.title && c.messages.length > 0) {
     const first = getTextContent(c.messages[0])
     c.title = first.slice(0, 40) + (first.length > 40 ? '...' : '')
@@ -244,10 +678,13 @@ async function loadRoutes() {
     routes.value = (status.routes || []).map(r => r.prefix)
     // build route -> providers mapping
     const providerMap = {}
+    const protocolMap = {}
     for (const r of status.routes || []) {
       providerMap[r.prefix] = r.providers || []
+      protocolMap[r.prefix] = r.protocol || 'chat'
     }
     routeProviders.value = providerMap
+    routeProtocols.value = protocolMap
     if (routes.value.length > 0 && !currentRoute.value) {
       currentRoute.value = routes.value[0]
     }
@@ -285,6 +722,7 @@ async function onRouteChange() {
   if (models.value.length > 0 && !models.value.includes(modelQuery.value)) {
     modelQuery.value = ''
   }
+  updateConvMeta()
 }
 
 // --- Input ---
@@ -373,15 +811,11 @@ async function sendMessage() {
   sending.value = true
   streaming.value = true
   streamContent.value = ''
-
-  const body = {
-    model: modelQuery.value,
-    messages: conv.messages,
-    stream: true,
-  }
+  const protocol = resolveRouteProtocol(currentRoute.value)
 
   try {
-    const res = await sendRouteRequest(currentRoute.value, 'chat/completions', body, currentProvider.value)
+    const request = buildProtocolRequest(protocol, modelQuery.value, conv.messages)
+    const res = await sendRouteRequest(currentRoute.value, request.endpoint, request.body, currentProvider.value)
     if (!res.ok) {
       const errText = await res.text()
       error.value = `Error ${res.status}: ${errText}`
@@ -390,34 +824,16 @@ async function sendMessage() {
       return
     }
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let fullContent = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data: ')) continue
-        const dataStr = trimmed.slice(6)
-        if (dataStr === '[DONE]') continue
-        try {
-          const obj = JSON.parse(dataStr)
-          const delta = obj.choices?.[0]?.delta?.content || ''
-          fullContent += delta
-          streamContent.value = fullContent
-          nextTick(scrollToBottom)
-        } catch { /* ignore */ }
-      }
-    }
+    const result = await readProtocolStream(res, protocol)
+    const fullContent = result.text
 
     // add assistant message
     conv.messages.push({ role: 'assistant', content: fullContent })
+    if (isStatefulResponsesProtocol(protocol)) {
+      conv.stateful_response_id = result.responseID || ''
+    } else {
+      clearConversationStatefulResponse(conv)
+    }
     saveConversations()
   } catch (e) {
     error.value = e.message

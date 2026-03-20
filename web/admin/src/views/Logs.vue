@@ -201,7 +201,7 @@
 				<div class="modal-body">
 					<!-- === JSON View === -->
 					<div v-if="detailView === 'json'">
-						<pre class="code-block code-block-json">{{ formatJSON(selected) }}</pre>
+						<pre class="code-block code-block-json">{{ selectedJSON }}</pre>
 					</div>
 
 					<!-- === Timeline View === -->
@@ -373,6 +373,50 @@ function formatJSON(data) {
 	}
 }
 
+function maybeParseJSONObjectString(value) {
+	if (typeof value !== "string") return value;
+	const trimmed = value.trim();
+	if (!trimmed) return value;
+	if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return value;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return value;
+	}
+}
+
+function normalizeLogJSON(value) {
+	if (Array.isArray(value)) {
+		return value.map((item) => normalizeLogJSON(item));
+	}
+	if (!value || typeof value !== "object") {
+		return maybeParseJSONObjectString(value);
+	}
+
+	const normalized = {};
+	for (const [key, raw] of Object.entries(value)) {
+		const parsed = maybeParseJSONObjectString(raw);
+		normalized[key] = parsed && typeof parsed === "object"
+			? normalizeLogJSON(parsed)
+			: parsed;
+	}
+	return normalized;
+}
+
+function copyTextFallback(text) {
+	const textarea = document.createElement("textarea");
+	textarea.value = text;
+	textarea.setAttribute("readonly", "");
+	textarea.style.position = "fixed";
+	textarea.style.opacity = "0";
+	textarea.style.pointerEvents = "none";
+	document.body.appendChild(textarea);
+	textarea.select();
+	textarea.setSelectionRange(0, textarea.value.length);
+	document.execCommand("copy");
+	document.body.removeChild(textarea);
+}
+
 // extract assembled text content from a streaming response
 function extractAssembledText(log) {
 	if (!log) return "";
@@ -491,13 +535,28 @@ function showDetail(log) {
 	detailView.value = log.error ? "json" : "timeline";
 }
 
-function copyJSON() {
+const selectedJSON = computed(() => {
+	if (!selected.value) return "";
+	return JSON.stringify(normalizeLogJSON(selected.value), null, 2);
+});
+
+async function copyJSON() {
 	if (!selected.value) return;
-	navigator.clipboard.writeText(formatJSON(selected.value)).then(() => {
+	try {
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(selectedJSON.value);
+		} else {
+			copyTextFallback(selectedJSON.value);
+		}
 		copied.value = true;
 		clearTimeout(copyTimer);
 		copyTimer = setTimeout(() => { copied.value = false; }, 2000);
-	});
+	} catch {
+		copyTextFallback(selectedJSON.value);
+		copied.value = true;
+		clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => { copied.value = false; }, 2000);
+	}
 }
 
 const assembledText = computed(() => {

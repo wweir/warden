@@ -14,7 +14,7 @@
             :aria-label="t('common.moveUp')"
             @click="moveTag(idx, -1)"
           >
-            Up
+            {{ t('common.moveUp') }}
           </button>
           <button
             v-if="allowReorder"
@@ -25,7 +25,7 @@
             :aria-label="t('common.moveDown')"
             @click="moveTag(idx, 1)"
           >
-            Down
+            {{ t('common.moveDown') }}
           </button>
           <button
             class="tag-remove"
@@ -38,19 +38,41 @@
           </button>
         </span>
       </span>
-      <div class="tag-input-wrap" ref="wrapRef">
+      <div class="tag-input-wrap">
         <input
+          :id="inputId"
           class="tag-input"
           v-model="input"
           :placeholder="tags.length === 0 ? placeholder : ''"
-          @keydown.enter.prevent="addTag"
+          role="combobox"
+          aria-autocomplete="list"
+          :aria-expanded="showSuggestions && filtered.length > 0 ? 'true' : 'false'"
+          :aria-controls="listboxId"
+          :aria-activedescendant="highlightedOptionId"
+          @keydown.enter.prevent="confirmInput"
+          @keydown.down.prevent="moveHighlight(1)"
+          @keydown.up.prevent="moveHighlight(-1)"
+          @keydown.escape="closeSuggestions"
+          @keydown.tab="closeSuggestions"
+          @keydown.backspace="handleBackspace"
           @input="onInput"
-          @focus="showSuggestions = true"
+          @focus="openSuggestions"
           @blur="hideSuggestions"
         />
-        <ul v-if="showSuggestions && filtered.length > 0" class="suggestions">
+        <ul
+          v-if="showSuggestions && filtered.length > 0"
+          :id="listboxId"
+          class="suggestions"
+          role="listbox"
+          :aria-labelledby="inputId"
+        >
           <li
-            v-for="s in filtered" :key="s"
+            v-for="(s, idx) in filtered" :key="s"
+            :id="optionId(idx)"
+            role="option"
+            :aria-selected="idx === highlightedIdx ? 'true' : 'false'"
+            :class="{ highlighted: idx === highlightedIdx }"
+            @mouseenter="highlightedIdx = idx"
             @mousedown.prevent="selectSuggestion(s)"
           >{{ s }}</li>
         </ul>
@@ -60,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -75,6 +97,9 @@ const { t } = useI18n()
 const tags = computed(() => props.modelValue || [])
 const input = ref('')
 const showSuggestions = ref(false)
+const highlightedIdx = ref(-1)
+const listboxId = `tag-list-editor-${Math.random().toString(36).slice(2)}`
+const inputId = `${listboxId}-input`
 
 const filtered = computed(() => {
   if (!props.suggestions.length) return []
@@ -83,6 +108,15 @@ const filtered = computed(() => {
     s => !tags.value.includes(s) && (q === '' || s.toLowerCase().includes(q))
   )
 })
+const highlightedOptionId = computed(() =>
+  highlightedIdx.value >= 0 && highlightedIdx.value < filtered.value.length
+    ? optionId(highlightedIdx.value)
+    : undefined,
+)
+
+function optionId(index) {
+  return `${listboxId}-option-${index}`
+}
 
 function addTag() {
   const v = input.value.trim()
@@ -90,6 +124,7 @@ function addTag() {
     emit('update:modelValue', [...tags.value, v])
   }
   input.value = ''
+  highlightedIdx.value = -1
 }
 
 function removeTag(idx) {
@@ -110,16 +145,58 @@ function selectSuggestion(s) {
     emit('update:modelValue', [...tags.value, s])
   }
   input.value = ''
+  closeSuggestions()
+}
+
+function openSuggestions() {
+  showSuggestions.value = true
+}
+
+function closeSuggestions() {
   showSuggestions.value = false
+  highlightedIdx.value = -1
 }
 
 function onInput() {
   showSuggestions.value = true
+  highlightedIdx.value = filtered.value.length > 0 ? 0 : -1
+}
+
+function moveHighlight(delta) {
+  if (!showSuggestions.value) {
+    openSuggestions()
+  }
+  if (filtered.value.length === 0) return
+  highlightedIdx.value = (highlightedIdx.value + delta + filtered.value.length) % filtered.value.length
+}
+
+function confirmInput() {
+  if (showSuggestions.value && highlightedIdx.value >= 0 && highlightedIdx.value < filtered.value.length) {
+    selectSuggestion(filtered.value[highlightedIdx.value])
+    return
+  }
+  addTag()
+  closeSuggestions()
+}
+
+function handleBackspace() {
+  if (input.value !== '' || tags.value.length === 0) return
+  removeTag(tags.value.length - 1)
 }
 
 function hideSuggestions() {
-  setTimeout(() => { showSuggestions.value = false }, 150)
+  setTimeout(() => { closeSuggestions() }, 150)
 }
+
+watch(filtered, (nextItems) => {
+  if (nextItems.length === 0) {
+    highlightedIdx.value = -1
+    return
+  }
+  if (highlightedIdx.value >= nextItems.length) {
+    highlightedIdx.value = nextItems.length - 1
+  }
+})
 </script>
 
 <style scoped>
@@ -173,7 +250,8 @@ function hideSuggestions() {
   cursor: pointer;
   font-size: 11px;
   line-height: 1;
-  padding: 2px 4px;
+  min-height: 28px;
+  padding: 4px 6px;
   opacity: 0.6;
   transition: opacity var(--transition);
 }
@@ -213,10 +291,14 @@ function hideSuggestions() {
   box-shadow: var(--shadow-md);
 }
 .suggestions li {
-  padding: 6px 10px;
+  padding: 8px 10px;
+  min-height: 36px;
   cursor: pointer;
   font-size: 13px;
   transition: background var(--transition);
+  display: flex;
+  align-items: center;
 }
-.suggestions li:hover { background: var(--c-primary-bg); }
+.suggestions li:hover,
+.suggestions li.highlighted { background: var(--c-primary-bg); }
 </style>

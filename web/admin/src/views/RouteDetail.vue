@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="route-page">
     <div class="breadcrumb">
       <router-link to="/">{{ $t('dashboard.title') }}</router-link>
       <span class="sep">/</span>
@@ -14,180 +14,282 @@
     <div v-if="message" :class="['msg', messageType]">{{ message }}</div>
     <div v-if="error" class="msg msg-error">{{ error }}</div>
 
-    <div class="detail-layout">
-      <section class="info-section">
-        <div class="section-head">
-          <div>
-            <h3>{{ $t('routeDetail.configEditor') }}</h3>
-            <p class="section-desc">{{ $t('routeDetail.configEditorDesc') }}</p>
-          </div>
-          <router-link
-            v-if="effectivePrefix"
-            :to="{ path: '/tool-hooks', query: { route: effectivePrefix } }"
-            class="btn btn-secondary btn-sm"
-          >
-            {{ $t('routeDetail.editHooks') }}
-          </router-link>
+    <section class="route-overview panel">
+      <div class="route-overview-main">
+        <div class="route-kicker">{{ isCreate ? $t('routeDetail.newRouteTitle') : $t('routeDetail.configEditor') }}</div>
+        <div class="route-title-row">
+          <h1 class="route-title">
+            <code>{{ effectivePrefix || $t('routeDetail.prefixPlaceholder') }}</code>
+          </h1>
+          <span class="badge badge-ok">{{ routeConfig.protocol || '-' }}</span>
         </div>
+        <p class="route-overview-desc">{{ $t('routeDetail.configEditorDesc') }}</p>
+      </div>
 
-        <div class="editor-grid">
-          <div class="field-row">
-            <label class="field-label">{{ $t('routeDetail.prefix') }}</label>
-            <input
-              v-model="editablePrefix"
-              class="form-input"
-              :readonly="!isCreate"
-              :placeholder="$t('routeDetail.prefixPlaceholder')"
-              spellcheck="false"
-            />
-            <span class="field-hint">{{ $t('routeDetail.prefixHint') }}</span>
+      <div class="route-overview-stats">
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.exactModels') }}</span>
+          <strong>{{ routeSummary.exactCount }}</strong>
+        </div>
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.wildcardModels') }}</span>
+          <strong>{{ routeSummary.wildcardCount }}</strong>
+        </div>
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.providersCol') }}</span>
+          <strong>{{ routeSummary.providerCount }}</strong>
+        </div>
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.requests') }}</span>
+          <strong>{{ formatCount(runtimeSummary.totalRequests) }}</strong>
+        </div>
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.failover') }}</span>
+          <strong>{{ formatCount(runtimeSummary.failoverCount) }}</strong>
+        </div>
+        <div class="overview-stat">
+          <span class="overview-label">{{ $t('routeDetail.avgLatency') }}</span>
+          <strong>{{ formatLatency(runtimeSummary.avgLatencyMs, runtimeSummary.totalRequests) }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <div class="route-workbench">
+      <div class="workbench-main">
+        <section v-if="configuredExactModels.length > 0" class="detail-panel panel exact-summary-panel">
+          <div class="detail-panel-head">
+            <div>
+              <h3>{{ $t('routeDetail.exactModels') }}</h3>
+              <p class="section-desc">{{ $t('routeDetail.exactModelsEditorDesc') }}</p>
+            </div>
+            <span class="badge badge-muted">{{ configuredExactModels.length }}</span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table compact-table">
+              <thead>
+                <tr>
+                  <th>{{ $t('routeDetail.modelCol') }}</th>
+                  <th>{{ $t('routeDetail.upstreamsCol') }}</th>
+                  <th>{{ $t('routeDetail.promptCol') }}</th>
+                  <th class="table-actions-col">{{ $t('common.actions') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="model in configuredExactModels" :key="model.name">
+                  <td><code>{{ model.name }}</code></td>
+                  <td>{{ formatTargets(model.targets) }}</td>
+                  <td><pre class="prompt-text">{{ model.prompt_enabled ? model.system_prompt || '-' : '-' }}</pre></td>
+                  <td class="table-actions-cell">
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      type="button"
+                      @click="focusExactModel(model.name)"
+                    >
+                      {{ $t('common.edit') }}
+                    </button>
+                    <button
+                      class="btn btn-danger btn-sm"
+                      type="button"
+                      @click="removeExactModel(model.name)"
+                    >
+                      {{ $t('common.delete') }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="editor-panel panel">
+          <div class="section-head">
+            <div>
+              <h3>{{ $t('routeDetail.configEditor') }}</h3>
+              <p class="section-desc">{{ $t('routeDetail.protocolRouteHint') }}</p>
+            </div>
+            <router-link
+              v-if="effectivePrefix"
+              :to="{ path: '/tool-hooks', query: { route: effectivePrefix } }"
+              class="btn btn-secondary btn-sm"
+            >
+              {{ $t('routeDetail.editHooks') }}
+            </router-link>
           </div>
 
-          <div class="field-row">
-            <label class="field-label">{{ $t('routeDetail.protocol') }}</label>
-            <select v-model="routeConfig.protocol" class="form-input">
-              <option value="" disabled>{{ $t('routeDetail.selectProtocol') }}</option>
-              <option value="chat">chat</option>
-              <option value="responses">responses</option>
-              <option value="anthropic">anthropic</option>
-            </select>
-            <span class="field-hint">{{ $t('routeDetail.protocolHint') }}</span>
+          <div class="editor-grid">
+            <div class="field-row">
+              <label class="field-label">{{ $t('routeDetail.prefix') }}</label>
+              <input
+                v-model="editablePrefix"
+                class="form-input"
+                :readonly="!isCreate"
+                :placeholder="$t('routeDetail.prefixPlaceholder')"
+                spellcheck="false"
+              />
+              <span class="field-hint">{{ $t('routeDetail.prefixHint') }}</span>
+            </div>
+
+            <div class="field-row">
+              <label class="field-label">{{ $t('routeDetail.protocol') }}</label>
+              <select v-model="routeConfig.protocol" class="form-input">
+                <option v-for="option in routeProtocolOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+              <span class="field-hint">{{ $t('routeDetail.protocolLockedHint') }}</span>
+            </div>
           </div>
-        </div>
 
-        <RouteModelsEditor
-          :exact-models="routeConfig.exact_models"
-          :wildcard-models="routeConfig.wildcard_models"
-          :provider-map="providerMap"
-          :provider-model-map="providerModelMap"
-          :route-protocol="routeConfig.protocol"
-          @update:exactModels="routeConfig.exact_models = $event"
-          @update:wildcardModels="routeConfig.wildcard_models = $event"
-        />
+          <RouteModelsEditor
+            ref="modelsEditorRef"
+            :route-protocol="routeConfig.protocol"
+            :exact-models="routeConfig.exact_models"
+            :wildcard-models="routeConfig.wildcard_models"
+            :provider-map="providerMap"
+            :provider-model-map="providerModelMap"
+            @update:exactModels="routeConfig.exact_models = $event"
+            @update:wildcardModels="routeConfig.wildcard_models = $event"
+          />
 
-        <div class="editor-actions">
-          <button
-            class="btn btn-primary"
-            :disabled="busy || (configSource && !configSource.source_type?.file)"
-            @click="saveAndApply"
-          >
-            {{
-              busy
-                ? waitingAlive
-                  ? $t('config.waitingService', { n: waitingElapsed })
-                  : $t('routeDetail.saving')
-                : $t('routeDetail.saveApply')
-            }}
-          </button>
-          <button
-            v-if="!isCreate"
-            class="btn btn-danger"
-            :disabled="busy || (configSource && !configSource.source_type?.file)"
-            @click="deleteRoute"
-          >
-            {{ $t('routeDetail.deleteRoute') }}
-          </button>
-        </div>
-      </section>
+          <div class="editor-actions">
+            <button
+              class="btn btn-primary"
+              :disabled="busy || (configSource && !configSource.source_type?.file)"
+              @click="saveAndApply"
+            >
+              {{
+                busy
+                  ? waitingAlive
+                    ? $t('config.waitingService', { n: waitingElapsed })
+                    : $t('routeDetail.saving')
+                  : $t('routeDetail.saveApply')
+              }}
+            </button>
+            <button
+              v-if="!isCreate"
+              class="btn btn-danger"
+              :disabled="busy || (configSource && !configSource.source_type?.file)"
+              @click="deleteRoute"
+            >
+              {{ $t('routeDetail.deleteRoute') }}
+            </button>
+          </div>
+        </section>
 
-      <section v-if="detail" class="info-section">
-        <h3>{{ $t('routeDetail.basicInfo') }}</h3>
-        <table class="info-table">
-          <tr><td>{{ $t('routeDetail.prefix') }}</td><td><code>{{ detail.prefix }}</code></td></tr>
-          <tr><td>{{ $t('routeDetail.protocol') }}</td><td><code>{{ detail.protocol || '-' }}</code></td></tr>
-          <tr><td>{{ $t('routeDetail.hookCount') }}</td><td>{{ detail.hook_count || 0 }}</td></tr>
-        </table>
-      </section>
+        <section v-if="configuredWildcardModels.length > 0" class="detail-panel panel">
+          <div class="detail-panel-head">
+            <div>
+              <h3>{{ $t('routeDetail.wildcardModels') }}</h3>
+              <p class="section-desc">{{ $t('routeDetail.wildcardModelsEditorDesc') }}</p>
+            </div>
+            <span class="badge badge-muted">{{ configuredWildcardModels.length }}</span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table compact-table">
+              <thead>
+                <tr>
+                  <th>{{ $t('routeDetail.patternCol') }}</th>
+                  <th>{{ $t('routeDetail.providersCol') }}</th>
+                  <th>{{ $t('routeDetail.promptCol') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="model in configuredWildcardModels" :key="model.pattern || model.name">
+                  <td><code>{{ model.pattern || model.name }}</code></td>
+                  <td>{{ formatTargets(model.targets) }}</td>
+                  <td><pre class="prompt-text">{{ model.prompt_enabled ? model.system_prompt || '-' : '-' }}</pre></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
 
-      <section v-if="detail && (detail.exact_models || []).length > 0" class="info-section">
-        <h3>{{ $t('routeDetail.exactModels') }}</h3>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>{{ $t('routeDetail.modelCol') }}</th>
-              <th>{{ $t('routeDetail.upstreamsCol') }}</th>
-              <th>{{ $t('routeDetail.promptCol') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="model in detail.exact_models" :key="model.name">
-              <td><code>{{ model.name }}</code></td>
-              <td>{{ (model.upstreams || []).join(', ') || '-' }}</td>
-              <td><pre class="prompt-text">{{ model.system_prompt || '-' }}</pre></td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+      <aside class="detail-rail">
+        <section class="rail-panel panel">
+          <h3>{{ $t('routeDetail.basicInfo') }}</h3>
+          <div class="info-list">
+            <div class="info-item">
+              <span>{{ $t('routeDetail.prefix') }}</span>
+              <code>{{ effectivePrefix || '-' }}</code>
+            </div>
+            <div class="info-item">
+              <span>{{ $t('routeDetail.protocol') }}</span>
+              <code>{{ routeConfig.protocol || '-' }}</code>
+            </div>
+            <div class="info-item">
+              <span>{{ $t('routeDetail.hookCount') }}</span>
+              <strong>{{ routeSummary.hookCount }}</strong>
+            </div>
+            <div class="info-item">
+              <span>{{ $t('routeDetail.requests') }}</span>
+              <strong>{{ formatCount(runtimeSummary.totalRequests) }}</strong>
+            </div>
+            <div class="info-item">
+              <span>{{ $t('routeDetail.avgLatency') }}</span>
+              <strong>{{ formatLatency(runtimeSummary.avgLatencyMs, runtimeSummary.totalRequests) }}</strong>
+            </div>
+          </div>
+        </section>
 
-      <section v-if="detail && (detail.wildcard_models || []).length > 0" class="info-section">
-        <h3>{{ $t('routeDetail.wildcardModels') }}</h3>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>{{ $t('routeDetail.patternCol') }}</th>
-              <th>{{ $t('routeDetail.providersCol') }}</th>
-              <th>{{ $t('routeDetail.promptCol') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="model in detail.wildcard_models" :key="model.pattern || model.name">
-              <td><code>{{ model.pattern || model.name }}</code></td>
-              <td>{{ (model.upstreams || []).join(', ') || '-' }}</td>
-              <td><pre class="prompt-text">{{ model.system_prompt || '-' }}</pre></td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section v-if="detail" class="info-section">
-        <h3>{{ $t('routeDetail.providers', { n: detail.providers.length }) }}</h3>
-        <div v-if="detail.providers.length === 0" class="empty">{{ $t('routeDetail.noProviders') }}</div>
-        <table v-else class="data-table">
-          <thead>
-            <tr>
-              <th>{{ $t('routeDetail.name') }}</th>
-              <th>{{ $t('routeDetail.requests') }}</th>
-              <th>{{ $t('routeDetail.success') }}</th>
-              <th>{{ $t('routeDetail.failure') }}</th>
-              <th>{{ $t('routeDetail.avgLatency') }}</th>
-              <th>{{ $t('routeDetail.status') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="provider in detail.providers" :key="provider.name">
-              <td>
-                <router-link
-                  :to="'/providers/' + encodeURIComponent(provider.name)"
-                  class="resource-link"
-                >
-                  {{ provider.name }}
-                </router-link>
-              </td>
-              <td>{{ provider.total_requests }}</td>
-              <td>{{ provider.success_count }}</td>
-              <td>{{ provider.failure_count }}</td>
-              <td>{{ provider.total_requests > 0 ? provider.avg_latency_ms.toFixed(0) + 'ms' : '-' }}</td>
-              <td>
-                <span v-if="provider.suppressed" class="badge badge-error">{{ $t('common.suppressed') }}</span>
+        <section class="rail-panel panel provider-rail-panel">
+          <div class="detail-panel-head">
+            <div>
+              <h3>{{ $t('routeDetail.providers', { n: providerRailEntries.length }) }}</h3>
+              <p class="section-desc">{{ $t('routeDetail.statusSummary', { suppressed: runtimeSummary.suppressedCount, degraded: runtimeSummary.degradedCount }) }}</p>
+            </div>
+            <span class="badge badge-muted">{{ formatCount(runtimeSummary.totalRequests) }}</span>
+          </div>
+          <div v-if="providerRailEntries.length === 0" class="empty">{{ $t('routeDetail.noProviders') }}</div>
+          <div v-else class="provider-rail-list">
+            <router-link
+              v-for="provider in providerRailEntries"
+              :key="provider.name"
+              :to="'/providers/' + encodeURIComponent(provider.name)"
+              class="provider-card"
+            >
+              <div class="provider-card-top">
+                <span class="provider-card-name">{{ provider.name }}</span>
                 <span
-                  v-else-if="provider.consecutive_failures > 0"
+                  v-if="provider.runtime?.suppressed"
+                  class="badge badge-error"
+                >
+                  {{ $t('common.suppressed') }}
+                </span>
+                <span
+                  v-else-if="provider.runtime?.consecutive_failures > 0"
                   class="badge badge-warn"
                 >
-                  {{ $t('routeDetail.failures', { n: provider.consecutive_failures }) }}
+                  {{ $t('routeDetail.failures', { n: provider.runtime.consecutive_failures }) }}
                 </span>
-                <span v-else class="badge badge-ok">{{ $t('common.ok') }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
+                <span v-else-if="provider.runtime" class="badge badge-ok">{{ $t('common.ok') }}</span>
+                <span v-else class="badge badge-muted">{{ $t('common.noData') }}</span>
+              </div>
+              <div class="provider-card-metrics">
+                <span>{{ $t('routeDetail.requests') }} {{ formatCount(provider.runtime?.total_requests) }}</span>
+                <span>{{ $t('routeDetail.success') }} {{ formatCount(provider.runtime?.success_count) }}</span>
+                <span>{{ $t('routeDetail.failure') }} {{ formatCount(provider.runtime?.failure_count) }}</span>
+              </div>
+              <div class="provider-card-metrics">
+                <span>{{ $t('routeDetail.failover') }} {{ formatCount(provider.runtime?.failover_count) }}</span>
+                <span>{{ $t('routeDetail.preStream') }} {{ formatCount(provider.runtime?.pre_stream_errors) }}</span>
+                <span>{{ $t('routeDetail.inStream') }} {{ formatCount(provider.runtime?.in_stream_errors) }}</span>
+              </div>
+              <div class="provider-card-footer">
+                <span>{{ $t('routeDetail.avgLatency') }} {{ formatLatency(provider.runtime?.avg_latency_ms, provider.runtime?.total_requests) }}</span>
+                <span v-if="provider.runtime?.manual_suppressed">{{ $t('providerDetail.manuallySuppressed') }}</span>
+              </div>
+            </router-link>
+          </div>
+        </section>
+      </aside>
     </div>
+
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -201,11 +303,18 @@ import {
   saveConfig,
   validateConfig,
 } from '../api.js'
+import { fmtNum } from '../utils.js'
 import RouteModelsEditor from '../components/RouteModelsEditor.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const routeProtocolOptions = [
+  { value: 'chat', label: t('routeDetail.protocolChat') },
+  { value: 'responses_stateless', label: t('routeDetail.protocolResponsesStateless') },
+  { value: 'responses_stateful', label: t('routeDetail.protocolResponsesStateful') },
+  { value: 'anthropic', label: t('routeDetail.protocolAnthropic') },
+]
 
 const props = defineProps({
   prefix: { type: String, default: '' },
@@ -220,6 +329,7 @@ const configSource = ref(null)
 const configDoc = ref(null)
 const providerDiscoveredModels = ref({})
 const routeConfig = ref(createEmptyRouteConfig())
+const modelsEditorRef = ref(null)
 const editablePrefix = ref('')
 const applying = ref(false)
 const deleting = ref(false)
@@ -236,6 +346,12 @@ const sourceProviderName = computed(() => {
   if (!isCreate.value) return ''
   const provider = route.query.provider
   return normalizeText(Array.isArray(provider) ? provider[0] : provider)
+})
+const sourceProviderProtocol = computed(() => {
+  if (!isCreate.value) return ''
+  const value = route.query.protocol
+  if (Array.isArray(value)) return normalizeText(value[0])
+  return normalizeText(value)
 })
 const pageTitle = computed(() =>
   isCreate.value ? t('routeDetail.newRouteTitle') : t('routeDetail.breadcrumbRoute', { prefix: effectivePrefix.value }),
@@ -255,6 +371,106 @@ const providerModelMap = computed(() => {
   }
   return out
 })
+const routeProviderNames = computed(() => {
+  const names = new Set()
+  for (const cfg of Object.values(routeConfig.value?.exact_models || {})) {
+    for (const upstream of cfg?.upstreams || []) {
+      const provider = normalizeText(upstream?.provider)
+      if (provider) names.add(provider)
+    }
+  }
+  for (const cfg of Object.values(routeConfig.value?.wildcard_models || {})) {
+    for (const provider of cfg?.providers || []) {
+      const normalized = normalizeText(provider)
+      if (normalized) names.add(normalized)
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b))
+})
+const runtimeProviders = computed(() => detail.value?.providers || [])
+const runtimeProviderMap = computed(() => {
+  const out = {}
+  for (const provider of runtimeProviders.value) {
+    out[provider.name] = provider
+  }
+  return out
+})
+const providerRailEntries = computed(() =>
+  uniqueSortedTextValues([
+    ...routeProviderNames.value,
+    ...runtimeProviders.value.map((provider) => provider.name),
+  ]).map((name) => ({
+    name,
+    runtime: runtimeProviderMap.value[name] || null,
+  })),
+)
+const configuredExactModels = computed(() =>
+  Object.entries(routeConfig.value?.exact_models || {})
+    .map(([name, cfg]) => ({
+      name,
+      prompt_enabled: !!cfg?.prompt_enabled,
+      system_prompt: cfg?.system_prompt || '',
+      targets: (cfg?.upstreams || []).map((upstream) => {
+        const provider = normalizeText(upstream?.provider)
+        const model = normalizeText(upstream?.model) || name
+        return provider ? `${provider}:${model}` : model
+      }),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+)
+const configuredWildcardModels = computed(() =>
+  Object.entries(routeConfig.value?.wildcard_models || {})
+    .map(([pattern, cfg]) => ({
+      pattern,
+      name: pattern,
+      prompt_enabled: !!cfg?.prompt_enabled,
+      system_prompt: cfg?.system_prompt || '',
+      targets: dedupeOrderedTextValues(cfg?.providers || []),
+    }))
+    .sort((a, b) => a.pattern.localeCompare(b.pattern)),
+)
+const runtimeSummary = computed(() => {
+  let totalRequests = 0
+  let successCount = 0
+  let failureCount = 0
+  let failoverCount = 0
+  let preStreamErrors = 0
+  let inStreamErrors = 0
+  let weightedLatencyMs = 0
+  let suppressedCount = 0
+  let degradedCount = 0
+
+  for (const provider of runtimeProviders.value) {
+    const requests = Number(provider?.total_requests || 0)
+    totalRequests += requests
+    successCount += Number(provider?.success_count || 0)
+    failureCount += Number(provider?.failure_count || 0)
+    failoverCount += Number(provider?.failover_count || 0)
+    preStreamErrors += Number(provider?.pre_stream_errors || 0)
+    inStreamErrors += Number(provider?.in_stream_errors || 0)
+    weightedLatencyMs += Number(provider?.avg_latency_ms || 0) * requests
+    if (provider?.suppressed) suppressedCount += 1
+    else if (provider?.consecutive_failures > 0) degradedCount += 1
+  }
+
+  return {
+    totalRequests,
+    successCount,
+    failureCount,
+    failoverCount,
+    preStreamErrors,
+    inStreamErrors,
+    avgLatencyMs: totalRequests > 0 ? weightedLatencyMs / totalRequests : 0,
+    suppressedCount,
+    degradedCount,
+  }
+})
+const routeSummary = computed(() => ({
+  exactCount: Object.keys(routeConfig.value?.exact_models || {}).length,
+  wildcardCount: Object.keys(routeConfig.value?.wildcard_models || {}).length,
+  providerCount: routeProviderNames.value.length,
+  hookCount: detail.value?.hook_count || 0,
+}))
 const busy = computed(() => applying.value || deleting.value)
 
 function normalizeRoutePrefix(prefix) {
@@ -279,31 +495,44 @@ function uniqueSortedTextValues(values) {
   return out.sort((a, b) => a.localeCompare(b))
 }
 
+function dedupeOrderedTextValues(values) {
+  const out = []
+  const seen = new Set()
+  for (const value of values || []) {
+    const normalized = normalizeText(value)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-function supportedRouteProtocols(providerProtocol) {
-  if (providerProtocol === 'anthropic') return ['anthropic']
-  if (['openai', 'qwen', 'copilot'].includes(providerProtocol)) return ['chat', 'responses']
-  return []
-}
+function supportedRouteProtocols(provider) {
+  const family = normalizeText(provider?.family || provider?.protocol)
+  let protocols = []
+  if (family === 'anthropic') protocols = ['chat', 'anthropic']
+  else if (family === 'openai') protocols = ['chat', 'responses_stateless', 'responses_stateful']
+  else if (['qwen', 'copilot', 'ollama'].includes(family)) protocols = ['chat']
 
-function preferredRouteProtocol(providerProtocol) {
-  return supportedRouteProtocols(providerProtocol)[0] || 'chat'
+  const enabled = new Set((provider?.enabled_protocols || []).map((value) => normalizeText(value)))
+  const disabled = new Set((provider?.disabled_protocols || []).map((value) => normalizeText(value)))
+  return protocols.filter((protocol) => (enabled.size === 0 || enabled.has(protocol)) && !disabled.has(protocol))
 }
 
 function defaultProviderForProtocol(protocol, providerConfigMap = {}) {
   for (const [name, provider] of Object.entries(providerConfigMap || {})) {
-    if (!protocol || supportedRouteProtocols(provider?.protocol || 'openai').includes(protocol)) {
+    if (supportedRouteProtocols(provider).includes(protocol)) {
       return name
     }
   }
   return ''
 }
 
-function createEmptyRouteConfig(providerConfigMap = {}) {
-  const protocol = 'chat'
+function createEmptyRouteConfig(providerConfigMap = {}, protocol = 'chat') {
   const provider = defaultProviderForProtocol(protocol, providerConfigMap)
   return {
     protocol,
@@ -312,22 +541,28 @@ function createEmptyRouteConfig(providerConfigMap = {}) {
   }
 }
 
-function createProviderSeededRouteConfig(providerName, providerConfigMap = {}, discoveredModelMap = {}) {
+function createProviderSeededRouteConfig(
+  providerName,
+  providerConfigMap = {},
+  discoveredModelMap = {},
+  preferredProtocol = '',
+) {
   const provider = providerConfigMap?.[providerName]
   if (!provider) {
     throw new Error(t('routeDetail.sourceProviderMissing', { name: providerName }))
   }
 
-  const protocol = preferredRouteProtocol(provider?.protocol || 'openai')
+  const supportedProtocols = supportedRouteProtocols(provider)
+  const protocol = supportedProtocols.includes(preferredProtocol)
+    ? preferredProtocol
+    : (supportedProtocols[0] || 'chat')
   const models = uniqueSortedTextValues([
     ...(provider?.models || []),
     ...(discoveredModelMap?.[providerName] || []),
   ])
   const exactModels = {}
   for (const model of models) {
-    exactModels[model] = {
-      upstreams: [{ provider: providerName, model }],
-    }
+    exactModels[model] = { upstreams: [{ provider: providerName, model }] }
   }
 
   return {
@@ -338,30 +573,75 @@ function createProviderSeededRouteConfig(providerName, providerConfigMap = {}, d
 }
 
 function normalizeEditableRoute(route) {
-  const normalized = createEmptyRouteConfig(providerMap.value)
-  normalized.protocol = typeof route?.protocol === 'string' ? route.protocol : ''
+  const protocol = normalizeText(route?.protocol) || 'chat'
+  const normalized = createEmptyRouteConfig(providerMap.value, protocol)
+  normalized.protocol = protocol
   normalized.exact_models = deepClone(route?.exact_models || {})
   normalized.wildcard_models = deepClone(route?.wildcard_models || {})
   if (
     Object.keys(normalized.exact_models).length === 0 &&
-    Object.keys(normalized.wildcard_models).length === 0 &&
-    normalized.protocol
+    Object.keys(normalized.wildcard_models).length === 0
   ) {
-    const provider = defaultProviderForProtocol(normalized.protocol, providerMap.value)
+    const provider = defaultProviderForProtocol(protocol, providerMap.value)
     normalized.wildcard_models = provider ? { '*': { providers: [provider] } } : {}
   }
   return normalized
 }
 
+function sanitizeRouteModelsForProtocol(protocol, routeModelConfig = {}) {
+  const nextExactModels = {}
+  for (const [name, cfg] of Object.entries(routeModelConfig.exact_models || {})) {
+    const promptEnabled = !!cfg?.prompt_enabled
+    const upstreams = []
+    const seenUpstreams = new Set()
+    for (const upstream of cfg?.upstreams || []) {
+      const nextUpstream = {
+        provider: normalizeText(upstream?.provider),
+        model: normalizeText(upstream?.model),
+      }
+      if (!nextUpstream.provider && !nextUpstream.model) continue
+      const key = JSON.stringify(nextUpstream)
+      if (seenUpstreams.has(key)) continue
+      seenUpstreams.add(key)
+      upstreams.push(nextUpstream)
+    }
+    const nextCfg = {
+      upstreams: protocol === 'responses_stateful' ? upstreams.slice(0, 1) : upstreams,
+    }
+    if (promptEnabled) {
+      nextCfg.prompt_enabled = true
+      if (cfg?.system_prompt) nextCfg.system_prompt = cfg.system_prompt
+    }
+    nextExactModels[name] = nextCfg
+  }
+
+  const nextWildcardModels = {}
+  for (const [pattern, cfg] of Object.entries(routeModelConfig.wildcard_models || {})) {
+    const promptEnabled = !!cfg?.prompt_enabled
+    const providers = dedupeOrderedTextValues(cfg?.providers || [])
+    const nextCfg = {
+      providers: protocol === 'responses_stateful' ? providers.slice(0, 1) : providers,
+    }
+    if (promptEnabled) {
+      nextCfg.prompt_enabled = true
+      if (cfg?.system_prompt) nextCfg.system_prompt = cfg.system_prompt
+    }
+    nextWildcardModels[pattern] = nextCfg
+  }
+
+  return {
+    exact_models: nextExactModels,
+    wildcard_models: nextWildcardModels,
+  }
+}
+
 function buildRoutePayload(existingRoute = {}) {
   const nextRoute = deepClone(existingRoute || {})
-  nextRoute.protocol = routeConfig.value.protocol
-  nextRoute.exact_models = deepClone(routeConfig.value.exact_models || {})
-  nextRoute.wildcard_models = deepClone(routeConfig.value.wildcard_models || {})
+  nextRoute.protocol = normalizeText(routeConfig.value.protocol) || 'chat'
+  const normalized = sanitizeRouteModelsForProtocol(nextRoute.protocol, routeConfig.value)
+  nextRoute.exact_models = normalized.exact_models
+  nextRoute.wildcard_models = normalized.wildcard_models
   nextRoute.hooks = deepClone(existingRoute?.hooks || [])
-  delete nextRoute.models
-  delete nextRoute.providers
-  delete nextRoute.system_prompts
   return nextRoute
 }
 
@@ -373,6 +653,40 @@ function extractProviderModelIDs(models) {
       return ''
     }),
   )
+}
+
+function formatTargets(targets) {
+  return (targets || []).join(', ') || '-'
+}
+
+function formatCount(value) {
+  return fmtNum(Number(value || 0))
+}
+
+function formatLatency(latencyMs, totalRequests) {
+  return Number(totalRequests || 0) > 0 ? `${Number(latencyMs || 0).toFixed(0)}ms` : '-'
+}
+
+async function focusExactModel(modelName) {
+  await nextTick()
+  await modelsEditorRef.value?.focusExactModel?.(modelName)
+}
+
+function removeExactModel(modelName) {
+  const normalized = normalizeText(modelName)
+  if (!normalized) return
+  if (!window.confirm(t('routeDetail.confirmDeleteExactModel', { name: normalized }))) return
+
+  const nextExactModels = {}
+  for (const [name, cfg] of Object.entries(routeConfig.value?.exact_models || {})) {
+    if (name === normalized) continue
+    nextExactModels[name] = deepClone(cfg)
+  }
+
+  routeConfig.value = {
+    ...deepClone(routeConfig.value),
+    exact_models: nextExactModels,
+  }
 }
 
 async function loadProviderModelSuggestions(providerConfigMap = {}) {
@@ -416,6 +730,7 @@ async function loadConfigDoc() {
         sourceProviderName.value,
         cfg.provider || {},
         providerDiscoveredModels.value,
+        sourceProviderProtocol.value,
       )
       if (Object.keys(routeConfig.value.exact_models || {}).length === 0) {
         setMessage(
@@ -588,7 +903,7 @@ function startStream() {
 }
 
 watch(
-  () => [props.prefix, props.create, route.query.provider],
+  () => [props.prefix, props.create, route.query.provider, route.query.protocol],
   () => {
     message.value = ''
     if (stopStream) {
@@ -613,26 +928,149 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.route-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.route-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  padding: 18px 20px;
+  align-items: start;
+}
+
+.route-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-text-3);
+}
+
+.route-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.route-title {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.route-title code {
+  font-size: inherit;
+  padding: 0;
+  background: transparent;
+}
+
+.route-overview-desc {
+  margin-top: 8px;
+  max-width: 72ch;
+  color: var(--c-text-2);
+}
+
+.route-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-stat {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: linear-gradient(180deg, var(--c-surface) 0%, var(--c-surface-soft) 100%);
+}
+
+.overview-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-text-3);
+}
+
+.overview-stat strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--c-text);
+}
+
+.route-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.workbench-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.editor-panel,
+.rail-panel,
+.detail-panel {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.editor-panel {
+  padding: 18px;
+}
+
+.detail-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 18px;
+}
+
+.rail-panel,
+.detail-panel {
+  padding: 16px;
+}
+
+.rail-panel h3,
+.detail-panel h3 {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
 .section-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .section-desc {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--c-text-2);
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .editor-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .field-row {
@@ -653,28 +1091,211 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
+.info-list {
+  display: grid;
+  gap: 10px;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.info-item strong {
+  color: var(--c-text);
+}
+
+.provider-rail-list {
+  display: grid;
+  gap: 10px;
+}
+
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--c-surface-soft) 78%, var(--c-surface)) 0%, var(--c-surface) 100%);
+  text-decoration: none;
+  color: inherit;
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+
+.provider-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  border-color: color-mix(in srgb, var(--c-primary) 24%, var(--c-border));
+  text-decoration: none;
+}
+
+.provider-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.provider-card-name {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.provider-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  font-size: 11px;
+  color: var(--c-text-2);
+}
+
+.provider-card-metrics span,
+.provider-card-footer span {
+  min-width: 0;
+}
+
+.provider-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+.exact-summary-panel {
+  scroll-margin-top: 18px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.detail-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.detail-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.compact-table th,
+.compact-table td {
+  padding: 8px 10px;
+  vertical-align: top;
+}
+
+.table-head-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 84px;
+}
+
+.table-head-metric span {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.table-head-metric strong {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--c-text);
+}
+
+.table-actions-col {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.table-actions-cell {
+  white-space: nowrap;
+}
+
+.table-actions-cell .btn + .btn {
+  margin-left: 8px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll .data-table {
+  min-width: 640px;
+}
+
 .editor-actions {
   display: flex;
   gap: 10px;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .prompt-text {
   margin: 0;
   white-space: pre-wrap;
-  font-size: 13px;
-  max-height: 200px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 140px;
   overflow-y: auto;
+}
+
+@media (max-width: 1100px) {
+  .route-overview,
+  .route-workbench,
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-rail {
+    position: static;
+  }
 }
 
 @media (max-width: 768px) {
   .section-head,
-  .editor-actions {
+  .editor-actions,
+  .route-title-row {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .route-overview,
+  .editor-panel,
+  .rail-panel,
+  .detail-panel {
+    padding: 14px;
+  }
+
+  .route-overview-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .provider-card-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-card-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

@@ -82,6 +82,22 @@ export function fetchProviderDetail(name) {
 	return apiJSON(`/_admin/api/providers/detail?name=${encodeURIComponent(name)}`);
 }
 
+export function detectProviderProtocols(name) {
+	return apiJSON("/_admin/api/providers/protocols/detect", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name }),
+	});
+}
+
+export function probeProviderModelProtocol(name, model, protocol) {
+	return apiJSON("/_admin/api/providers/protocols/probe", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name, model, protocol }),
+	});
+}
+
 export function validateConfig(config) {
 	return apiJSON("/_admin/api/config/validate", {
 		method: "POST",

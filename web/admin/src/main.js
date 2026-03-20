@@ -2,15 +2,16 @@ import { createApp } from "vue";
 import { createRouter, createWebHistory } from "vue-router";
 import i18n from "./i18n/index.js";
 import App from "./App.vue";
-import Dashboard from "./views/Dashboard.vue";
-import Config from "./views/Config.vue";
-import Logs from "./views/Logs.vue";
-import ProviderDetail from "./views/ProviderDetail.vue";
-import RouteDetail from "./views/RouteDetail.vue";
-import Routes from "./views/Routes.vue";
-import Providers from "./views/Providers.vue";
-import Chat from "./views/Chat.vue";
-import ToolHooks from "./views/ToolHooks.vue";
+
+const Dashboard = () => import("./views/Dashboard.vue");
+const Config = () => import("./views/Config.vue");
+const Logs = () => import("./views/Logs.vue");
+const ProviderDetail = () => import("./views/ProviderDetail.vue");
+const RouteDetail = () => import("./views/RouteDetail.vue");
+const Routes = () => import("./views/Routes.vue");
+const Providers = () => import("./views/Providers.vue");
+const Chat = () => import("./views/Chat.vue");
+const ToolHooks = () => import("./views/ToolHooks.vue");
 
 const router = createRouter({
 	history: createWebHistory("/_admin/"),

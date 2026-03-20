@@ -28,11 +28,15 @@
             <button
               class="card-corner-action"
               :title="$t('providers.createRouteFromModels')"
-              @click.stop="createRouteFromProvider(p.name)"
+              @click.stop="createRouteFromProvider(p)"
             >
               {{ $t('providers.createRouteFromModels') }}
             </button>
           </template>
+          <div>
+            {{ $t('providers.supportedProtocols') }}:
+            {{ providerSupportedProtocolsText(p) || '-' }}
+          </div>
           <div>{{ $t('providers.models') }}: {{ p.model_count }}</div>
           <div>{{ $t('providers.requests') }}: {{ fmtNum(p.total_requests) }} ({{ fmtNum(p.success_count) }} ok / {{ fmtNum(p.failure_count) }} fail)</div>
           <div v-if="p.total_requests > 0">
@@ -112,9 +116,19 @@ const filtered = computed(() => {
   if (!q) return providers
   return providers.filter(p =>
     p.name.toLowerCase().includes(q) ||
-    providerStatus(p).includes(q)
+    providerStatus(p).includes(q) ||
+    providerSupportedProtocolsText(p).toLowerCase().includes(q)
   )
 })
+
+function providerSupportedProtocolsText(provider) {
+  const protocols = Array.isArray(provider?.configured_protocols) && provider.configured_protocols.length > 0
+    ? provider.configured_protocols
+    : provider?.supported_protocols
+  return Array.isArray(protocols) && protocols.length > 0
+    ? protocols.join(', ')
+    : ''
+}
 
 async function ping(name) {
   pinging[name] = true
@@ -145,10 +159,19 @@ async function unsuppressProvider(name) {
   }
 }
 
-function createRouteFromProvider(name) {
+function createRouteFromProvider(provider) {
+  const protocols = Array.isArray(provider?.configured_protocols) && provider.configured_protocols.length > 0
+    ? provider.configured_protocols
+    : provider?.supported_protocols
+  const protocol = Array.isArray(protocols) && protocols.length > 0
+    ? protocols[0]
+    : ''
   router.push({
     path: '/routes/new',
-    query: { provider: name },
+    query: {
+      provider: provider?.name || '',
+      protocol,
+    },
   })
 }
 

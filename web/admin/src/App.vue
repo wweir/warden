@@ -25,11 +25,17 @@ import NavBar from './components/NavBar.vue'
   --c-danger-bg: #fee2e2;
   --c-bg: #f1f5f9;
   --c-surface: #ffffff;
+  --c-surface-soft: #f8fafc;
+  --c-surface-tint: #f8fbff;
+  --c-accent-soft: #eef2ff;
+  --c-accent-text: #3730a3;
+  --c-success-soft: #dcfce7;
+  --c-success-text: #166534;
   --c-border: #e2e8f0;
   --c-border-light: #f1f5f9;
   --c-text: #1e293b;
   --c-text-2: #475569;
-  --c-text-3: #94a3b8;
+  --c-text-3: #64748b;
   --radius: 8px;
   --radius-sm: 6px;
   --radius-lg: 12px;
@@ -96,6 +102,7 @@ code {
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 7px 16px;
   border: 1px solid transparent;
@@ -103,9 +110,15 @@ code {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition);
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition),
+    color var(--transition),
+    opacity var(--transition);
   line-height: 1.4;
   white-space: nowrap;
+  min-height: 36px;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--c-primary); color: #fff; }
@@ -121,7 +134,7 @@ code {
 }
 .btn-danger { background: var(--c-danger); color: #fff; }
 .btn-danger:not(:disabled):hover { background: #dc2626; }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; min-height: 32px; }
 .btn-icon {
   background: none;
   border: 1px solid var(--c-border);
@@ -130,7 +143,16 @@ code {
   padding: 4px 8px;
   font-size: 14px;
   line-height: 1;
-  transition: all var(--transition);
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition),
+    color var(--transition);
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .btn-icon:hover { background: var(--c-border-light); }
 
@@ -239,7 +261,7 @@ select.form-input { cursor: pointer; }
 .resource-link:hover { text-decoration: underline; }
 
 /* ---- Empty state ---- */
-.empty { color: var(--c-text-3); font-size: 13px; font-style: italic; }
+.empty { color: var(--c-text-3); font-size: 13px; }
 
 /* ---- Code block ---- */
 .code-block {
@@ -323,6 +345,16 @@ select.form-input { cursor: pointer; }
   .btn {
     padding: 8px 14px;
     font-size: 13px;
+    min-height: 40px;
+  }
+
+  .btn-sm {
+    min-height: 40px;
+  }
+
+  .btn-icon {
+    min-width: 40px;
+    min-height: 40px;
   }
 
   .code-block {
