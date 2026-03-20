@@ -87,6 +87,7 @@ type ProviderConfig struct {
 	EnabledProtocols  []string          `json:"enabled_protocols" usage:"Optional allowlist of externally exposed route protocols for this provider family"`
 	DisabledProtocols []string          `json:"disabled_protocols" usage:"Optional denylist of externally exposed route protocols for this provider family"`
 	ResponsesToChat   bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	AnthropicToChat   bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex

@@ -47,11 +47,15 @@ func CandidateRouteProtocols(prov *ProviderConfig) []string {
 	case ProviderProtocolAnthropic:
 		return []string{RouteProtocolChat, RouteProtocolAnthropic}
 	case ProviderProtocolOpenAI:
-		return []string{
+		candidates := []string{
 			RouteProtocolChat,
 			RouteProtocolResponsesStateless,
 			RouteProtocolResponsesStateful,
 		}
+		if prov.AnthropicToChat {
+			candidates = append(candidates, RouteProtocolAnthropic)
+		}
+		return candidates
 	case ProviderProtocolQwen, ProviderProtocolCopilot, ProviderProtocolOllama:
 		return []string{RouteProtocolChat}
 	default:

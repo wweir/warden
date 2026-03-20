@@ -169,6 +169,58 @@ func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 	}
 }
 
+func TestValidateAnthropicToChatRequiresOpenAI(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"anthropic": {
+				URL:             "https://api.anthropic.com/v1",
+				Protocol:        "anthropic",
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/anthropic": {
+				Protocol: RouteProtocolAnthropic,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": testWildcardModel(RouteProtocolAnthropic, "anthropic"),
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "anthropic_to_chat requires protocol 'openai'") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAnthropicRouteAllowsOpenAIProviderWhenAnthropicToChatEnabled(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {
+				URL:             "https://api.openai.com/v1",
+				Protocol:        "openai",
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/anthropic": {
+				Protocol: RouteProtocolAnthropic,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"claude-compatible": testExactModel(RouteProtocolAnthropic, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateStatefulRouteRejectsResponsesToChatProvider(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
@@ -401,6 +453,16 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 			name:     "anthropic",
 			provider: &ProviderConfig{Protocol: "anthropic"},
 			want:     []string{RouteProtocolChat, RouteProtocolAnthropic},
+		},
+		{
+			name:     "openai anthropic_to_chat",
+			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
+			want: []string{
+				RouteProtocolChat,
+				RouteProtocolResponsesStateless,
+				RouteProtocolResponsesStateful,
+				RouteProtocolAnthropic,
+			},
 		},
 		{
 			name:     "ollama",

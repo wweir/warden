@@ -34,12 +34,13 @@
 - route model 的额外提示词由模型自身的 `prompt_enabled` + `system_prompt` 表达
 - `route.exact_models.<name>` 直接声明 `upstreams`
 - `route.wildcard_models.<pattern>` 直接声明 `providers`
-- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_*`，`anthropic => chat + anthropic`，`qwen/copilot/ollama => chat`
+- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_*`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`qwen/copilot/ollama => chat`
 - provider 可以通过 `enabled_protocols` / `disabled_protocols` 进一步收窄自己的有效协议面
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
 - `responses_stateless` 明确拒绝 `previous_response_id`
 - `responses_stateful` 接受 `previous_response_id`，但会禁用 failover，并绕过 `responses_to_chat`
 - `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
 - 启用 `responses_to_chat` 的 provider 不能被 `responses_stateful` route 引用，因为该桥接模式不支持 `previous_response_id`
+- `anthropic_to_chat` 只允许配置在 `openai` provider 上，并且只对 `route.protocol=anthropic` 的 `/messages` 入口生效
 - `route` 的运行时派生字段只在 `Validate()` 后可依赖
 - `mcp` 与 `ssh` 配置块已移除，不再参与配置模型
