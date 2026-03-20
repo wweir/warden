@@ -93,6 +93,12 @@ func (g *Gateway) registerAdminRoutes(router *httprouter.Router) {
 	mux.HandleFunc("POST /api/providers/health", func(w http.ResponseWriter, r *http.Request) {
 		g.handleProviderHealth(w, r, nil)
 	})
+	mux.HandleFunc("POST /api/providers/protocols/detect", func(w http.ResponseWriter, r *http.Request) {
+		g.handleProviderProtocolDetect(w, r, nil)
+	})
+	mux.HandleFunc("POST /api/providers/protocols/probe", func(w http.ResponseWriter, r *http.Request) {
+		g.handleProviderModelProtocolProbe(w, r, nil)
+	})
 	mux.HandleFunc("GET /api/providers/detail", func(w http.ResponseWriter, r *http.Request) {
 		g.handleProviderDetail(w, r, nil)
 	})
@@ -187,6 +193,13 @@ func (g *Gateway) handleAdminStatus(w http.ResponseWriter, r *http.Request, _ ht
 }
 
 func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
+	type providerInfo struct {
+		sel.ProviderStatus
+		Protocol            string   `json:"protocol"`
+		CandidateProtocols  []string `json:"candidate_protocols"`
+		SupportedProtocols  []string `json:"supported_protocols"`
+		ConfiguredProtocols []string `json:"configured_protocols"`
+	}
 	type routeInfo struct {
 		Prefix    string   `json:"prefix"`
 		Protocol  string   `json:"protocol"`
@@ -195,13 +208,28 @@ func (g *Gateway) writeStatusSSE(w http.ResponseWriter) {
 		HookCount int      `json:"hook_count"`
 	}
 
-	providers := g.selector.ProviderStatuses()
+	statuses := g.selector.ProviderStatuses()
+	providers := make([]providerInfo, 0, len(statuses))
+	for _, status := range statuses {
+		provCfg := g.cfg.Provider[status.Name]
+		if provCfg == nil {
+			providers = append(providers, providerInfo{ProviderStatus: status})
+			continue
+		}
+		providers = append(providers, providerInfo{
+			ProviderStatus:      status,
+			Protocol:            provCfg.Protocol,
+			CandidateProtocols:  config.CandidateRouteProtocols(provCfg),
+			SupportedProtocols:  config.SupportedRouteProtocols(provCfg),
+			ConfiguredProtocols: config.SupportedRouteProtocols(provCfg),
+		})
+	}
 
 	var routes []routeInfo
 	for prefix, r := range g.cfg.Route {
 		routes = append(routes, routeInfo{
 			Prefix:    prefix,
-			Protocol:  r.Protocol,
+			Protocol:  r.ConfiguredProtocol(),
 			Providers: r.ProviderNames(),
 			Models:    r.PublicModels(),
 			HookCount: len(r.Hooks),
@@ -303,12 +331,16 @@ func (g *Gateway) handleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 		currentData, _ := json.Marshal(g.cfg)
 		var currentMap map[string]any
 		if json.Unmarshal(currentData, &currentMap) == nil {
-			// inject real secret values since json.Marshal masks them via Secret.MarshalText
+			// inject plaintext secret values so masked fields can be restored and
+			// then normalized back to the storage format exactly once.
 			injectSecrets(currentMap, g.cfg)
 			sanitizeConfigJSON(newMap, currentMap)
 		}
 		// drop api_key for OAuth-based providers (qwen/copilot use config_dir credentials)
 		dropOAuthProviderAPIKey(newMap)
+		normalizeSecretConfigJSON(newMap)
+		normalizeProviderConfigJSON(newMap)
+		normalizePromptConfigJSON(newMap)
 	}
 
 	yamlData, err := yaml.Marshal(cfgMap)
@@ -407,8 +439,8 @@ func writeSSEComment(w http.ResponseWriter, comment string) {
 	fmt.Fprintf(w, ": %s\n\n", comment)
 }
 
-// injectSecrets writes real secret values from cfg into cfgMap,
-// since json.Marshal masks SecretString fields as "***".
+// injectSecrets writes plaintext secret values from cfg into cfgMap so masked
+// fields can be restored before a single storage-format normalization pass.
 func injectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 	if cfg.AdminPassword != "" {
 		cfgMap["admin_password"] = cfg.AdminPassword.Value()
@@ -461,6 +493,77 @@ func dropOAuthProviderAPIKey(cfgMap map[string]any) {
 		proto, _ := pm["protocol"].(string)
 		if proto == "qwen" || proto == "copilot" {
 			delete(pm, "api_key")
+		}
+	}
+}
+
+func normalizeSecretConfigJSON(cfgMap map[string]any) {
+	if adminPassword, ok := cfgMap["admin_password"].(string); ok && adminPassword != "" {
+		cfgMap["admin_password"] = config.EncodeSecret(adminPassword)
+	}
+
+	if apiKeysMap, ok := cfgMap["api_keys"].(map[string]any); ok {
+		for name, raw := range apiKeysMap {
+			value, ok := raw.(string)
+			if !ok || value == "" {
+				continue
+			}
+			apiKeysMap[name] = config.EncodeSecret(value)
+		}
+	}
+
+	providerMap, _ := cfgMap["provider"].(map[string]any)
+	for _, raw := range providerMap {
+		pm, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		apiKey, ok := pm["api_key"].(string)
+		if !ok || apiKey == "" {
+			continue
+		}
+		pm["api_key"] = config.EncodeSecret(apiKey)
+	}
+}
+
+func normalizeProviderConfigJSON(cfgMap map[string]any) {
+	providerMap, _ := cfgMap["provider"].(map[string]any)
+	for _, v := range providerMap {
+		pm, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if protocol, ok := pm["protocol"].(string); ok && strings.TrimSpace(protocol) == "" {
+			delete(pm, "protocol")
+		}
+	}
+}
+
+// normalizePromptConfigJSON removes storage-only false prompt flags.
+// Runtime behavior treats missing prompt_enabled + empty system_prompt as disabled,
+// so writing explicit false only creates a more fragile YAML representation.
+func normalizePromptConfigJSON(cfgMap map[string]any) {
+	normalizePromptConfigValue(cfgMap)
+}
+
+func normalizePromptConfigValue(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, child := range typed {
+			normalizePromptConfigValue(child)
+		}
+		promptEnabledRaw, hasPromptEnabled := typed["prompt_enabled"]
+		promptEnabled, ok := promptEnabledRaw.(bool)
+		if !hasPromptEnabled || !ok || promptEnabled {
+			return
+		}
+		systemPrompt, _ := typed["system_prompt"].(string)
+		if strings.TrimSpace(systemPrompt) == "" {
+			delete(typed, "prompt_enabled")
+		}
+	case []any:
+		for _, child := range typed {
+			normalizePromptConfigValue(child)
 		}
 	}
 }
@@ -532,6 +635,9 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 	}
 
 	status := g.selector.ProviderDetail(name)
+	if status == nil {
+		status = &sel.ProviderStatus{}
+	}
 	models := g.selector.ProviderModels(name)
 	if models == nil {
 		models = []json.RawMessage{}
@@ -539,14 +645,21 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":              name,
-		"url":               provCfg.URL,
-		"protocol":          provCfg.Protocol,
-		"timeout":           provCfg.Timeout,
-		"has_api_key":       provCfg.APIKey.Value() != "",
-		"responses_to_chat": provCfg.ResponsesToChat,
-		"models":            models,
-		"status":            status,
+		"name":                  name,
+		"url":                   provCfg.URL,
+		"family":                provCfg.Family,
+		"protocol":              provCfg.Protocol,
+		"candidate_protocols":   config.CandidateRouteProtocols(provCfg),
+		"configured_protocols":  config.SupportedRouteProtocols(provCfg),
+		"supported_protocols":   config.SupportedRouteProtocols(provCfg),
+		"display_protocols":     status.DisplayProtocols,
+		"last_protocol_probe":   status.LastProtocolProbe,
+		"timeout":               provCfg.Timeout,
+		"has_api_key":           provCfg.APIKey.Value() != "",
+		"responses_to_chat":     provCfg.ResponsesToChat,
+		"models":                models,
+		"model_protocol_probes": g.selector.ModelProtocolProbes(name),
+		"status":                status,
 	})
 }
 
@@ -629,40 +742,46 @@ func (g *Gateway) handleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 
 	type routeModelDetail struct {
 		Name          string   `json:"name"`
+		Targets       []string `json:"targets,omitempty"`
+		PromptEnabled bool     `json:"prompt_enabled"`
 		SystemPrompt  string   `json:"system_prompt,omitempty"`
-		UpstreamNames []string `json:"upstreams,omitempty"`
 		Wildcard      bool     `json:"wildcard"`
 		Pattern       string   `json:"pattern,omitempty"`
 	}
 	var exactModels []routeModelDetail
 	for _, name := range route.PublicModels() {
 		matched := route.MatchModel(name)
-		if matched == nil {
+		if matched == nil || matched.Wildcard {
 			continue
 		}
-		row := routeModelDetail{Name: name, SystemPrompt: matched.SystemPrompt}
+		row := routeModelDetail{
+			Name:          name,
+			PromptEnabled: matched.PromptEnabled,
+			SystemPrompt:  matched.SystemPrompt,
+		}
 		for _, upstream := range matched.Upstreams {
-			row.UpstreamNames = append(row.UpstreamNames, upstream.Provider+":"+upstream.UpstreamModel)
+			row.Targets = append(row.Targets, upstream.Provider+":"+upstream.UpstreamModel)
 		}
 		exactModels = append(exactModels, row)
 	}
 	var wildcardModels []routeModelDetail
 	for _, wildcard := range route.CompiledWildcardModels() {
 		row := routeModelDetail{
-			Name:         wildcard.Pattern,
-			SystemPrompt: wildcard.SystemPrompt,
-			Wildcard:     true,
-			Pattern:      wildcard.Pattern,
+			Name:          wildcard.Pattern,
+			PromptEnabled: wildcard.PromptEnabled,
+			SystemPrompt:  wildcard.SystemPrompt,
+			Wildcard:      true,
+			Pattern:       wildcard.Pattern,
 		}
 		for _, upstream := range wildcard.Upstreams {
-			row.UpstreamNames = append(row.UpstreamNames, upstream.Provider)
+			row.Targets = append(row.Targets, upstream.Provider)
 		}
 		wildcardModels = append(wildcardModels, row)
 	}
 
 	resp := map[string]any{
 		"prefix":          prefix,
-		"protocol":        route.Protocol,
+		"protocol":        route.ConfiguredProtocol(),
 		"providers":       providers,
 		"models":          route.PublicModels(),
 		"exact_models":    exactModels,

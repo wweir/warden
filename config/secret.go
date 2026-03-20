@@ -2,6 +2,10 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 )
 
 // SecretString is a string that may be stored as base64 in config files.
@@ -9,14 +13,18 @@ import (
 // On write, it saves as base64-encoded string.
 type SecretString string
 
+// Encoded returns the storage form of the secret.
+func (s SecretString) Encoded() string {
+	if s == "" {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
 // MarshalText implements encoding.TextMarshaler.
 // It encodes the secret as base64 for storage.
 func (s SecretString) MarshalText() ([]byte, error) {
-	if s == "" {
-		return []byte(""), nil
-	}
-	encoded := base64.StdEncoding.EncodeToString([]byte(s))
-	return []byte(encoded), nil
+	return []byte(s.Encoded()), nil
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
@@ -29,17 +37,47 @@ func (s *SecretString) UnmarshalText(data []byte) error {
 
 	str := string(data)
 
-	// Try base64 decode first
-	decoded, err := base64.StdEncoding.DecodeString(str)
-	if err == nil {
-		// Successfully decoded as base64
+	decoded, ok := decodeSecretString(str)
+	if ok {
 		*s = SecretString(decoded)
 		return nil
 	}
 
-	// Not valid base64, treat as plaintext
 	*s = SecretString(str)
 	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (s SecretString) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.Encoded())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (s *SecretString) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*s = ""
+		return nil
+	}
+
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	return s.UnmarshalText([]byte(raw))
+}
+
+// MarshalYAML implements yaml.Marshaler.
+func (s SecretString) MarshalYAML() (any, error) {
+	return s.Encoded(), nil
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (s *SecretString) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == 0 || node.Tag == "!!null" {
+		*s = ""
+		return nil
+	}
+	return s.UnmarshalText([]byte(node.Value))
 }
 
 // Value returns the underlying string value.
@@ -57,10 +95,7 @@ func (s SecretString) String() string {
 
 // EncodeSecret encodes a plaintext secret to base64.
 func EncodeSecret(plaintext string) string {
-	if plaintext == "" {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString([]byte(plaintext))
+	return SecretString(plaintext).Encoded()
 }
 
 // DecodeSecret decodes a base64-encoded secret.
@@ -74,4 +109,22 @@ func DecodeSecret(encoded string) string {
 		return encoded // not base64, return as-is
 	}
 	return string(decoded)
+}
+
+func decodeSecretString(str string) (string, bool) {
+	if str == "" {
+		return "", false
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return "", false
+	}
+	if !utf8.Valid(decoded) {
+		return "", false
+	}
+	if base64.StdEncoding.EncodeToString(decoded) != str {
+		return "", false
+	}
+	return string(decoded), true
 }

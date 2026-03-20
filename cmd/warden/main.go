@@ -306,6 +306,9 @@ func writePidFile() error {
 	if data, err := os.ReadFile(pidFile); err == nil {
 		var oldPid int
 		if _, err := fmt.Sscanf(string(data), "%d", &oldPid); err == nil {
+			if oldPid == os.Getpid() {
+				return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", oldPid)), 0644)
+			}
 			// check if the process is still running
 			if process, err := os.FindProcess(oldPid); err == nil {
 				if err := process.Signal(syscall.Signal(0)); err == nil {
