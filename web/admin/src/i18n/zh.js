@@ -292,6 +292,8 @@ export default {
 		savingDisabled: "配置未从文件加载，保存已禁用",
 		responsesToChatHint:
 			"将无状态 responses 路由到上游 /chat/completions 端点（仅支持 function tools 子集）",
+		anthropicToChatHint:
+			"将 anthropic /messages 路由到上游 /chat/completions 端点（仅支持文本与 function tools 子集）",
 		clearField: "清空",
 	},
 	logs: {

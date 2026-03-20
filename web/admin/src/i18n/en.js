@@ -309,6 +309,8 @@ export default {
 		savingDisabled: "Config was not loaded from a file, saving is disabled",
 		responsesToChatHint:
 			"Route stateless responses to upstream /chat/completions endpoint (function-tools subset only)",
+		anthropicToChatHint:
+			"Route anthropic /messages to upstream /chat/completions endpoint (text + function-tools subset only)",
 		clearField: "Clear",
 	},
 	logs: {

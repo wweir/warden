@@ -55,6 +55,8 @@ Responses 相关 route 必须直接锁定唯一协议：
 
 - 只允许无状态 `responses`
 - 有状态 `previous_response_id` 明确不支持
+- 顶层 `instructions` 会转换成首条 `developer` message
+- 只接受受控的 Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 直接返回 `400`
 - 这是兼容桥接，不是完整 Responses 协议等价实现
 
 ## 5. 当前判断

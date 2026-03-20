@@ -159,6 +159,16 @@
 							/>
 							<span class="hint">{{ $t("config.responsesToChatHint") }}</span>
 						</div>
+
+						<label>anthropic_to_chat</label>
+						<div class="form-hint-row">
+							<input
+								type="checkbox"
+								v-model="providerConfig.anthropic_to_chat"
+								class="form-checkbox"
+							/>
+							<span class="hint">{{ $t("config.anthropicToChatHint") }}</span>
+						</div>
 					</template>
 
 					<template
@@ -268,6 +278,10 @@
 						<tr v-if="(detail.family || detail.protocol) === 'openai'">
 							<td>responses_to_chat</td>
 							<td>{{ detail.responses_to_chat ? $t("common.on") : $t("common.off") }}</td>
+						</tr>
+						<tr v-if="(detail.family || detail.protocol) === 'openai'">
+							<td>anthropic_to_chat</td>
+							<td>{{ detail.anthropic_to_chat ? $t("common.on") : $t("common.off") }}</td>
 						</tr>
 						<tr>
 							<td>{{ $t("providerDetail.timeout") }}</td>
@@ -588,6 +602,7 @@ function createEmptyProviderConfig() {
 		models: [],
 		enabled_protocols: [],
 		disabled_protocols: [],
+		anthropic_to_chat: false,
 	};
 }
 
@@ -600,7 +615,9 @@ function providerProtocolSuggestions(provider) {
 		case "anthropic":
 			return ["chat", "anthropic"];
 		case "openai":
-			return ["chat", "responses_stateless", "responses_stateful"];
+			return provider?.anthropic_to_chat
+				? ["chat", "responses_stateless", "responses_stateful", "anthropic"]
+				: ["chat", "responses_stateless", "responses_stateful"];
 		case "qwen":
 		case "copilot":
 		case "ollama":

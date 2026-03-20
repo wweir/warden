@@ -10,6 +10,7 @@ Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的
 - 精确模型 `upstreams` 映射与通配符模型 `providers` 选择
 - OpenAI `chat/completions` 与 `responses` 双接口
 - OpenAI `responses -> chat` 无状态兼容桥接
+- Anthropic `messages -> chat` 受控兼容桥接
 - route-scoped 工具调用 Hook：`exec` / `ai` / `http`
 - Provider 健康探测、抑制、failover 与 Prometheus 指标
 - 可选客户端 API Key 鉴权；按密钥统计请求与 token 用量
@@ -143,10 +144,15 @@ curl http://localhost:8080/openai/responses \
 对 OpenAI-compatible provider：
 
 - `responses_to_chat: true`：仅无状态 `responses` → 上游 `/chat/completions`
+- `anthropic_to_chat: true`：仅 `anthropic /messages` 的受控子集 → 上游 `/chat/completions`
 
-`responses_to_chat` 只支持 Chat 兼容子集：字符串/数组 `input`、`function` tools。
+`responses_to_chat` 只支持受控的 Chat 兼容子集：字符串/数组 `input`、顶层 `instructions`、`function` tools，以及少量共享 chat 参数。
+不支持的 Responses 专有字段或未知 input item 会直接返回 `400`，不会再伪装成 function tool 继续转发。
 `responses_to_chat` 明确不支持 `previous_response_id`，因此不能承载 Responses 有状态续接。
 原生 `/responses` 路径会透传 `previous_response_id` 等字段，但会话状态仍由上游 provider 维护；带 `previous_response_id` 的有状态请求会禁用协议转换和 failover。
+
+`anthropic_to_chat` 只支持受控的 Messages 兼容子集：字符串或纯文本 blocks 的 `system` / `messages`、`tool_use` / `tool_result`、`function` tools，以及少量共享采样参数。
+不支持的 Anthropic 专有字段、非文本 content block、`tool_result` 与普通用户文本混合消息会直接返回 `400`。
 
 更完整的现状整理见 [docs/responses-stateful-stateless-support.md](docs/responses-stateful-stateless-support.md)。
 
@@ -157,7 +163,7 @@ curl http://localhost:8080/openai/responses \
 - `responses_stateless` 只暴露无状态 `/responses`，明确拒绝 `previous_response_id`
 - `responses_stateful` 暴露 `/responses`，同时接受有状态和无状态请求
 - `anthropic` 只暴露 `/messages`
-- provider family 只承担上游适配职责：`openai => chat + responses_*`，`anthropic => chat + anthropic`，`qwen/copilot/ollama => chat`
+- provider family 只承担上游适配职责：`openai => chat + responses_*`，开启 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`qwen/copilot/ollama => chat`
 - 如果同一个 provider 只想参与部分协议 route，优先使用 `enabled_protocols` / `disabled_protocols` 收窄能力面，而不是复制一份 provider 配置
 
 ## 项目结构

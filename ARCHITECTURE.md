@@ -69,6 +69,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `route.exact_models.<name>` 直接声明 `upstreams`；`route.wildcard_models.<pattern>` 直接声明 `providers`
 - `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
 - 启用 `responses_to_chat` 的 provider 不能被 `responses_stateful` route 引用，因为它不支持 `previous_response_id`
+- `anthropic_to_chat` 只允许配置在 `openai` provider 上，并只影响 `route.protocol=anthropic` 的 `/messages` 入口
 - 不再接受 legacy `route.models` / `route.providers` / `route.system_prompts`
 - `route` 的运行时派生字段只有在 `Validate()` 后可依赖
 
@@ -79,10 +80,12 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 注册业务路由与管理端路由
 - 在 `api_keys` 非空时校验客户端 API Key，并在转发前剥离客户端鉴权头
 - 根据 route/model 选择 upstream provider
-- 处理 OpenAI `chat/completions`、`responses` 与透明代理请求
+- 处理 OpenAI `chat/completions`、`responses`、Anthropic `/messages` 与透明代理请求
 - 在响应中提取工具调用并触发 route hook
 - 记录日志、Prometheus 指标、按 API Key 的用量指标和 Dashboard 时序数据
-- chat / responses 的请求日志拼装走共享 helper，保证流式响应在日志中尽量落为最终对象而不是原始 SSE 文本
+- chat / responses / messages 的请求日志拼装走共享 helper，保证流式响应在日志中尽量落为最终对象而不是原始 SSE 文本
+- `responses_to_chat` 与 `anthropic_to_chat` 的流式桥接采用逐帧 relay，不允许先完整缓冲上游 body 再回放
+- 流式请求按三阶段记账：`pre_stream` 表示建流前失败，可 auth retry / failover；`in_stream` 表示开始向客户端 relay 后上游中断，只记 provider 失败；只有完整结束才记 success
 
 `Gateway.Close()` 负责：
 
@@ -112,6 +115,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 流式事件解析（含标准 SSE `event` / `data` / `id` / `retry` 与注释帧）
 - OpenAI Chat / Responses 之间的协议转换
 - Anthropic 请求与事件的兼容处理
+- Chat ↔ Responses、Chat ↔ Messages 的流式桥接状态机，支持逐帧增量转换和流结束校验（如 `[DONE]`、`message_stop`）
 
 协议层只处理协议，不处理路由、探活、日志或 hook 决策。
 
@@ -251,8 +255,11 @@ route 对外暴露哪些协议面，直接由 `route.protocol` 决定。
 - `anthropic` 只暴露 `/messages`
 - `responses_stateful` 在服务协议层同时覆盖 stateful/stateless `/responses`
 - 运行时路由只依赖 `route.protocol + route model` 配置，不依赖 provider 卡片上的展示协议
-- provider family 只承担“上游适配器”职责：`openai => chat + responses_*`，`anthropic => chat + anthropic`，`qwen/copilot/ollama => chat`
+- provider family 只承担“上游适配器”职责：`openai => chat + responses_*`，开启 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`qwen/copilot/ollama => chat`
 - `responses_to_chat` 只对无状态 Responses 请求生效；带 `previous_response_id` 的有状态请求只允许原生 `/responses` 透传，且禁用 failover
+- `responses_to_chat` 只接受受控的 stateless Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 在入口直接拒绝，不做 mock passthrough
+- `anthropic_to_chat` 只对 `route.protocol=anthropic` 的 `/messages` 请求生效；网关会把受控 Messages 子集转换为上游 Chat 请求，并把 Chat JSON / SSE 再转回 Anthropic Messages 形状
+- `anthropic_to_chat` 明确不支持非文本 content block、`tool_result` 与普通 user text 混合块、以及未映射的 Anthropic 专有字段；这些请求在入口直接 `400`
 
 ### Hook Boundary Instead of Tool Runtime
 
