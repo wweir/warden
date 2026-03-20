@@ -24,7 +24,7 @@ protocol/
 - 定义 LLM 协议公共类型（`Event`、`ToolCallInfo`）
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
-- 提供 OpenAI `responses_to_chat` 所需的请求/响应/SSE 转换
+- 提供 OpenAI `responses_to_chat` 所需的无状态 `Responses -> Chat` 请求转换，以及 `Chat -> Responses` 响应/SSE 转换
 
 ## 主要类型
 

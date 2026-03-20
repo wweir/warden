@@ -44,6 +44,9 @@ type providerState struct {
 	manualSuppress      bool // manually suppressed by admin
 	availableModels     map[string]bool
 	rawModels           []json.RawMessage
+	displayProtocols    []string
+	lastProtocolProbe   *ProtocolProbe
+	modelProtocolProbes map[string]map[string]ModelProtocolProbe
 
 	outcomes     []outcome
 	outcomeStart int
@@ -53,6 +56,21 @@ type providerState struct {
 	preStreamErrors int64
 	inStreamErrors  int64
 	failoverCount   int64
+}
+
+type ProtocolProbe struct {
+	CheckedAt time.Time `json:"checked_at"`
+	Status    string    `json:"status"`
+	Source    string    `json:"source"`
+	Error     string    `json:"error,omitempty"`
+}
+
+type ModelProtocolProbe struct {
+	Model     string    `json:"model"`
+	Protocol  string    `json:"protocol"`
+	CheckedAt time.Time `json:"checked_at"`
+	Status    string    `json:"status"`
+	Error     string    `json:"error,omitempty"`
 }
 
 func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource string) {
@@ -113,8 +131,10 @@ type RouteTarget struct {
 // NewSelector creates a new Selector and initializes state for all providers.
 func NewSelector(cfg *config.ConfigStruct) *Selector {
 	states := make(map[string]*providerState, len(cfg.Provider))
-	for name := range cfg.Provider {
-		states[name] = &providerState{}
+	for name, prov := range cfg.Provider {
+		states[name] = &providerState{
+			displayProtocols: append([]string(nil), config.SupportedRouteProtocols(prov)...),
+		}
 	}
 	return &Selector{states: states}
 }
@@ -157,7 +177,7 @@ func (s *Selector) Select(cfg *config.ConfigStruct, serviceProtocol string, matc
 		if !exists {
 			continue
 		}
-		if !config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
+		if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(provCfg, serviceProtocol) {
 			continue
 		}
 		st := s.states[upstream.Provider]
@@ -218,7 +238,7 @@ func (s *Selector) SelectByName(cfg *config.ConfigStruct, serviceProtocol string
 			if !exists {
 				break
 			}
-			if !config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
+			if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(provCfg, serviceProtocol) {
 				break
 			}
 			target := &RouteTarget{
@@ -479,6 +499,8 @@ type ProviderStatus struct {
 	PreStreamErrors     int64            `json:"pre_stream_errors"`
 	InStreamErrors      int64            `json:"in_stream_errors"`
 	FailoverCount       int64            `json:"failover_count"`
+	DisplayProtocols    []string         `json:"display_protocols,omitempty"`
+	LastProtocolProbe   *ProtocolProbe   `json:"last_protocol_probe,omitempty"`
 }
 
 func (s *providerState) recentSuppressReasons() []SuppressReason {
@@ -512,11 +534,67 @@ func (s *providerState) buildStatus(name string) ProviderStatus {
 		PreStreamErrors:     s.preStreamErrors,
 		InStreamErrors:      s.inStreamErrors,
 		FailoverCount:       s.failoverCount,
+		DisplayProtocols:    append([]string(nil), s.displayProtocols...),
+		LastProtocolProbe:   s.lastProtocolProbe,
 	}
 	if s.availableModels != nil {
 		ps.ModelCount = len(s.availableModels)
 	}
 	return ps
+}
+
+func (s *Selector) SetDisplayProtocols(name string, protocols []string, probe *ProtocolProbe) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, exists := s.states[name]
+	if !exists {
+		return false
+	}
+	st.displayProtocols = append([]string(nil), protocols...)
+	st.lastProtocolProbe = probe
+	return true
+}
+
+func (s *Selector) ModelProtocolProbes(name string) []ModelProtocolProbe {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	st, exists := s.states[name]
+	if !exists || len(st.modelProtocolProbes) == 0 {
+		return nil
+	}
+	var out []ModelProtocolProbe
+	for _, byProtocol := range st.modelProtocolProbes {
+		for _, probe := range byProtocol {
+			out = append(out, probe)
+		}
+	}
+	slices.SortFunc(out, func(a, b ModelProtocolProbe) int {
+		if cmp := strings.Compare(a.Model, b.Model); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Protocol, b.Protocol)
+	})
+	return out
+}
+
+func (s *Selector) UpsertModelProtocolProbe(name string, probe ModelProtocolProbe) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, exists := s.states[name]
+	if !exists {
+		return false
+	}
+	if st.modelProtocolProbes == nil {
+		st.modelProtocolProbes = make(map[string]map[string]ModelProtocolProbe)
+	}
+	if st.modelProtocolProbes[probe.Model] == nil {
+		st.modelProtocolProbes[probe.Model] = make(map[string]ModelProtocolProbe)
+	}
+	st.modelProtocolProbes[probe.Model][probe.Protocol] = probe
+	return true
 }
 
 // ProviderStatuses returns a snapshot of all provider health states.

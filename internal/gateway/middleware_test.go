@@ -50,7 +50,7 @@ func TestAPIKeyAuthMiddlewareRejectsMissingOrInvalidKey(t *testing.T) {
 			"client": "valid-token",
 		},
 		Route: map[string]*config.RouteConfig{
-			"/openai": {},
+			"/openai": {Protocol: config.RouteProtocolChat},
 		},
 	}
 	handler := (&APIKeyAuthMiddleware{cfg: cfg}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

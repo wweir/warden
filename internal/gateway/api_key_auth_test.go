@@ -11,6 +11,14 @@ import (
 	"github.com/wweir/warden/config"
 )
 
+func testExactModel(protocol string, upstreams ...*config.RouteUpstreamConfig) *config.ExactRouteModelConfig {
+	_ = protocol
+
+	return &config.ExactRouteModelConfig{
+		Upstreams: upstreams,
+	}
+}
+
 func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	t.Parallel()
 
@@ -48,11 +56,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 			"/openai": {
 				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "openai", Model: "gpt-4o"},
-						},
-					},
+					"gpt-4o": testExactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 			},
 		},
@@ -118,11 +122,7 @@ func TestGatewayConfiguredAPIKeyRejectsUnauthorizedRequest(t *testing.T) {
 			"/openai": {
 				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "openai", Model: "gpt-4o"},
-						},
-					},
+					"gpt-4o": testExactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 			},
 		},

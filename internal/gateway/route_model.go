@@ -15,18 +15,22 @@ type resolvedRouteTarget struct {
 }
 
 func matchRouteModel(route *config.RouteConfig, requestedModel string) (*config.CompiledRouteModel, error) {
+	return matchRouteModelForProtocol(route, requestedModel)
+}
+
+func matchRouteModelForProtocol(route *config.RouteConfig, requestedModel string) (*config.CompiledRouteModel, error) {
 	if requestedModel == "" {
 		return nil, fmt.Errorf("model is required")
 	}
 	matched := route.MatchModel(requestedModel)
 	if matched == nil {
-		return nil, fmt.Errorf("model %q is not configured for route %s", requestedModel, route.Prefix)
+		return nil, fmt.Errorf("model %q is not configured for route %s protocol %s", requestedModel, route.Prefix, route.ConfiguredProtocol())
 	}
 	return matched, nil
 }
 
 func (g *Gateway) selectRouteTarget(route *config.RouteConfig, serviceProtocol, requestedModel, explicitProvider string, exclude []string) (*resolvedRouteTarget, error) {
-	matched, err := matchRouteModel(route, requestedModel)
+	matched, err := matchRouteModelForProtocol(route, requestedModel)
 	if err != nil {
 		return nil, err
 	}

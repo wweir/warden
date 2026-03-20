@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	RouteProtocolChat      = "chat"
-	RouteProtocolResponses = "responses"
-	RouteProtocolAnthropic = "anthropic"
+	RouteProtocolChat               = "chat"
+	RouteProtocolResponsesStateless = "responses_stateless"
+	RouteProtocolResponsesStateful  = "responses_stateful"
+	RouteProtocolAnthropic          = "anthropic"
 )
 
 type CompiledRouteModel struct {
@@ -34,19 +35,95 @@ type routePatternSpecificity struct {
 	wildcardCount int
 }
 
-func SupportedRouteProtocols(providerProtocol string) []string {
-	switch providerProtocol {
-	case "anthropic":
-		return []string{RouteProtocolAnthropic}
-	case "openai", "ollama", "qwen", "copilot":
-		return []string{RouteProtocolChat, RouteProtocolResponses}
+func CompatibleRouteProtocols(prov *ProviderConfig) []string {
+	return CandidateRouteProtocols(prov)
+}
+
+func CandidateRouteProtocols(prov *ProviderConfig) []string {
+	if prov == nil {
+		return nil
+	}
+	switch providerFamily(prov) {
+	case ProviderProtocolAnthropic:
+		return []string{RouteProtocolChat, RouteProtocolAnthropic}
+	case ProviderProtocolOpenAI:
+		return []string{
+			RouteProtocolChat,
+			RouteProtocolResponsesStateless,
+			RouteProtocolResponsesStateful,
+		}
+	case ProviderProtocolQwen, ProviderProtocolCopilot, ProviderProtocolOllama:
+		return []string{RouteProtocolChat}
 	default:
 		return nil
 	}
 }
 
-func ProviderSupportsRouteProtocol(providerProtocol, routeProtocol string) bool {
-	return slices.Contains(SupportedRouteProtocols(providerProtocol), routeProtocol)
+func SupportedRouteProtocols(prov *ProviderConfig) []string {
+	if prov == nil {
+		return nil
+	}
+
+	candidates := CandidateRouteProtocols(prov)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	enabled := make(map[string]bool, len(prov.EnabledProtocols))
+	for _, protocol := range prov.EnabledProtocols {
+		enabled[normalizeRouteProtocol(protocol)] = true
+	}
+	disabled := make(map[string]bool, len(prov.DisabledProtocols))
+	for _, protocol := range prov.DisabledProtocols {
+		disabled[normalizeRouteProtocol(protocol)] = true
+	}
+
+	filtered := make([]string, 0, len(candidates))
+	for _, protocol := range candidates {
+		if len(enabled) > 0 && !enabled[protocol] {
+			continue
+		}
+		if disabled[protocol] {
+			continue
+		}
+		filtered = append(filtered, protocol)
+	}
+	return filtered
+}
+
+func ProviderSupportsConfiguredProtocol(prov *ProviderConfig, routeProtocol string) bool {
+	return slices.Contains(SupportedRouteProtocols(prov), routeProtocol)
+}
+
+func IsResponsesRouteProtocol(routeProtocol string) bool {
+	return routeProtocol == RouteProtocolResponsesStateless || routeProtocol == RouteProtocolResponsesStateful
+}
+
+func SupportedServiceProtocolsForConfiguredProtocol(routeProtocol string) []string {
+	switch routeProtocol {
+	case RouteProtocolChat:
+		return []string{RouteProtocolChat}
+	case RouteProtocolResponsesStateless:
+		return []string{RouteProtocolResponsesStateless}
+	case RouteProtocolResponsesStateful:
+		return []string{RouteProtocolResponsesStateless, RouteProtocolResponsesStateful}
+	case RouteProtocolAnthropic:
+		return []string{RouteProtocolAnthropic}
+	default:
+		return nil
+	}
+}
+
+func (r *RouteConfig) ConfiguredProtocol() string {
+	return r.Protocol
+}
+
+func (r *RouteConfig) ServiceProtocols() []string {
+	return append([]string(nil), r.serviceProtocols...)
+}
+
+func (r *RouteConfig) SupportsServiceProtocol(serviceProtocol string) bool {
+	return slices.Contains(r.serviceProtocols, serviceProtocol)
 }
 
 func (r *RouteConfig) MatchModel(model string) *CompiledRouteModel {
@@ -77,7 +154,7 @@ func (r *RouteConfig) PublicModels() []string {
 }
 
 func (r *RouteConfig) CompiledWildcardModels() []*CompiledRouteModel {
-	return r.wildcards
+	return append([]*CompiledRouteModel(nil), r.wildcards...)
 }
 
 func (r *RouteConfig) ProviderNames() []string {
@@ -174,4 +251,14 @@ func wildcardPatternsConflict(a, b string) bool {
 		return false
 	}
 	return visit(0, 0)
+}
+
+func providerFamily(prov *ProviderConfig) string {
+	if prov == nil {
+		return ""
+	}
+	if normalized := normalizeProviderProtocol(prov.Family); normalized != "" {
+		return normalized
+	}
+	return normalizeProviderProtocol(prov.Protocol)
 }

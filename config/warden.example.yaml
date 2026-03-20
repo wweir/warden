@@ -33,23 +33,25 @@ addr: ":8080"
 #     - type: http
 #       webhook: "audit-webhook"
 
-# Upstream providers.
+# Upstream providers. family is required; protocol remains only as a
+# backward-compatible alias for older configs.
 provider:
   openai:
+    family: "openai"
     url: "https://api.openai.com/v1"
-    protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"
+    # enabled_protocols: ["chat", "responses_stateless"]
     # responses_to_chat: true
 
   anthropic:
+    family: "anthropic"
     url: "https://api.anthropic.com/v1"
-    protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
 
   qwen:
-    protocol: "qwen"
+    family: "qwen"
     timeout: "120s"
     models:
       - "qwen3-coder-plus"
@@ -57,7 +59,7 @@ provider:
       - "vision-model"
 
   copilot:
-    protocol: "copilot"
+    family: "copilot"
     timeout: "120s"
     models:
       # Strong premium models
@@ -71,7 +73,7 @@ provider:
       - "raptor-mini"
       - "grok-code-fast-1"
 
-# Route-centric config: each route exposes one protocol and a public model set.
+# Route-centric config: each route locks exactly one protocol.
 route:
   /openai:
     protocol: "chat"
@@ -100,6 +102,37 @@ route:
           - "openai"
           - "qwen"
           - "copilot"
+
+  /responses:
+    protocol: "responses_stateless"
+    exact_models:
+      gpt-4o:
+        prompt_enabled: true
+        system_prompt: "You are a helpful assistant."
+        upstreams:
+          - provider: "openai"
+            model: "gpt-4o"
+          - provider: "copilot"
+            model: "gpt-5.4"
+      gpt-4o-mini:
+        upstreams:
+          - provider: "openai"
+            model: "gpt-4.1-mini"
+          - provider: "copilot"
+            model: "claude-sonnet-4-6"
+    wildcard_models:
+      "gpt-*":
+        providers:
+          - "openai"
+          - "copilot"
+
+  /responses-stateful:
+    protocol: "responses_stateful"
+    exact_models:
+      gpt-4o:
+        upstreams:
+          - provider: "openai"
+            model: "gpt-4o"
 
   /anthropic:
     protocol: "anthropic"

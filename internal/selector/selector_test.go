@@ -11,6 +11,22 @@ import (
 	"github.com/wweir/warden/config"
 )
 
+func testExactModel(protocol string, upstreams ...*config.RouteUpstreamConfig) *config.ExactRouteModelConfig {
+	_ = protocol
+
+	return &config.ExactRouteModelConfig{
+		Upstreams: upstreams,
+	}
+}
+
+func testWildcardModel(protocol string, providers ...string) *config.WildcardRouteModelConfig {
+	_ = protocol
+
+	return &config.WildcardRouteModelConfig{
+		Providers: providers,
+	}
+}
+
 func mustValidateConfig(t *testing.T, cfg *config.ConfigStruct) *config.RouteConfig {
 	t.Helper()
 	if err := cfg.Validate(); err != nil {
@@ -29,12 +45,10 @@ func TestSelector_SelectExactModel(t *testing.T) {
 			"/test": {
 				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "primary", Model: "gpt-4o"},
-							{Provider: "secondary", Model: "gpt-4.1"},
-						},
-					},
+					"gpt-4o": testExactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o"},
+						&config.RouteUpstreamConfig{Provider: "secondary", Model: "gpt-4.1"},
+					),
 				},
 			},
 		},
@@ -66,11 +80,9 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolResponsesStateless,
 				WildcardModels: map[string]*config.WildcardRouteModelConfig{
-					"gpt-*": {
-						Providers: []string{"first", "second"},
-					},
+					"gpt-*": testWildcardModel(config.RouteProtocolResponsesStateless, "first", "second"),
 				},
 			},
 		},
@@ -87,7 +99,7 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 	s.states["second"].availableModels = map[string]bool{"gpt-4.1": true}
 	s.mu.Unlock()
 
-	target, prov, err := s.Select(cfg, config.RouteProtocolResponses, matched, "gpt-4.1")
+	target, prov, err := s.Select(cfg, config.RouteProtocolResponsesStateless, matched, "gpt-4.1")
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}
@@ -109,12 +121,10 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 			"/test": {
 				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "primary", Model: "gpt-4o"},
-							{Provider: "secondary", Model: "gpt-4o"},
-						},
-					},
+					"gpt-4o": testExactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o"},
+						&config.RouteUpstreamConfig{Provider: "secondary", Model: "gpt-4o"},
+					),
 				},
 			},
 		},
@@ -135,6 +145,78 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 	}
 }
 
+func TestSelector_SelectRespectsServiceProtocolFilters(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"stateful-only": {
+				URL:              "http://stateful.example.com",
+				Protocol:         "openai",
+				EnabledProtocols: []string{config.RouteProtocolResponsesStateful},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/test": {
+				Protocol: config.RouteProtocolResponsesStateful,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": testExactModel(config.RouteProtocolResponsesStateful,
+						&config.RouteUpstreamConfig{Provider: "stateful-only", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	route := mustValidateConfig(t, cfg)
+	matched := route.MatchModel("gpt-4o")
+	if matched == nil {
+		t.Fatal("MatchModel(gpt-4o) = nil")
+	}
+
+	s := NewSelector(cfg)
+	_, _, err := s.Select(cfg, config.RouteProtocolResponsesStateless, matched, "gpt-4o")
+	if err == nil {
+		t.Fatal("Select() error = nil, want ErrProviderNotFound")
+	}
+	if err != ErrProviderNotFound {
+		t.Fatalf("Select() error = %v, want %v", err, ErrProviderNotFound)
+	}
+}
+
+func TestSelector_SelectByNameRespectsServiceProtocolFilters(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"stateful-only": {
+				URL:              "http://stateful.example.com",
+				Protocol:         "openai",
+				EnabledProtocols: []string{config.RouteProtocolResponsesStateful},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/test": {
+				Protocol: config.RouteProtocolResponsesStateful,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": testExactModel(config.RouteProtocolResponsesStateful,
+						&config.RouteUpstreamConfig{Provider: "stateful-only", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	route := mustValidateConfig(t, cfg)
+	matched := route.MatchModel("gpt-4o")
+	if matched == nil {
+		t.Fatal("MatchModel(gpt-4o) = nil")
+	}
+
+	s := NewSelector(cfg)
+	_, _, err := s.SelectByName(cfg, config.RouteProtocolResponsesStateless, matched, "gpt-4o", "stateful-only")
+	if err == nil {
+		t.Fatal("SelectByName() error = nil, want ErrProviderNotFound")
+	}
+	if err != ErrProviderNotFound {
+		t.Fatalf("SelectByName() error = %v, want %v", err, ErrProviderNotFound)
+	}
+}
+
 func TestSelector_Models(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
@@ -144,16 +226,10 @@ func TestSelector_Models(t *testing.T) {
 			"/test": {
 				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "primary", Model: "gpt-4.1"},
-						},
-					},
+					"gpt-4o": testExactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4.1"}),
 				},
 				WildcardModels: map[string]*config.WildcardRouteModelConfig{
-					"gpt-*": {
-						Providers: []string{"primary"},
-					},
+					"gpt-*": testWildcardModel(config.RouteProtocolChat, "primary"),
 				},
 			},
 		},

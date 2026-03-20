@@ -15,15 +15,22 @@
 
 ## Route-Centric Runtime
 
-- `route.protocol` defines the primary external protocol surface of a route: `chat`, `responses`, or `anthropic`.
 - `route.exact_models` and `route.wildcard_models` define the public model surface explicitly.
-- Exact model entries use ordered `upstreams`, while wildcard entries use ordered `providers`.
+- `route.protocol` locks each route to exactly one configured protocol.
+- Exact model entries use ordered `upstreams`, while wildcard model entries use ordered `providers`.
 - Retryable failures only fail over within the matched route-model candidate list, so HA can be configured for a single public model without affecting unrelated models on the same route.
 - Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
 - Wildcard model entries preserve the request model name and only choose which provider serves it.
 - Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
-- Anthropic routes still expose only `/messages`; OpenAI-compatible routes may expose both `/chat/completions` and `/responses` when the route has provider support for both.
-- Stateful Responses requests (`previous_response_id`) bypass `responses_to_chat` conversion and disable failover, so the gateway only does native `/responses` passthrough for those requests.
+- The gateway derives endpoint exposure from `route.protocol`; it does not depend on provider-card display protocols.
+- `chat` routes expose only `/chat/completions`.
+- `responses_stateless` routes expose only stateless `/responses`.
+- `responses_stateless` routes reject `previous_response_id`.
+- `responses_stateful` routes accept both stateless and stateful `/responses`; stateful requests bypass `responses_to_chat` conversion and disable failover.
+- Providers with `responses_to_chat` enabled cannot back `responses_stateful` route models, because that bridge does not implement `previous_response_id`.
+- Anthropic routes still expose only `/messages`.
+- Non-inference subpaths that fall through to transparent proxying keep raw passthrough behavior; route protocol checks only gate recognized inference endpoints.
+- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_*`, `anthropic => chat + anthropic`, `qwen/copilot/ollama => chat`.
 
 ## Key Interfaces
 

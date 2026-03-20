@@ -74,16 +74,19 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name            string            `json:"-"` // populated from map key
-	URL             string            `json:"url" usage:"Upstream LLM base URL"`
-	Protocol        string            `json:"protocol" usage:"API protocol: openai, anthropic, ollama, qwen, copilot"`
-	APIKey          SecretString      `json:"api_key" usage:"API key for authentication"`
-	ConfigDir       string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	Timeout         string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
-	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers         map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models          []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	Name              string            `json:"-"` // populated from map key
+	URL               string            `json:"url" usage:"Upstream LLM base URL"`
+	Family            string            `json:"family" usage:"Required provider adapter family: openai, anthropic, ollama, qwen, copilot"`
+	Protocol          string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
+	APIKey            SecretString      `json:"api_key" usage:"API key for authentication"`
+	ConfigDir         string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
+	Timeout           string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Proxy             string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers           map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models            []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	EnabledProtocols  []string          `json:"enabled_protocols" usage:"Optional allowlist of externally exposed route protocols for this provider family"`
+	DisabledProtocols []string          `json:"disabled_protocols" usage:"Optional denylist of externally exposed route protocols for this provider family"`
+	ResponsesToChat   bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
@@ -166,17 +169,18 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 
 type RouteConfig struct {
 	Prefix         string                               `json:"-"` // populated from map key
-	Protocol       string                               `json:"protocol" usage:"Service protocol exposed by this route: chat, responses, anthropic"`
-	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings; each entry rewrites to ordered upstream provider/model targets"`
-	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings; each pattern selects ordered providers and forwards the requested model unchanged"`
+	Protocol       string                               `json:"protocol" usage:"The single external protocol exposed by this route: chat, responses_stateless, responses_stateful, or anthropic"`
+	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings for this route protocol; each entry defines explicit upstream provider/model targets"`
+	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings for this route protocol; each pattern defines ordered upstream providers and forwards the requested model unchanged"`
 	Hooks          []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`
 
-	exactModels map[string]*CompiledRouteModel
-	wildcards   []*CompiledRouteModel
+	exactModels      map[string]*CompiledRouteModel
+	wildcards        []*CompiledRouteModel
+	serviceProtocols []string
 }
 
 type ExactRouteModelConfig struct {
-	PromptEnabled *bool                  `json:"prompt_enabled,omitempty" usage:"Whether extra system prompt injection is enabled for this exact route model; nil keeps legacy behavior based on system_prompt presence"`
+	PromptEnabled *bool                  `json:"prompt_enabled,omitempty" usage:"Whether extra system prompt injection is enabled for this exact route model; nil infers from system_prompt presence"`
 	SystemPrompt  string                 `json:"system_prompt" usage:"System prompt injected for this exact route model when prompt_enabled is true"`
 	Upstreams     []*RouteUpstreamConfig `json:"upstreams" usage:"Ordered upstream provider/model mappings for this exact public model"`
 }

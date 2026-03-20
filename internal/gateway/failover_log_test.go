@@ -51,7 +51,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 		{
 			name:          "responses direct",
 			routePrefix:   "/openai-responses",
-			routeProtocol: config.RouteProtocolResponses,
+			routeProtocol: config.RouteProtocolResponsesStateless,
 			requestPath:   "/openai-responses/responses",
 			requestBody:   `{"model":"gpt-4o","input":"hello"}`,
 			upstreamPath:  "/responses",
@@ -68,7 +68,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 		{
 			name:          "responses via chat",
 			routePrefix:   "/openai-resp-chat",
-			routeProtocol: config.RouteProtocolResponses,
+			routeProtocol: config.RouteProtocolResponsesStateless,
 			requestPath:   "/openai-resp-chat/responses",
 			requestBody:   `{"model":"gpt-4o","input":"hello"}`,
 			upstreamPath:  "/chat/completions",
@@ -139,12 +139,10 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 					tt.routePrefix: {
 						Protocol: tt.routeProtocol,
 						ExactModels: map[string]*config.ExactRouteModelConfig{
-							tt.exactModel: {
-								Upstreams: []*config.RouteUpstreamConfig{
-									{Provider: "primary", Model: tt.primaryModel},
-									{Provider: "fallback", Model: tt.fallbackModel},
-								},
-							},
+							tt.exactModel: exactModel(tt.routeProtocol,
+								&config.RouteUpstreamConfig{Provider: "primary", Model: tt.primaryModel},
+								&config.RouteUpstreamConfig{Provider: "fallback", Model: tt.fallbackModel},
+							),
 						},
 					},
 				},
@@ -229,28 +227,23 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"primary": {
-				URL:             primary.URL,
-				Protocol:        "openai",
-				APIKey:          config.SecretString("primary-token"),
-				ResponsesToChat: true,
+				URL:      primary.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("primary-token"),
 			},
 			"fallback": {
-				URL:             fallback.URL,
-				Protocol:        "openai",
-				APIKey:          config.SecretString("fallback-token"),
-				ResponsesToChat: true,
+				URL:      fallback.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("fallback-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolResponsesStateful,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "primary", Model: "gpt-4o-primary"},
-							{Provider: "fallback", Model: "gpt-4o-fallback"},
-						},
-					},
+					"gpt-4o": exactModel(config.RouteProtocolResponsesStateful,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o-primary"},
+					),
 				},
 			},
 		},

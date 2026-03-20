@@ -99,7 +99,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 					g.handleChatCompletion(w, r, route)
 				})
 		}
-		if g.shouldRegisterOpenAIEndpoint(route, config.RouteProtocolResponses) {
+		if g.shouldRegisterOpenAIEndpoint(route, config.RouteProtocolResponsesStateless) {
 			router.Handle(http.MethodPost, prefix+"/responses",
 				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 					g.handleResponses(w, r, route)
@@ -137,31 +137,12 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 func (g *Gateway) shouldRegisterOpenAIEndpoint(route *config.RouteConfig, serviceProtocol string) bool {
 	switch serviceProtocol {
 	case config.RouteProtocolChat:
-		if route.Protocol == config.RouteProtocolChat {
-			return true
-		}
-	case config.RouteProtocolResponses:
-		if route.Protocol == config.RouteProtocolResponses {
-			return true
-		}
+		return route.ConfiguredProtocol() == config.RouteProtocolChat
+	case config.RouteProtocolResponsesStateless:
+		return config.IsResponsesRouteProtocol(route.ConfiguredProtocol())
 	default:
 		return false
 	}
-
-	if route.Protocol == config.RouteProtocolAnthropic {
-		return false
-	}
-
-	for _, providerName := range route.ProviderNames() {
-		provCfg := g.cfg.Provider[providerName]
-		if provCfg == nil {
-			continue
-		}
-		if config.ProviderSupportsRouteProtocol(provCfg.Protocol, serviceProtocol) {
-			return true
-		}
-	}
-	return false
 }
 
 // ServeHTTP implements http.Handler.
@@ -231,10 +212,14 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 	var failovers []reqlog.Failover
 	explicitProvider := r.Header.Get("X-Provider")
 	allowFailover := isInferenceEndpoint(r.URL.Path)
-	serviceProtocol := route.Protocol
+	serviceProtocol := routeServiceProtocol(r.URL.Path, reqBody)
 	endpoint := strings.TrimPrefix(r.URL.Path, "/")
-	if strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/messages" {
-		serviceProtocol = config.RouteProtocolAnthropic
+	if serviceProtocol != "" && !route.SupportsServiceProtocol(serviceProtocol) {
+		http.Error(w, unsupportedRouteProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
+		return
+	}
+	if serviceProtocol == config.RouteProtocolResponsesStateful {
+		allowFailover = false
 	}
 	var resolved *resolvedRouteTarget
 	var provCfg *config.ProviderConfig
@@ -253,7 +238,10 @@ func (g *Gateway) handleProxy(w http.ResponseWriter, r *http.Request, route *con
 				continue
 			}
 			candidate := g.cfg.Provider[providerName]
-			if candidate == nil || !config.ProviderSupportsRouteProtocol(candidate.Protocol, serviceProtocol) {
+			if candidate == nil {
+				continue
+			}
+			if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(candidate, serviceProtocol) {
 				continue
 			}
 			provCfg = candidate
@@ -419,7 +407,7 @@ func assembleProxyResponse(serviceProtocol, upstreamProtocol string, body []byte
 		}
 		return marshalRawStreamForLog(body)
 	}
-	if serviceProtocol == config.RouteProtocolResponses {
+	if config.IsResponsesRouteProtocol(serviceProtocol) {
 		if assembled, err := openai.AssembleResponsesStream(body); err == nil {
 			return assembled
 		}
@@ -438,6 +426,34 @@ func marshalRawStreamForLog(body []byte) []byte {
 		return json.RawMessage(`""`)
 	}
 	return data
+}
+
+func routeServiceProtocol(path string, reqBody []byte) string {
+	if strings.HasSuffix(path, "/messages") || path == "/messages" {
+		return config.RouteProtocolAnthropic
+	}
+	if strings.HasSuffix(path, "/chat/completions") {
+		return config.RouteProtocolChat
+	}
+	if strings.HasSuffix(path, "/responses") {
+		return responsesRequestProtocol(reqBody)
+	}
+	return ""
+}
+
+func unsupportedRouteProtocolMessage(routeProtocol, serviceProtocol string) string {
+	switch serviceProtocol {
+	case config.RouteProtocolResponsesStateful:
+		return unsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
+	case config.RouteProtocolResponsesStateless:
+		return unsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
+	case config.RouteProtocolChat:
+		return "route protocol " + routeProtocol + " does not support chat requests"
+	case config.RouteProtocolAnthropic:
+		return "route protocol " + routeProtocol + " does not support anthropic messages requests"
+	default:
+		return "route does not support this request protocol"
+	}
 }
 
 // --- models ---

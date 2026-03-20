@@ -5,13 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 )
 
-func TestGatewayChatRouteExposesResponsesWhenProviderCanServeIt(t *testing.T) {
+func TestGatewayResponsesRouteExposesResponsesEndpoint(t *testing.T) {
 	t.Parallel()
 
 	var gotPath string
@@ -38,13 +39,11 @@ func TestGatewayChatRouteExposesResponsesWhenProviderCanServeIt(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolChat,
+				Protocol: config.RouteProtocolResponsesStateless,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "ali-coding", Model: "qwen3.5-plus"},
-						},
-					},
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
+					),
 				},
 			},
 		},
@@ -100,21 +99,16 @@ func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:             upstream.URL,
-				Protocol:        "openai",
-				APIKey:          config.SecretString("token"),
-				ResponsesToChat: true,
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolResponsesStateful,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "openai", Model: "gpt-4o"},
-						},
-					},
+					"gpt-4o": exactModel(config.RouteProtocolResponsesStateful, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 			},
 		},
@@ -145,7 +139,58 @@ func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 	}
 }
 
-func TestGatewayResponsesRouteExposesChatWhenProviderCanServeIt(t *testing.T) {
+func TestGatewayChatRouteRejectsStatefulResponsesRequests(t *testing.T) {
+	t.Parallel()
+
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_123","status":"completed","output":[{"type":"message","content":"ok"}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"gpt-4o","input":"hello","previous_response_id":"resp_prev"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "does not support stateful responses requests") {
+		t.Fatalf("body = %q, want stateful unsupported message", rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("upstream hits = %d, want 0", upstreamHits)
+	}
+}
+
+func TestGatewayChatRouteExposesChatEndpoint(t *testing.T) {
 	t.Parallel()
 
 	var gotPath string
@@ -171,13 +216,11 @@ func TestGatewayResponsesRouteExposesChatWhenProviderCanServeIt(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolChat,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-5.4": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "gmn", Model: "gpt-5.4"},
-						},
-					},
+					"gpt-5.4": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "gmn", Model: "gpt-5.4"},
+					),
 				},
 			},
 		},
@@ -209,6 +252,65 @@ func TestGatewayResponsesRouteExposesChatWhenProviderCanServeIt(t *testing.T) {
 	if gjson.Get(rec.Body.String(), "choices.0.message.content").String() != "ok" {
 		t.Fatalf("response content = %q, want ok", gjson.Get(rec.Body.String(), "choices.0.message.content").String())
 	}
+}
+
+func TestGatewayProxyPassesThroughNonInferencePaths(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/openai/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, path := range paths {
+		if path == "/v1/models" {
+			return
+		}
+	}
+	t.Fatalf("upstream paths = %v, want one request to /v1/models", paths)
 }
 
 func TestGatewayChatRouteInjectsSystemPromptOnlyWhenEnabled(t *testing.T) {
@@ -323,7 +425,7 @@ func TestGatewayResponsesRouteInjectsSystemPromptOnlyWhenEnabled(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolResponsesStateless,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"enabled-model": {
 						PromptEnabled: &enabled,

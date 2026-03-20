@@ -5,7 +5,8 @@ Warden 是一个面向多上游 LLM 的轻量级 AI Gateway。它暴露统一的
 ## 当前能力
 
 - 统一接入 `openai`、`anthropic`、`ollama`、`qwen`、`copilot`
-- 路由中心化配置：`route.protocol + route.exact_models + route.wildcard_models + route.hooks`
+- 路由中心化配置：`route.exact_models + route.wildcard_models + route.hooks`
+- 每个 public model 按协议声明自己的 upstream/provider 列表
 - 精确模型 `upstreams` 映射与通配符模型 `providers` 选择
 - OpenAI `chat/completions` 与 `responses` 双接口
 - OpenAI `responses -> chat` 无状态兼容桥接
@@ -53,19 +54,17 @@ addr: ":8080"
 provider:
   openai:
     url: "https://api.openai.com/v1"
-    protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
     timeout: "60s"
 
   anthropic:
     url: "https://api.anthropic.com/v1"
-    protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "60s"
 
 route:
   /openai:
-    protocol: "chat"
+    protocol: chat
     exact_models:
       gpt-4o:
         upstreams:
@@ -76,7 +75,7 @@ route:
         providers: ["openai"]
 
   /anthropic:
-    protocol: "anthropic"
+    protocol: anthropic
     exact_models:
       claude-sonnet-4:
         upstreams:
@@ -88,11 +87,14 @@ route:
 
 - `provider.*.url` / `webhook.*.url` 必须是绝对 `http/https` URL
 - `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
+- `provider.*.family` 必填；`provider.*.protocol` 仍兼容但只作为旧字段别名，不能与 `family` 冲突
+- `provider.*.enabled_protocols` / `provider.*.disabled_protocols` 用于在 provider family 候选协议面内做静态收缩，不改变 `route.protocol` 是运行时真相这一原则
 - `qwen` / `copilot` 在未显式配置 `api_key` 时，会从本地 `config_dir` 读取 OAuth 凭证
 - `api_keys` 为空时，网关不校验客户端 API Key；配置后支持 `Authorization: Bearer ...`、`Api-Key`、`X-Api-Key`
-- `route.protocol` 必填，只接受 `chat`、`responses`、`anthropic`
-- `route.exact_models` 只接受 `upstreams`
-- `route.wildcard_models` 只接受 `providers`
+- `admin_password` / `api_keys` / `provider.*.api_key` 读取时兼容明文和 base64，写回配置文件时统一写为 base64；该兼容模式默认假设当前支持的 secret 格式不会与规范化 base64 明文冲突
+- `route.protocol` 必须显式声明，且每个 route 只允许一个协议
+- `route.exact_models.<name>` 直接声明 `upstreams`；`route.wildcard_models.<pattern>` 直接声明 `providers`
+- `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
 - `route.hooks` 只观察并审计模型返回的工具调用；Warden 不负责执行内置 MCP 工具
 
 ## 管理面板
@@ -101,7 +103,7 @@ route:
 
 - `Dashboard`：provider 状态、路由概览、实时指标
 - `Providers`：模型、健康状态、抑制控制，以及单个 provider 配置编辑
-- `Routes`：按 route 编辑协议、精确模型、通配符模型并做请求测试
+- `Routes`：先锁定 route 唯一协议，再编辑精确模型和通配符模型
 - `Tool Hooks`：按 route 编辑 hook 规则与建议
 - `Logs`：SSE 请求日志流
 - `Config`：通用配置、客户端 API 密钥、webhook、日志目标编辑与应用
@@ -150,9 +152,13 @@ curl http://localhost:8080/openai/responses \
 
 对 route：
 
-- `route.protocol` 表示主协议面
-- `anthropic` route 只暴露 `/messages`
-- OpenAI-compatible route 会按 route 内 provider 能力自动补注册 `/chat/completions` 或 `/responses`，避免 provider 级协议转换在入口层被 404 截断
+- route 暴露哪些入口，只由 `route.protocol` 决定
+- `chat` 只暴露 `/chat/completions`
+- `responses_stateless` 只暴露无状态 `/responses`，明确拒绝 `previous_response_id`
+- `responses_stateful` 暴露 `/responses`，同时接受有状态和无状态请求
+- `anthropic` 只暴露 `/messages`
+- provider family 只承担上游适配职责：`openai => chat + responses_*`，`anthropic => chat + anthropic`，`qwen/copilot/ollama => chat`
+- 如果同一个 provider 只想参与部分协议 route，优先使用 `enabled_protocols` / `disabled_protocols` 收窄能力面，而不是复制一份 provider 配置
 
 ## 项目结构
 

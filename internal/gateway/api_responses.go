@@ -37,16 +37,21 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	model := gjson.GetBytes(rawReqBody, "model").String()
 	stream := gjson.GetBytes(rawReqBody, "stream").Bool()
-	stateful := isStatefulResponsesRequest(rawReqBody)
+	serviceProtocol := responsesRequestProtocol(rawReqBody)
+	stateful := serviceProtocol == config.RouteProtocolResponsesStateful
 	if !gjson.ValidBytes(rawReqBody) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if !route.SupportsServiceProtocol(serviceProtocol) {
+		http.Error(w, unsupportedResponsesProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
 		return
 	}
 
 	var excluded []string
 	authRetried := map[string]bool{}
 	explicitProvider := r.Header.Get("X-Provider")
-	resolved, err := g.selectRouteTarget(route, config.RouteProtocolResponses, model, explicitProvider, excluded)
+	resolved, err := g.selectRouteTarget(route, serviceProtocol, model, explicitProvider, excluded)
 	if err != nil {
 		writeModelSelectionError(w, err)
 		return
@@ -56,7 +61,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	matchedRouteModel := resolved.model
 	allowFailover := explicitProvider == "" && !stateful
 	var failovers []reqlog.Failover
-	metricLabels := buildMetricLabels(route, config.RouteProtocolResponses, "responses", selectedTarget)
+	metricLabels := buildMetricLabels(route, serviceProtocol, "responses", selectedTarget)
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
 
@@ -66,7 +71,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		}
 	}
 
-	if !stateful && provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
+	if serviceProtocol == config.RouteProtocolResponsesStateless && provCfg.ResponsesToChat && provCfg.Protocol == "openai" {
 		g.handleResponsesViaChat(w, r, route, rawReqBody, model, stream, provCfg, selectedTarget, matchedRouteModel, startTime, reqID, allowFailover, excluded, authRetried, failovers)
 		return
 	}
@@ -86,12 +91,12 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 				continue
 			}
 			if allowFailover {
-				if next := g.tryFailover(err, resolved, &excluded, route, config.RouteProtocolResponses, "responses", model, &failovers); next != nil {
+				if next := g.tryFailover(err, resolved, &excluded, route, serviceProtocol, "responses", model, &failovers); next != nil {
 					resolved = next
 					provCfg = next.prov
 					selectedTarget = next.target
 					matchedRouteModel = next.model
-					metricLabels = buildMetricLabels(route, config.RouteProtocolResponses, "responses", selectedTarget)
+					metricLabels = buildMetricLabels(route, serviceProtocol, "responses", selectedTarget)
 					applyMetricHeaders(w, metricLabels)
 					continue
 				}
@@ -152,7 +157,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses via chat", "route", route.Prefix) }()
 
-	metricLabels := buildMetricLabels(route, config.RouteProtocolResponses, "responses", target)
+	metricLabels := buildMetricLabels(route, config.RouteProtocolResponsesStateless, "responses", target)
 	metricLabels.APIKey = apiKeyNameFromContext(r.Context())
 	applyMetricHeaders(w, metricLabels)
 	var respReq openai.ResponsesRequest
@@ -187,11 +192,11 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 				}
 				if allowFailover {
 					failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-					if next := g.tryFailover(sendErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel, &failovers); next != nil {
+					if next := g.tryFailover(sendErr, failed, &excluded, route, config.RouteProtocolResponsesStateless, "responses", origModel, &failovers); next != nil {
 						provCfg = next.prov
 						target = next.target
 						chatReq.Model = target.UpstreamModel
-						metricLabels = buildMetricLabels(route, config.RouteProtocolResponses, "responses", target)
+						metricLabels = buildMetricLabels(route, config.RouteProtocolResponsesStateless, "responses", target)
 						applyMetricHeaders(w, metricLabels)
 						continue
 					}
@@ -237,11 +242,11 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			}
 			if allowFailover {
 				failed := &resolvedRouteTarget{model: matchedRouteModel, target: target, prov: provCfg}
-				if next := g.tryFailover(forwardErr, failed, &excluded, route, config.RouteProtocolResponses, "responses", origModel, &failovers); next != nil {
+				if next := g.tryFailover(forwardErr, failed, &excluded, route, config.RouteProtocolResponsesStateless, "responses", origModel, &failovers); next != nil {
 					provCfg = next.prov
 					target = next.target
 					chatReq.Model = target.UpstreamModel
-					metricLabels = buildMetricLabels(route, config.RouteProtocolResponses, "responses", target)
+					metricLabels = buildMetricLabels(route, config.RouteProtocolResponsesStateless, "responses", target)
 					applyMetricHeaders(w, metricLabels)
 					continue
 				}
@@ -322,4 +327,22 @@ func funcCallsToInfos(calls []openai.FunctionCallItem) []protocol.ToolCallInfo {
 
 func isStatefulResponsesRequest(rawReqBody []byte) bool {
 	return gjson.GetBytes(rawReqBody, "previous_response_id").String() != ""
+}
+
+func responsesRequestProtocol(rawReqBody []byte) string {
+	if isStatefulResponsesRequest(rawReqBody) {
+		return config.RouteProtocolResponsesStateful
+	}
+	return config.RouteProtocolResponsesStateless
+}
+
+func unsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol string) string {
+	switch serviceProtocol {
+	case config.RouteProtocolResponsesStateful:
+		return fmt.Sprintf("route protocol %s does not support stateful responses requests", routeProtocol)
+	case config.RouteProtocolResponsesStateless:
+		return fmt.Sprintf("route protocol %s does not support stateless responses requests", routeProtocol)
+	default:
+		return fmt.Sprintf("route protocol %s does not support responses requests", routeProtocol)
+	}
 }

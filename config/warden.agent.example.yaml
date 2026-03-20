@@ -4,21 +4,22 @@ addr: ":28080"
 # /cc prefers Anthropic-compatible upstreams.
 # /codex prefers OpenAI-compatible coder models.
 # /openclaw keeps the same route shape but prefers Qwen first.
+# provider.family is required; protocol remains only as a backward-compatible alias.
 provider:
   openai:
+    family: "openai"
     url: "https://api.openai.com/v1"
-    protocol: "openai"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"
 
   anthropic:
+    family: "anthropic"
     url: "https://api.anthropic.com/v1"
-    protocol: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
 
   qwen:
-    protocol: "qwen"
+    family: "qwen"
     config_dir: "~/.qwen"
     timeout: "120s"
     models:
@@ -27,7 +28,7 @@ provider:
       - "vision-model"
 
   copilot:
-    protocol: "copilot"
+    family: "copilot"
     config_dir: "~/.config/github-copilot"
     timeout: "120s"
     models:
@@ -51,19 +52,13 @@ route:
         upstreams:
           - provider: "anthropic"
             model: "claude-opus-4-6"
-          - provider: "copilot"
-            model: "claude-opus-4-6"
       "claude-sonnet-4-6":
         upstreams:
           - provider: "anthropic"
             model: "claude-sonnet-4-6"
-          - provider: "copilot"
-            model: "claude-sonnet-4-6"
       "claude-haiku-4-5":
         upstreams:
           - provider: "anthropic"
-            model: "claude-haiku-4-5"
-          - provider: "copilot"
             model: "claude-haiku-4-5"
 
   /codex:

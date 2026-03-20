@@ -50,13 +50,9 @@ func TestGatewayProxyLogsDecompressedResponsesBody(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponses,
+				Protocol: config.RouteProtocolResponsesStateless,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": {
-						Upstreams: []*config.RouteUpstreamConfig{
-							{Provider: "openai", Model: "gpt-4o"},
-						},
-					},
+					"gpt-4o": exactModel(config.RouteProtocolResponsesStateless, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 			},
 		},

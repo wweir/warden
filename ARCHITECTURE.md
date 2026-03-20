@@ -45,6 +45,8 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 在 `Validate()` 中做静态校验和规范化
 - 将 route 配置编译为可直接匹配的运行时结构
 
+这里刻意不把启动期网络探测引入配置真相层。provider 协议如果省略，只允许按本地静态信号推断；probe 仍然只属于展示层。
+
 主要配置块：
 
 - `addr`
@@ -59,8 +61,14 @@ web/admin/           # Vue 3 管理端源码与构建产物
 
 - `provider.*.url` 与 `webhook.*.url` 必须为绝对 `http/https` URL
 - `provider.*.proxy` 只允许 `http` / `https` / `socks5` / `socks5h`
+- `provider.*.family` 必填；`provider.*.protocol` 仅作为兼容别名保留，不能与 `family` 冲突
+- `provider.*.enabled_protocols` / `provider.*.disabled_protocols` 只负责在 family 候选协议面内做静态收缩，不改变 `route.protocol` 才是运行时真相
+- `admin_password` / `api_keys` / `provider.*.api_key` 读取时兼容明文和 base64，写回配置时统一存为 base64；该兼容模式默认依赖当前支持的 secret 格式不会与规范化 base64 明文冲突
 - `qwen` / `copilot` 若未显式设置 `api_key`，则从本地 `config_dir` 读取 OAuth 凭证
-- `route.protocol` 必填，且只接受 `chat` / `responses` / `anthropic`
+- `route.protocol` 是必填且唯一的 route 协议声明
+- `route.exact_models.<name>` 直接声明 `upstreams`；`route.wildcard_models.<pattern>` 直接声明 `providers`
+- `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
+- 启用 `responses_to_chat` 的 provider 不能被 `responses_stateful` route 引用，因为它不支持 `previous_response_id`
 - 不再接受 legacy `route.models` / `route.providers` / `route.system_prompts`
 - `route` 的运行时派生字段只有在 `Validate()` 后可依赖
 
@@ -91,6 +99,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 管理 provider 抑制窗口与失败计数
 - 支持 failover
 - 聚合 provider 状态供管理端展示
+- 维护 provider 协议展示检测结果与 `provider + model + protocol` 精确探测结果
 - provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节
 
 这里的设计原则是：路由决策与协议适配分离，避免在 handler 内部散落 provider 选择逻辑。
@@ -172,14 +181,26 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 
 - `Providers` 页面负责单个 provider 配置编辑
 - `provider.models` 在管理端中被定义为 provider 可用模型的静态基线与发现失败兜底，并复用运行时已发现模型作为录入建议来源；它不负责声明 route 对外公开模型面
+- `Providers` 页面支持两类协议探测：
+  - provider 级轻量检测，只更新展示协议，不进入运行时路由判断
+  - `provider + model + protocol` 精确探测，用于确认某个模型是否真实可跑某个协议
+- 管理端 provider 数据把 `configured_protocols` / `supported_protocols` 作为静态配置真相，把 `display_protocols` 作为轻量探测展示值；两者不能混用
 - `Routes` 页面负责 route 配置编辑，包括 `exact_models` / `wildcard_models`
+- `Routes` 页面必须先锁定 `route.protocol`，模型映射不再自带 `protocols` 分支
 - route 编辑器里的 exact upstream model 建议会合并 `provider.models` 静态基线与当前运行时 `/models` 发现结果
-- route 编辑器中的模型卡片采用左右分栏：左侧维护公开模型信息，右侧维护 upstream/provider 列表，降低模型较多时的纵向滚动成本
-- route model 的额外 system prompt 由 `prompt_enabled` 显式控制；UI 默认折叠，只有启用后才显示输入框；后端只在 `prompt_enabled=true` 且 `system_prompt` 非空时注入
-- `Providers` 页面卡片可以直接发起“基于当前 provider 模型创建 route”；该入口会用 provider 的已配置/已发现模型预填 `exact_models`，并让每个 public model 默认回指同名 upstream model
+- route 编辑器中的模型卡片采用左右分栏；当前 route 下所有模型都遵守同一个协议约束
+- route 编辑器里的 exact upstream 列表默认按单行紧凑表格式排布，优先保证 provider / model 输入的横向连续性，窄屏再折行
+- route 详情页采用高信息密度工作台布局：顶部概览展示聚合运行态，左侧主列先展示 exact model 摘要再进入编辑区，右侧摘要轨承接 provider 运行状态
+- route 详情页上半区的 exact / wildcard 摘要表直接镜像当前可编辑配置；exact model 行提供“编辑 / 删除”入口，避免已配置模型只能回到卡片手工定位
+- provider 运行数据不再单独占据底部大表，而是拆入顶部概览和右侧 provider 摘要卡片，减少监控视线往返
+- 路由管理页里的自定义 combobox / tag suggestion 组件需要保留键盘导航和基础 ARIA 状态，不能只服务鼠标路径
+- route model 的额外 system prompt 由 `prompt_enabled` 显式控制；UI 把开关放在模型主信息旁边，只有启用后才展开输入框；后端只在 `prompt_enabled=true` 且 `system_prompt` 非空时注入
+- `Providers` 页面卡片可以直接发起“基于当前 provider 模型创建 route”；该入口会用 provider 的已配置/已发现模型预填 `exact_models`，并为新 route 预选单个协议
 - route hooks 的主编辑入口是 `Tool Hooks` 页面
 - `Config` 页面承载通用配置、客户端 API 密钥、webhook 与日志目标编辑
 - `Config` 页面不承载 provider / route / hook 编辑
+- `Chat` 页面按 `route.protocol` 选择请求协议：`chat -> /chat/completions`、`responses_* -> /responses`、`anthropic -> /messages`
+- `Chat` 页面在 `responses_stateful` route 下会把返回的 `response.id` 保存在本地会话里，并在下一轮请求带上 `previous_response_id`；这只是管理端 UI 的本地状态，不是网关运行时状态
 - `Logs` 页面在整合会话时，优先使用 Responses stateful 请求中的 `previous_response_id -> response.id` 显式关联；没有显式关联时再退回 fingerprint 前缀和旧的时间窗启发式
 - `Logs` 页面按 `request_id` upsert SSE 事件，因此流式请求会先显示“进行中”，完成后在同一行补全 duration/response
 
@@ -201,10 +222,11 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 
 1. 按 route 前缀匹配
 2. 若配置了 `api_keys`，先校验客户端 API Key
-3. 复制请求头并清洗 hop-by-hop / 客户端认证头
-4. 注入 provider 认证头和 `X-Forwarded-*`
-5. 转发到 upstream
-6. 记录日志和指标
+3. 对已识别的推理端点做 route protocol 约束检查；未识别的非推理子路径保持透明透传
+4. 复制请求头并清洗 hop-by-hop / 客户端认证头
+5. 注入 provider 认证头和 `X-Forwarded-*`
+6. 转发到 upstream
+7. 记录日志和指标
 
 ## Key Design Decisions
 
@@ -219,13 +241,17 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 - 通配符模型只决定 provider 候选集合，不改写请求模型名
 - 一个配置中的单独 public model 可以通过多个 ordered upstream/provider 获得独立 failover，从而提供该模型自己的 HA，而不会把整个 route 绑成一个统一故障域
 
-### OpenAI Route Endpoint Exposure
+### Route Protocol Exposure
 
-`route.protocol` 现在表示 route 的主协议面，而不是对 OpenAI 两个入口做硬切断。
+route 对外暴露哪些协议面，直接由 `route.protocol` 决定。
 
-- `anthropic` route 仍只暴露 Anthropic `/messages`
-- OpenAI-compatible route 仍按 `route.protocol` 标记主入口
-- 但只要 route 内存在可服务该协议的 provider，网关会额外注册 `/chat/completions` 或 `/responses`
+- `chat` 只暴露 `/chat/completions`
+- `responses_stateless` 只承接无状态 `/responses`
+- `responses_stateful` 承接原生 `/responses`，同时允许有状态和无状态请求
+- `anthropic` 只暴露 `/messages`
+- `responses_stateful` 在服务协议层同时覆盖 stateful/stateless `/responses`
+- 运行时路由只依赖 `route.protocol + route model` 配置，不依赖 provider 卡片上的展示协议
+- provider family 只承担“上游适配器”职责：`openai => chat + responses_*`，`anthropic => chat + anthropic`，`qwen/copilot/ollama => chat`
 - `responses_to_chat` 只对无状态 Responses 请求生效；带 `previous_response_id` 的有状态请求只允许原生 `/responses` 透传，且禁用 failover
 
 ### Hook Boundary Instead of Tool Runtime
