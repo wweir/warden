@@ -657,6 +657,7 @@ func (g *Gateway) handleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"timeout":               provCfg.Timeout,
 		"has_api_key":           provCfg.APIKey.Value() != "",
 		"responses_to_chat":     provCfg.ResponsesToChat,
+		"anthropic_to_chat":     provCfg.AnthropicToChat,
 		"models":                models,
 		"model_protocol_probes": g.selector.ModelProtocolProbes(name),
 		"status":                status,

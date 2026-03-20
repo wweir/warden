@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -183,7 +185,12 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 		}
 
 		if stream {
-			rawResp, latency, sendErr := sendUpstreamChatRawWithLatency(r.Context(), provCfg, chatReq)
+			reqBody, marshalErr := marshalProtocolRequest(provCfg.Protocol, chatReq)
+			if marshalErr != nil {
+				http.Error(w, fmt.Sprintf("marshal chat request: %v", marshalErr), http.StatusInternalServerError)
+				return
+			}
+			streamReader, latency, sendErr := sendStreamingRequest(r.Context(), provCfg, protocolEndpoint(provCfg.Protocol, false), reqBody)
 			if sendErr != nil {
 				g.selector.RecordOutcomeWithSource(provCfg.Name, sendErr, latency, "pre_stream")
 				g.RecordStreamErrorMetric(metricLabels, "pre_stream")
@@ -210,22 +217,32 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 				writeUpstreamAwareError(w, sendErr)
 				return
 			}
-			g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			defer streamReader.Close()
 			g.RecordTTFTMetric(metricLabels, latency)
-			g.runRouteToolHooks(r.Context(), parseChatToolCalls(provCfg.Protocol, rawResp, true), "ResponsesToChat stream: failed to run tool hooks")
 
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
-			respSSE := openai.ChatSSEToResponsesSSE(rawResp, model)
-			if _, writeErr := w.Write(respSSE); writeErr != nil {
-				slog.Warn("Failed to write converted stream response", "error", writeErr)
-			}
+
+			rawChat, respSSE, streamErr := streamChatAsResponses(streamReader, w, model)
 			w.(http.Flusher).Flush()
+			errMsg := ""
+			if streamErr != nil {
+				err = streamErr
+				errMsg = streamErr.Error()
+				if streamRelayErrorSource(streamErr) == streamRelaySourceUpstream {
+					g.selector.RecordOutcomeWithSource(provCfg.Name, streamErr, latency, "in_stream")
+					g.RecordStreamErrorMetric(metricLabels, "in_stream")
+				}
+				slog.Warn("ResponsesToChat stream terminated early", "error", streamErr)
+			} else {
+				g.selector.RecordOutcome(provCfg.Name, nil, latency)
+			}
+			g.runRouteToolHooks(r.Context(), parseChatToolCalls(provCfg.Protocol, rawChat, true), "ResponsesToChat stream: failed to run tool hooks")
 			g.recordInferenceLog(
 				logParams,
 				respSSE,
-				"",
+				errMsg,
 				func(respBody []byte) ([]byte, []byte, error) {
 					assembled, err := openai.AssembleResponsesStream(respBody)
 					return assembled, respBody, err
@@ -283,6 +300,80 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			nil,
 		)
 		return
+	}
+}
+
+func streamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string) ([]byte, []byte, error) {
+	reader := bufio.NewReader(src)
+	state := openai.NewChatResponsesStreamState()
+	var rawChat bytes.Buffer
+	var rawResp bytes.Buffer
+	streamComplete := false
+
+	for {
+		frame, err := readSSEFrame(reader)
+		if len(frame) > 0 {
+			rawChat.Write(frame)
+			events := protocol.ParseEvents(frame)
+			for _, evt := range events {
+				if evt.Data == "[DONE]" {
+					streamComplete = true
+					continue
+				}
+				converted := state.ConvertEvent(evt)
+				if len(converted) == 0 {
+					continue
+				}
+				rawResp.Write(converted)
+				if _, writeErr := dst.Write(converted); writeErr != nil {
+					return rawChat.Bytes(), rawResp.Bytes(), &streamRelayError{source: streamRelaySourceDownstream, err: writeErr}
+				}
+				dst.(http.Flusher).Flush()
+			}
+		}
+
+		if err != nil {
+			if err != io.EOF {
+				completed := openai.BuildChatResponsesCompletedEvent(rawChat.Bytes(), model, false)
+				rawResp.Write(completed)
+				if _, writeErr := dst.Write(completed); writeErr != nil {
+					return rawChat.Bytes(), rawResp.Bytes(), &streamRelayError{source: streamRelaySourceDownstream, err: writeErr}
+				}
+				dst.(http.Flusher).Flush()
+				return rawChat.Bytes(), rawResp.Bytes(), &streamRelayError{source: streamRelaySourceUpstream, err: err}
+			}
+			break
+		}
+	}
+
+	completed := openai.BuildChatResponsesCompletedEvent(rawChat.Bytes(), model, streamComplete)
+	rawResp.Write(completed)
+	if _, writeErr := dst.Write(completed); writeErr != nil {
+		return rawChat.Bytes(), rawResp.Bytes(), &streamRelayError{source: streamRelaySourceDownstream, err: writeErr}
+	}
+	dst.(http.Flusher).Flush()
+	if !streamComplete {
+		return rawChat.Bytes(), rawResp.Bytes(), &streamRelayError{source: streamRelaySourceUpstream, err: io.ErrUnexpectedEOF}
+	}
+	return rawChat.Bytes(), rawResp.Bytes(), nil
+}
+
+func readSSEFrame(r *bufio.Reader) ([]byte, error) {
+	var frame bytes.Buffer
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			frame.Write(line)
+			if bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n")) {
+				return frame.Bytes(), nil
+			}
+		}
+		if err != nil {
+			if err == io.EOF && frame.Len() > 0 {
+				return frame.Bytes(), io.EOF
+			}
+			return nil, err
+		}
 	}
 }
 

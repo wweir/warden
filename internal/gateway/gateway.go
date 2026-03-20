@@ -105,6 +105,12 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 					g.handleResponses(w, r, route)
 				})
 		}
+		if route.ConfiguredProtocol() == config.RouteProtocolAnthropic {
+			router.Handle(http.MethodPost, prefix+"/messages",
+				func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+					g.handleAnthropicMessages(w, r, route)
+				})
+		}
 	}
 
 	// fallback: match route prefix and proxy unhandled requests

@@ -757,7 +757,7 @@ func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMes
 func protocolModelsEndpoint(protocol string) string {
 	switch protocol {
 	case "anthropic":
-		return "/v1/models"
+		return "/models"
 	default:
 		return "/models"
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	sel "github.com/wweir/warden/internal/selector"
+	anthproto "github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
@@ -260,6 +261,22 @@ func sendChatProbe(provCfg *config.ProviderConfig, model string) error {
 }
 
 func sendAnthropicProbe(provCfg *config.ProviderConfig, model string) error {
+	if provCfg.Protocol == "openai" && provCfg.AnthropicToChat {
+		rawBody := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`, model))
+		chatReq, err := anthproto.MessagesRequestToChatRequest(rawBody)
+		if err != nil {
+			return err
+		}
+		body, err := marshalProtocolRequest(provCfg.Protocol, chatReq)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), providerProbeTimeout)
+		defer cancel()
+		_, _, err = sendRequest(ctx, provCfg, protocolEndpoint(provCfg.Protocol, false), body, false)
+		return err
+	}
+
 	if provCfg.Protocol != "anthropic" {
 		return fmt.Errorf("provider family does not support anthropic probe")
 	}

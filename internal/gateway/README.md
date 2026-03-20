@@ -9,7 +9,9 @@
 - Selects route-model upstream targets, records outcomes, and runs route-scoped tool-call hooks on returned tool calls.
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
-- Bridges stateless OpenAI `responses` requests to upstream `chat/completions` when a provider enables `responses_to_chat`.
+- Bridges stateless OpenAI `responses` requests to upstream `chat/completions` when a provider enables `responses_to_chat`, with explicit subset validation instead of mock passthrough.
+- Bridges Anthropic `messages` requests to upstream OpenAI `chat/completions` when a provider enables `anthropic_to_chat`, again using explicit subset validation instead of raw passthrough.
+- Keeps stream bridges live: `responses_to_chat` and `anthropic_to_chat` relay upstream SSE incrementally instead of buffering the whole body before writing downstream.
 - Logs inspectable upstream response bodies; transparent proxy logs decompress `gzip`/`br`/`zstd` bodies before persistence when possible.
 - Keeps failover trail on request logs, so a single successful client request still shows intermediate upstream switches.
 
@@ -26,11 +28,15 @@
 - `chat` routes expose only `/chat/completions`.
 - `responses_stateless` routes expose only stateless `/responses`.
 - `responses_stateless` routes reject `previous_response_id`.
+- `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`.
 - `responses_stateful` routes accept both stateless and stateful `/responses`; stateful requests bypass `responses_to_chat` conversion and disable failover.
 - Providers with `responses_to_chat` enabled cannot back `responses_stateful` route models, because that bridge does not implement `previous_response_id`.
 - Anthropic routes still expose only `/messages`.
+- `anthropic_to_chat` accepts only a constrained Messages subset; non-text content blocks, mixed user text + tool_result messages, and unknown Anthropic-only fields fail fast with `400`.
+- Streaming provider accounting distinguishes `pre_stream` from `in_stream`: pre-stream failures may retry/fail over, in-stream upstream truncation only marks the current provider unhealthy, and downstream disconnects do not suppress the provider.
 - Non-inference subpaths that fall through to transparent proxying keep raw passthrough behavior; route protocol checks only gate recognized inference endpoints.
-- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_*`, `anthropic => chat + anthropic`, `qwen/copilot/ollama => chat`.
+- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_*` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `qwen/copilot/ollama => chat`.
+- Provider model protocol probes follow the real request path: `anthropic_to_chat` providers probe Anthropic support by converting a Messages request into upstream Chat, instead of hard-rejecting non-native Anthropic providers.
 
 ## Key Interfaces
 
@@ -40,6 +46,7 @@
 - `dashboardMetricsStore`: maintains in-memory rolling dashboard points sampled from Prometheus collectors.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
+- Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion.
 - Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
 
 ## Admin Telemetry Flow

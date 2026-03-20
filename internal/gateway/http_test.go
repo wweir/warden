@@ -1,8 +1,11 @@
 package gateway
 
 import (
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,5 +145,103 @@ func TestWriteUpstreamAwareError_WrappedNonUpstreamFallsBackTo502(t *testing.T) 
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "wrapped: context deadline exceeded") {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestSendStreamingRequestRejectsHTTP200JSONErrorBody(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error":{"type":"key_model_access_denied","message":"denied"}}`))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+	}
+
+	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	if reader != nil {
+		t.Fatal("reader should be nil on HTTP 200 error body")
+	}
+
+	var upErr *selector.UpstreamError
+	if !errors.As(err, &upErr) {
+		t.Fatalf("error = %v, want UpstreamError", err)
+	}
+	if upErr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", upErr.Code, http.StatusOK)
+	}
+	if !strings.Contains(upErr.Body, "key_model_access_denied") {
+		t.Fatalf("body = %q", upErr.Body)
+	}
+}
+
+func TestSendStreamingRequestRejectsHTTP200HTMLBody(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body>bad gateway</body></html>`))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+	}
+
+	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	if reader != nil {
+		t.Fatal("reader should be nil on HTML error body")
+	}
+
+	var upErr *selector.UpstreamError
+	if !errors.As(err, &upErr) {
+		t.Fatalf("error = %v, want UpstreamError", err)
+	}
+	if upErr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", upErr.Code, http.StatusOK)
+	}
+	if !strings.Contains(upErr.Body, "<!DOCTYPE html>") {
+		t.Fatalf("body = %q", upErr.Body)
+	}
+}
+
+func TestSendStreamingRequestDecompressesGzipWithoutHeader(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		var body strings.Builder
+		gz := gzip.NewWriter(&body)
+		_, _ = gz.Write([]byte("data: hello\n\n"))
+		_ = gz.Close()
+		_, _ = w.Write([]byte(body.String()))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+	}
+
+	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	if err != nil {
+		t.Fatalf("sendStreamingRequest() error = %v", err)
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "data: hello\n\n" {
+		t.Fatalf("body = %q, want decompressed SSE", string(body))
 	}
 }

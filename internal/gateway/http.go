@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +17,21 @@ import (
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/selector"
 )
+
+type compositeReadCloser struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (c *compositeReadCloser) Close() error {
+	var closeErr error
+	for i := len(c.closers) - 1; i >= 0; i-- {
+		if err := c.closers[i].Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
+	}
+	return closeErr
+}
 
 // firstTokenTimeout is the fixed timeout for streaming requests.
 // Streaming responses should return the first token quickly (typically within seconds).
@@ -59,21 +76,7 @@ func sendRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint s
 	if err != nil {
 		return nil, latency, fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	reader := resp.Body
-	// Manually decompress gzip when the transport did not handle it
-	// (e.g. upstream returns gzip without proper Content-Encoding header).
-	if resp.Header.Get("Content-Encoding") == "gzip" {
-		gr, gzErr := gzip.NewReader(resp.Body)
-		if gzErr != nil {
-			return nil, latency, fmt.Errorf("create gzip reader: %w", gzErr)
-		}
-		defer gr.Close()
-		reader = gr
-	}
-
-	respBody, err := io.ReadAll(reader)
+	respBody, err := readHTTPResponseBody(resp)
 	if err != nil {
 		slog.Warn("sendRequest: failed to read response body", "error", err, "status", resp.StatusCode, "bytes_read", len(respBody))
 		// For streaming requests, partial data is not useful - return error
@@ -83,34 +86,161 @@ func sendRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint s
 		return nil, latency, fmt.Errorf("read response body: %w", err)
 	}
 
-	// Fallback: if body still looks like gzip (magic bytes 0x1f 0x8b),
-	// decompress it. Some proxies omit Content-Encoding header.
-	if len(respBody) >= 2 && respBody[0] == 0x1f && respBody[1] == 0x8b {
-		gr, gzErr := gzip.NewReader(bytes.NewReader(respBody))
-		if gzErr == nil {
-			decompressed, readErr := io.ReadAll(gr)
-			gr.Close()
-			if readErr == nil {
-				respBody = decompressed
-			}
-		}
-	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, latency, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
 	}
 
-	// detect HTML body on 200 (misconfigured proxy returning HTML instead of JSON)
-	if trimmed := strings.TrimSpace(string(respBody)); len(trimmed) > 0 && (trimmed[0] == '<' || strings.HasPrefix(trimmed, "<!DOCTYPE")) {
-		return nil, latency, &selector.UpstreamError{Code: resp.StatusCode, Body: trimmed}
-	}
-
-	// detect error in HTTP 200 response body (some APIs return errors with 200 status)
-	if errType, _ := selector.ParseErrorBody(string(respBody)); errType != "" && selector.IsRetryableByBody(string(respBody)) {
-		return nil, latency, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+	if upErr := upstreamBodyError(resp.StatusCode, respBody); upErr != nil {
+		return nil, latency, upErr
 	}
 
 	return respBody, latency, nil
+}
+
+func sendStreamingRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint string, body []byte) (io.ReadCloser, time.Duration, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+
+	if clientReq, ok := clientRequestFromContext(ctx); ok {
+		httpReq.Header = buildForwardedRequestHeaders(clientReq)
+		httpReq.Header.Del("Accept-Encoding")
+	}
+
+	selector.SetAuthHeaders(httpReq.Header, provCfg)
+
+	client := provCfg.HTTPClient(firstTokenTimeout)
+	upstreamStart := time.Now()
+	resp, err := client.Do(httpReq)
+	latency := time.Since(upstreamStart)
+	if err != nil {
+		return nil, latency, fmt.Errorf("send request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, readErr := readHTTPResponseBody(resp)
+		if readErr != nil {
+			return nil, latency, fmt.Errorf("read error response body: %w", readErr)
+		}
+		return nil, latency, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+	}
+
+	reader, err := responseBodyReader(resp)
+	if err != nil {
+		resp.Body.Close()
+		return nil, latency, err
+	}
+
+	if !isEventStreamContentType(resp.Header.Get("Content-Type")) {
+		respBody, readErr := readAllAndClose(reader)
+		if readErr != nil {
+			return nil, latency, fmt.Errorf("read non-stream response body: %w", readErr)
+		}
+		if upErr := upstreamBodyError(resp.StatusCode, respBody); upErr != nil {
+			return nil, latency, upErr
+		}
+		return nil, latency, &selector.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+	}
+
+	return reader, latency, nil
+}
+
+func responseBodyReader(resp *http.Response) (io.ReadCloser, error) {
+	buffered := bufio.NewReader(resp.Body)
+	shouldGunzip := strings.EqualFold(strings.TrimSpace(resp.Header.Get("Content-Encoding")), "gzip")
+	if !shouldGunzip {
+		prefix, err := buffered.Peek(2)
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+			return nil, fmt.Errorf("peek response body: %w", err)
+		}
+		shouldGunzip = len(prefix) >= 2 && prefix[0] == 0x1f && prefix[1] == 0x8b
+	}
+
+	if !shouldGunzip {
+		return &compositeReadCloser{
+			Reader:  buffered,
+			closers: []io.Closer{resp.Body},
+		}, nil
+	}
+
+	gr, err := gzip.NewReader(buffered)
+	if err != nil {
+		return nil, fmt.Errorf("create gzip reader: %w", err)
+	}
+
+	return &compositeReadCloser{
+		Reader:  gr,
+		closers: []io.Closer{gr, resp.Body},
+	}, nil
+}
+
+func readAllAndClose(reader io.ReadCloser) ([]byte, error) {
+	defer reader.Close()
+
+	respBody, err := io.ReadAll(reader)
+	if err != nil {
+		return respBody, err
+	}
+	return maybeDecompressBody(respBody), nil
+}
+
+func readHTTPResponseBody(resp *http.Response) ([]byte, error) {
+	reader, err := responseBodyReader(resp)
+	if err != nil {
+		return nil, err
+	}
+	return readAllAndClose(reader)
+}
+
+func maybeDecompressBody(respBody []byte) []byte {
+	// Some proxies omit Content-Encoding even though the body is still gzipped.
+	if len(respBody) < 2 || respBody[0] != 0x1f || respBody[1] != 0x8b {
+		return respBody
+	}
+
+	gr, err := gzip.NewReader(bytes.NewReader(respBody))
+	if err != nil {
+		return respBody
+	}
+	defer gr.Close()
+
+	decompressed, readErr := io.ReadAll(gr)
+	if readErr != nil {
+		return respBody
+	}
+	return decompressed
+}
+
+func upstreamBodyError(statusCode int, respBody []byte) *selector.UpstreamError {
+	trimmed := strings.TrimSpace(string(respBody))
+	if trimmed == "" {
+		return nil
+	}
+
+	if trimmed[0] == '<' || strings.HasPrefix(trimmed, "<!DOCTYPE") {
+		return &selector.UpstreamError{Code: statusCode, Body: trimmed}
+	}
+
+	if errType, _ := selector.ParseErrorBody(trimmed); errType != "" && selector.IsRetryableByBody(trimmed) {
+		return &selector.UpstreamError{Code: statusCode, Body: trimmed}
+	}
+	return nil
+}
+
+func isEventStreamContentType(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return strings.HasPrefix(strings.ToLower(contentType), "text/event-stream")
+	}
+	return mediaType == "text/event-stream"
 }
 
 func writeUpstreamAwareError(w http.ResponseWriter, err error) {
