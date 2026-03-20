@@ -9,7 +9,7 @@ import (
 )
 
 // Endpoint is the Anthropic Messages API endpoint.
-const Endpoint = "/v1/messages"
+const Endpoint = "/messages"
 
 // MarshalRequest converts an OpenAI ChatCompletionRequest to Anthropic Messages API format.
 //

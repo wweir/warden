@@ -14,7 +14,8 @@ protocol/
 │   ├── stream.go       # SSE 流式解析器（Chat + Responses）
 │   └── prompt.go       # 系统提示词注入
 └── anthropic/          # Anthropic 协议实现
-    ├── anthropic.go    # OpenAI ↔ Anthropic 格式转换
+    ├── anthropic.go    # OpenAI Chat ↔ Anthropic Messages 格式转换
+    ├── chat_bridge.go  # Anthropic Messages -> OpenAI Chat 请求/响应/SSE 桥接
     ├── stream.go       # SSE 流式解析器
     └── auth.go         # 认证头设置
 ```
@@ -25,6 +26,10 @@ protocol/
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
 - 提供 OpenAI `responses_to_chat` 所需的无状态 `Responses -> Chat` 请求转换，以及 `Chat -> Responses` 响应/SSE 转换
+- 提供 `anthropic_to_chat` 所需的受控 `Messages -> Chat` 请求转换，以及 `Chat -> Messages` 响应/SSE 转换
+- `responses_to_chat` 转换器只接受受控的 stateless 子集；不支持的 Responses 专有字段、未知 input item、非 `function` tools 会直接报错
+- `anthropic_to_chat` 转换器只接受文本 + `function` tools 子集；不支持的 content block、未知字段和无法线性映射的消息形状会直接报错
+- 流式桥接使用增量状态机而不是整段字符串拼接；状态机会在流结束时校验 OpenAI `[DONE]` 或 Anthropic `message_stop`，缺失时把流视为不完整
 
 ## 主要类型
 

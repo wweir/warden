@@ -4,16 +4,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/wweir/warden/pkg/protocol"
 )
 
-// Mock tool names for Responses API features that cannot be mapped to Chat Completions.
-const (
-	MockToolPrefix       = "__responses_tool_"
-	MockToolCallIDPrefix = "__responses_"
-)
+var responsesToChatAllowedExtraFields = map[string]struct{}{
+	"audio":                 {},
+	"frequency_penalty":     {},
+	"logit_bias":            {},
+	"logprobs":              {},
+	"max_completion_tokens": {},
+	"max_tokens":            {},
+	"metadata":              {},
+	"modalities":            {},
+	"n":                     {},
+	"parallel_tool_calls":   {},
+	"presence_penalty":      {},
+	"response_format":       {},
+	"seed":                  {},
+	"service_tier":          {},
+	"stop":                  {},
+	"store":                 {},
+	"stream_options":        {},
+	"temperature":           {},
+	"tool_choice":           {},
+	"top_logprobs":          {},
+	"top_p":                 {},
+	"user":                  {},
+}
 
 // ResponsesRequestToChatRequest converts a Responses API request to a Chat Completions request.
 // Only the Chat-compatible subset is supported: string/array input and function tools.
@@ -24,30 +44,89 @@ func ResponsesRequestToChatRequest(respReq ResponsesRequest) (ChatCompletionRequ
 		Extra:  make(map[string]json.RawMessage),
 	}
 
-	if len(respReq.Extra) > 0 {
-		maps.Copy(chatReq.Extra, respReq.Extra)
-	}
-	if _, ok := chatReq.Extra["previous_response_id"]; ok {
-		return chatReq, fmt.Errorf("previous_response_id is not supported in responses_to_chat mode")
-	}
-
 	messages, err := convertResponsesInputToMessages(respReq.Input)
 	if err != nil {
 		return chatReq, fmt.Errorf("convert input: %w", err)
 	}
+
+	messages, extra, err := convertResponsesRequestExtras(messages, respReq.Extra)
+	if err != nil {
+		return chatReq, err
+	}
 	chatReq.Messages = messages
+	if len(extra) > 0 {
+		maps.Copy(chatReq.Extra, extra)
+	}
 
 	for _, rawTool := range respReq.Tools {
 		tool, err := convertResponsesToolToChatTool(rawTool)
 		if err != nil {
-			// Convert unsupported tool types to mock function tools for passthrough
-			// This preserves custom/web_search/file_search tools when converting to Chat Completions
-			tool = createMockToolFromRaw(rawTool)
+			return chatReq, fmt.Errorf("convert tool: %w", err)
 		}
 		chatReq.Tools = append(chatReq.Tools, tool)
 	}
 
 	return chatReq, nil
+}
+
+func convertResponsesRequestExtras(messages []Message, extra map[string]json.RawMessage) ([]Message, map[string]json.RawMessage, error) {
+	if len(extra) == 0 {
+		return messages, nil, nil
+	}
+
+	chatExtra := make(map[string]json.RawMessage, len(extra))
+	for key, raw := range extra {
+		switch key {
+		case "instructions":
+			var instructions string
+			if err := json.Unmarshal(raw, &instructions); err != nil {
+				return nil, nil, fmt.Errorf("convert instructions: %w", err)
+			}
+			if strings.TrimSpace(instructions) == "" {
+				continue
+			}
+			messages = append([]Message{{
+				Role:    "developer",
+				Content: instructions,
+			}}, messages...)
+		case "previous_response_id":
+			return nil, nil, fmt.Errorf("previous_response_id is not supported in responses_to_chat mode")
+		case "n":
+			n, err := decodePositiveInt(raw)
+			if err != nil {
+				return nil, nil, fmt.Errorf("convert n: %w", err)
+			}
+			if n > 1 {
+				return nil, nil, fmt.Errorf("n > 1 is not supported in responses_to_chat mode")
+			}
+			chatExtra[key] = raw
+		default:
+			if _, ok := responsesToChatAllowedExtraFields[key]; !ok {
+				return nil, nil, fmt.Errorf("responses field %q is not supported in responses_to_chat mode", key)
+			}
+			chatExtra[key] = raw
+		}
+	}
+
+	return messages, chatExtra, nil
+}
+
+func decodePositiveInt(raw json.RawMessage) (int64, error) {
+	var i int64
+	if err := json.Unmarshal(raw, &i); err == nil {
+		return i, nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		i, convErr := strconv.ParseInt(s, 10, 64)
+		if convErr != nil {
+			return 0, convErr
+		}
+		return i, nil
+	}
+
+	return 0, fmt.Errorf("expected integer")
 }
 
 func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
@@ -73,8 +152,6 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 	}
 
 	messages := make([]Message, 0, len(items))
-	var pendingReasoning string // Reasoning content to attach to next assistant message
-
 	for _, raw := range items {
 		var itemType struct {
 			Type string `json:"type"`
@@ -88,11 +165,6 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			msg, err := convertResponsesMessageItem(raw)
 			if err != nil {
 				return nil, err
-			}
-			// If this is an assistant message and we have pending reasoning, attach it
-			if msg.Role == "assistant" && pendingReasoning != "" {
-				msg.ReasoningContent = pendingReasoning
-				pendingReasoning = ""
 			}
 			messages = append(messages, msg)
 
@@ -112,12 +184,7 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && messages[len(messages)-1].ToolCallID == "" {
 				messages[len(messages)-1].ToolCalls = append(messages[len(messages)-1].ToolCalls, tc)
 			} else {
-				msg := Message{Role: "assistant", ToolCalls: []ToolCall{tc}}
-				if pendingReasoning != "" {
-					msg.ReasoningContent = pendingReasoning
-					pendingReasoning = ""
-				}
-				messages = append(messages, msg)
+				messages = append(messages, Message{Role: "assistant", ToolCalls: []ToolCall{tc}})
 			}
 
 		case "function_call_output":
@@ -128,44 +195,11 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: out.Output})
 
 		case "reasoning":
-			// Reasoning items contain extended thinking content
-			// Store for next assistant message
-			var reasoningItem struct {
-				Summary string `json:"summary"`
-			}
-			if err := json.Unmarshal(raw, &reasoningItem); err != nil {
-				// If parsing fails, use raw JSON as fallback
-				reasoningItem.Summary = string(raw)
-			}
-			pendingReasoning = reasoningItem.Summary
+			return nil, fmt.Errorf("unsupported input item type %q", itemType.Type)
 
 		default:
-			// Convert unknown input item types to mock tool call for passthrough
-			mockCallID := generateMockCallID(itemType.Type)
-			tc := ToolCall{
-				ID:   mockCallID,
-				Type: "function",
-				Function: FunctionCall{
-					Name:      MockToolPrefix + itemType.Type,
-					Arguments: string(raw),
-				},
-			}
-			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && messages[len(messages)-1].ToolCallID == "" {
-				messages[len(messages)-1].ToolCalls = append(messages[len(messages)-1].ToolCalls, tc)
-			} else {
-				msg := Message{Role: "assistant", ToolCalls: []ToolCall{tc}}
-				if pendingReasoning != "" {
-					msg.ReasoningContent = pendingReasoning
-					pendingReasoning = ""
-				}
-				messages = append(messages, msg)
-			}
+			return nil, fmt.Errorf("unsupported input item type %q", itemType.Type)
 		}
-	}
-
-	// If there's pending reasoning without a following assistant message, create one
-	if pendingReasoning != "" {
-		messages = append(messages, Message{Role: "assistant", ReasoningContent: pendingReasoning})
 	}
 
 	return messages, nil
@@ -184,8 +218,10 @@ func convertResponsesMessageItem(raw json.RawMessage) (Message, error) {
 		}
 		delete(fields, "role")
 	}
-	if msg.Role == "developer" {
-		msg.Role = "system"
+	switch msg.Role {
+	case "assistant", "developer", "system", "tool", "user":
+	default:
+		return Message{}, fmt.Errorf("unsupported message role %q", msg.Role)
 	}
 	if v, ok := fields["content"]; ok {
 		content, err := convertResponsesContentToChatContent(v)
@@ -195,11 +231,8 @@ func convertResponsesMessageItem(raw json.RawMessage) (Message, error) {
 		msg.Content = content
 		delete(fields, "content")
 	}
-	if v, ok := fields["reasoning_content"]; ok {
-		if err := json.Unmarshal(v, &msg.ReasoningContent); err != nil {
-			return Message{}, fmt.Errorf("unmarshal reasoning_content: %w", err)
-		}
-		delete(fields, "reasoning_content")
+	if _, ok := fields["reasoning_content"]; ok {
+		return Message{}, fmt.Errorf("reasoning_content is not supported in responses_to_chat mode")
 	}
 	if v, ok := fields["name"]; ok {
 		if err := json.Unmarshal(v, &msg.Name); err != nil {
@@ -266,7 +299,7 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
 		return Tool{}, fmt.Errorf("unmarshal tool type: %w", err)
 	}
 	if typeCheck.Type != "function" {
-		return Tool{}, fmt.Errorf("unsupported responses tool type %q", typeCheck.Type)
+		return Tool{}, fmt.Errorf("unsupported tool type %q", typeCheck.Type)
 	}
 
 	var flatTool ResponsesFunctionTool
@@ -294,8 +327,9 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
 // ChatResponseToResponsesResponse converts a Chat Completions response to a Responses API response.
 func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model string) (ResponsesResponse, error) {
 	resp := ResponsesResponse{
-		ID:    chatResp.ID,
-		Extra: make(map[string]json.RawMessage),
+		ID:     chatResp.ID,
+		Status: "completed",
+		Extra:  make(map[string]json.RawMessage),
 	}
 
 	for k, v := range chatResp.Extra {
@@ -315,7 +349,6 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 	if chatResp.Usage != (Usage{}) {
 		resp.Extra["usage"] = mustMarshalRaw(chatResp.Usage)
 	}
-	resp.Extra["status"], _ = json.Marshal("completed")
 
 	if len(chatResp.Choices) == 0 {
 		return resp, nil
@@ -325,7 +358,7 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 	if msg.Content != nil {
 		item := map[string]any{
 			"type":    "message",
-			"role":    "assistant",
+			"role":    messageRoleOrDefault(msg.Role),
 			"content": normalizeChatContentForResponses(msg.Content),
 		}
 		raw, err := json.Marshal(item)
@@ -354,6 +387,13 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 }
 
 func normalizeChatContentForResponses(content any) any {
+	if text, ok := content.(string); ok {
+		return []any{map[string]any{
+			"type": "output_text",
+			"text": text,
+		}}
+	}
+
 	blocks, ok := content.([]any)
 	if !ok {
 		return content
@@ -380,89 +420,97 @@ func normalizeChatContentForResponses(content any) any {
 	return normalized
 }
 
+func messageRoleOrDefault(role string) string {
+	if role == "" {
+		return "assistant"
+	}
+	return role
+}
+
 func mustMarshalRaw(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
 
-// ChatSSEToResponsesSSE converts Chat Completions SSE chunks to Responses API SSE events.
-// If the stream is incomplete (missing [DONE] marker), the response.completed event will
-// have status "incomplete" with an error message.
-func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
-	events := protocol.ParseEvents(rawSSE)
+type ChatResponsesStreamState struct {
+	messageAdded bool
+	toolAdded    map[int]bool
+}
+
+func NewChatResponsesStreamState() *ChatResponsesStreamState {
+	return &ChatResponsesStreamState{
+		toolAdded: make(map[int]bool),
+	}
+}
+
+func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
+	if evt.Data == "" || evt.Data == "[DONE]" {
+		return nil
+	}
+
+	var chunk map[string]any
+	if err := json.Unmarshal([]byte(evt.Data), &chunk); err != nil {
+		return nil
+	}
+
+	choices, _ := asArray(chunk["choices"])
+	if len(choices) == 0 {
+		return nil
+	}
+	choice, _ := choices[0].(map[string]any)
+	if choice == nil {
+		return nil
+	}
+	delta, _ := choice["delta"].(map[string]any)
+	if delta == nil {
+		return nil
+	}
+
 	var responseChunks []string
-	messageAdded := false
-	toolAdded := make(map[int]bool)
-	streamComplete := false
+	if content, ok := delta["content"].(string); ok && content != "" {
+		if !s.messageAdded {
+			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+				"item": map[string]any{"type": "message", "role": "assistant", "content": []any{}},
+			}))
+			s.messageAdded = true
+		}
+		responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{"delta": content}))
+	}
 
-	for _, evt := range events {
-		if evt.Data == "[DONE]" {
-			streamComplete = true
+	deltaToolCalls, _ := asArray(delta["tool_calls"])
+	for _, rawToolCall := range deltaToolCalls {
+		dtc, _ := rawToolCall.(map[string]any)
+		if dtc == nil {
 			continue
 		}
-		if evt.Data == "" {
-			continue
-		}
+		idx := int(toFloat64(dtc["index"]))
+		fn, _ := dtc["function"].(map[string]any)
 
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(evt.Data), &chunk); err != nil {
-			continue
-		}
-
-		choices, _ := asArray(chunk["choices"])
-		if len(choices) == 0 {
-			continue
-		}
-		choice, _ := choices[0].(map[string]any)
-		if choice == nil {
-			continue
-		}
-		delta, _ := choice["delta"].(map[string]any)
-		if delta == nil {
-			continue
-		}
-
-		if content, ok := delta["content"].(string); ok && content != "" {
-			if !messageAdded {
-				responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
-					"item": map[string]any{"type": "message", "role": "assistant", "content": []any{}},
-				}))
-				messageAdded = true
+		if !s.toolAdded[idx] {
+			item := map[string]any{"type": "function_call"}
+			if id, ok := dtc["id"].(string); ok && id != "" {
+				item["call_id"] = id
 			}
-			responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{"delta": content}))
-		}
-
-		deltaToolCalls, _ := asArray(delta["tool_calls"])
-		for _, rawToolCall := range deltaToolCalls {
-			dtc, _ := rawToolCall.(map[string]any)
-			if dtc == nil {
-				continue
-			}
-			idx := int(toFloat64(dtc["index"]))
-			fn, _ := dtc["function"].(map[string]any)
-
-			if !toolAdded[idx] {
-				item := map[string]any{"type": "function_call"}
-				if id, ok := dtc["id"].(string); ok && id != "" {
-					item["call_id"] = id
-				}
-				if fn != nil {
-					if name, ok := fn["name"].(string); ok && name != "" {
-						item["name"] = name
-					}
-				}
-				responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{"item": item}))
-				toolAdded[idx] = true
-			}
-
 			if fn != nil {
-				if args, ok := fn["arguments"].(string); ok && args != "" {
-					responseChunks = append(responseChunks, formatResponsesEvent("response.function_call_arguments.delta", map[string]any{"delta": args}))
+				if name, ok := fn["name"].(string); ok && name != "" {
+					item["name"] = name
 				}
+			}
+			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{"item": item}))
+			s.toolAdded[idx] = true
+		}
+
+		if fn != nil {
+			if args, ok := fn["arguments"].(string); ok && args != "" {
+				responseChunks = append(responseChunks, formatResponsesEvent("response.function_call_arguments.delta", map[string]any{"delta": args}))
 			}
 		}
 	}
 
+	return []byte(strings.Join(responseChunks, ""))
+}
+
+func BuildChatResponsesCompletedEvent(rawSSE []byte, model string, streamComplete bool) []byte {
 	completed := ResponsesResponse{}
 	if assembled, err := AssembleChatStream(rawSSE); err == nil {
 		var chatResp ChatCompletionResponse
@@ -479,7 +527,6 @@ func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
 		completed.Extra = map[string]json.RawMessage{"model": mustMarshalRaw(model), "object": mustMarshalRaw("response")}
 	}
 
-	// Set status based on stream completeness
 	if !streamComplete {
 		completed.Status = "incomplete"
 		if completed.Extra == nil {
@@ -489,10 +536,31 @@ func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
 			"type":    "stream_error",
 			"message": "stream disconnected before completion",
 		})
-	} else {
-		completed.Status = "completed"
 	}
-	responseChunks = append(responseChunks, formatResponsesEvent("response.completed", map[string]any{"response": completed}))
+
+	return []byte(formatResponsesEvent("response.completed", map[string]any{"response": completed}))
+}
+
+// ChatSSEToResponsesSSE converts Chat Completions SSE chunks to Responses API SSE events.
+// If the stream is incomplete (missing [DONE] marker), the response.completed event will
+// have status "incomplete" with an error message.
+func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
+	events := protocol.ParseEvents(rawSSE)
+	var responseChunks []string
+	state := NewChatResponsesStreamState()
+	streamComplete := false
+
+	for _, evt := range events {
+		if evt.Data == "[DONE]" {
+			streamComplete = true
+			continue
+		}
+		if chunk := state.ConvertEvent(evt); len(chunk) > 0 {
+			responseChunks = append(responseChunks, string(chunk))
+		}
+	}
+
+	responseChunks = append(responseChunks, string(BuildChatResponsesCompletedEvent(rawSSE, model, streamComplete)))
 
 	return []byte(strings.Join(responseChunks, ""))
 }
@@ -500,28 +568,4 @@ func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
 func formatResponsesEvent(eventType string, payload any) string {
 	data, _ := json.Marshal(payload)
 	return "event: " + eventType + "\ndata: " + string(data) + "\n\n"
-}
-
-// generateMockCallID creates a unique ID for mock tool calls.
-func generateMockCallID(toolType string) string {
-	return MockToolCallIDPrefix + toolType + "_" + fmt.Sprintf("%d", len(toolType))
-}
-
-// createMockToolFromRaw creates a mock function tool from an unsupported Responses tool type.
-// The original tool data is preserved in the Parameters field.
-func createMockToolFromRaw(raw json.RawMessage) Tool {
-	var typeCheck struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-	}
-	json.Unmarshal(raw, &typeCheck)
-
-	return Tool{
-		Type: "function",
-		Function: Function{
-			Name:        MockToolPrefix + typeCheck.Type + "_" + typeCheck.Name,
-			Description: "Mock tool for Responses API " + typeCheck.Type + " tool (passthrough)",
-			Parameters:  raw,
-		},
-	}
 }
