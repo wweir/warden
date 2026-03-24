@@ -236,6 +236,7 @@ func buildConfigParserConfig() mapstructure.DecoderConfig {
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToSliceHookFunc(","),
 		mapstructure.StringToBasicTypeHookFunc(),
+		config.HookFuncStringToSecretString(),
 	)
 	return cfg
 }

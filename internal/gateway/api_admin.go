@@ -499,7 +499,7 @@ func dropOAuthProviderAPIKey(cfgMap map[string]any) {
 
 func normalizeSecretConfigJSON(cfgMap map[string]any) {
 	if adminPassword, ok := cfgMap["admin_password"].(string); ok && adminPassword != "" {
-		cfgMap["admin_password"] = config.EncodeSecret(adminPassword)
+		cfgMap["admin_password"] = config.NormalizeSecretStorage(adminPassword)
 	}
 
 	if apiKeysMap, ok := cfgMap["api_keys"].(map[string]any); ok {
@@ -508,7 +508,7 @@ func normalizeSecretConfigJSON(cfgMap map[string]any) {
 			if !ok || value == "" {
 				continue
 			}
-			apiKeysMap[name] = config.EncodeSecret(value)
+			apiKeysMap[name] = config.NormalizeSecretStorage(value)
 		}
 	}
 
@@ -522,7 +522,7 @@ func normalizeSecretConfigJSON(cfgMap map[string]any) {
 		if !ok || apiKey == "" {
 			continue
 		}
-		pm["api_key"] = config.EncodeSecret(apiKey)
+		pm["api_key"] = config.NormalizeSecretStorage(apiKey)
 	}
 }
 

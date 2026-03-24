@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"unicode/utf8"
 
+	"github.com/go-viper/mapstructure/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +100,15 @@ func EncodeSecret(plaintext string) string {
 	return SecretString(plaintext).Encoded()
 }
 
+// NormalizeSecretStorage converts either plaintext or base64 secret input
+// into the canonical base64 storage form.
+func NormalizeSecretStorage(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	return EncodeSecret(DecodeSecret(raw))
+}
+
 // DecodeSecret decodes a base64-encoded secret.
 // Returns the input unchanged if it's not valid base64.
 func DecodeSecret(encoded string) string {
@@ -127,4 +138,22 @@ func decodeSecretString(str string) (string, bool) {
 		return "", false
 	}
 	return string(decoded), true
+}
+
+// HookFuncStringToSecretString decodes plaintext or base64 strings into SecretString
+// during mapstructure-based config loading.
+func HookFuncStringToSecretString() mapstructure.DecodeHookFuncType {
+	secretType := reflect.TypeOf(SecretString(""))
+
+	return func(f reflect.Type, t reflect.Type, data any) (any, error) {
+		if f.Kind() != reflect.String || t != secretType {
+			return data, nil
+		}
+
+		var secret SecretString
+		if err := secret.UnmarshalText([]byte(data.(string))); err != nil {
+			return nil, err
+		}
+		return secret, nil
+	}
 }

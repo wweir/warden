@@ -173,6 +173,58 @@ func TestConfigRoundTripPreservesExactModelsAfterJSONToYAML(t *testing.T) {
 	}
 }
 
+func TestBuildConfigParserConfigDecodesBase64Secrets(t *testing.T) {
+	const secretConfig = `addr: ":8080"
+admin_password: YWRtaW4=
+api_keys:
+  cli: Y2xpLXNlY3JldA==
+provider:
+  openai:
+    url: https://api.openai.com/v1
+    family: openai
+    api_key: cHJvdmlkZXItc2VjcmV0
+route:
+  /v1:
+    protocol: chat
+    wildcard_models:
+      "*":
+        providers:
+          - openai
+`
+
+	path := writeTempConfig(t, secretConfig)
+
+	oldArgs := os.Args
+	os.Args = []string{"test"}
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	oldCommandLine := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+	})
+
+	conf := feconf.New[config.ConfigStruct]("c", path)
+	conf.ParserConf = buildConfigParserConfig()
+
+	cfg, err := safeParseConfig(conf)
+	if err != nil {
+		t.Fatalf("safeParseConfig() error = %v", err)
+	}
+
+	if got := cfg.AdminPassword.Value(); got != "admin" {
+		t.Fatalf("AdminPassword.Value() = %q, want %q", got, "admin")
+	}
+	if got := cfg.APIKeys["cli"].Value(); got != "cli-secret" {
+		t.Fatalf("APIKeys[cli].Value() = %q, want %q", got, "cli-secret")
+	}
+	if got := cfg.Provider["openai"].APIKey.Value(); got != "provider-secret" {
+		t.Fatalf("Provider[openai].APIKey.Value() = %q, want %q", got, "provider-secret")
+	}
+}
+
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 
