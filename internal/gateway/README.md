@@ -28,7 +28,7 @@
 - `chat` routes expose only `/chat/completions`.
 - `responses_stateless` routes expose only stateless `/responses`.
 - `responses_stateless` routes reject `previous_response_id`.
-- `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`.
+- `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`, while compatible `function` tools keep their `strict` flag, `max_output_tokens` is mapped to `max_completion_tokens`, and Responses-style `tool_choice` is normalized before forwarding.
 - `responses_stateful` routes accept both stateless and stateful `/responses`; stateful requests bypass `responses_to_chat` conversion and disable failover.
 - Providers with `responses_to_chat` enabled cannot back `responses_stateful` route models, because that bridge does not implement `previous_response_id`.
 - Anthropic routes still expose only `/messages`.
@@ -46,7 +46,7 @@
 - `dashboardMetricsStore`: maintains in-memory rolling dashboard points sampled from Prometheus collectors.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
-- Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion.
+- Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion; Responses stream tool hooks also recover function calls from incremental events when `response.completed` never arrives.
 - Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
 
 ## Admin Telemetry Flow

@@ -27,9 +27,9 @@ protocol/
 - 定义 `StreamParser` 接口供各协议实现
 - 提供 OpenAI `responses_to_chat` 所需的无状态 `Responses -> Chat` 请求转换，以及 `Chat -> Responses` 响应/SSE 转换
 - 提供 `anthropic_to_chat` 所需的受控 `Messages -> Chat` 请求转换，以及 `Chat -> Messages` 响应/SSE 转换
-- `responses_to_chat` 转换器只接受受控的 stateless 子集；不支持的 Responses 专有字段、未知 input item、非 `function` tools 会直接报错
+- `responses_to_chat` 转换器只接受受控的 stateless 子集；不支持的 Responses 专有字段、未知 input item、非 `function` tools 会直接报错；兼容的 `function` tool 会保留 `strict`，`max_output_tokens` 会映射到 `max_completion_tokens`，Responses 风格 `tool_choice` 会被规范化为 Chat 风格对象
 - `anthropic_to_chat` 转换器只接受文本 + `function` tools 子集；不支持的 content block、未知字段和无法线性映射的消息形状会直接报错
-- 流式桥接使用增量状态机而不是整段字符串拼接；状态机会在流结束时校验 OpenAI `[DONE]` 或 Anthropic `message_stop`，缺失时把流视为不完整
+- 流式桥接使用增量状态机而不是整段字符串拼接；状态机会在流结束时校验 OpenAI `[DONE]` 或 Anthropic `message_stop`，缺失时把流视为不完整；Responses 工具调用解析在缺少 `response.completed` 时也会尽量从增量事件中恢复
 
 ## 主要类型
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/pkg/protocol"
 )
 
@@ -91,44 +92,224 @@ func (p *ChatStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallIn
 type ResponsesStreamParser struct{}
 
 func (p *ResponsesStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, error) {
-	// find the response.completed event and extract function_call items
+	acc := newResponsesToolAccumulator()
+
 	for _, evt := range events {
-		if responsesEventType(evt) != "response.completed" {
+		switch responsesEventType(evt) {
+		case "response.completed":
+			infos, err := parseCompletedResponsesToolCalls(evt.Data)
+			if err != nil {
+				return nil, err
+			}
+			if len(infos) > 0 {
+				return infos, nil
+			}
+		case "response.output_item.added", "response.output_item.done":
+			acc.observeItem(gjson.Parse(evt.Data))
+		case "response.function_call_arguments.delta":
+			acc.appendArgumentsDelta(gjson.Parse(evt.Data))
+		case "response.function_call_arguments.done":
+			acc.setArguments(gjson.Parse(evt.Data))
+		}
+	}
+
+	return acc.infosOrNil(), nil
+}
+
+func parseCompletedResponsesToolCalls(data string) ([]protocol.ToolCallInfo, error) {
+	var wrapper struct {
+		Response ResponsesResponse `json:"response"`
+	}
+	if err := json.Unmarshal([]byte(data), &wrapper); err != nil {
+		return nil, err
+	}
+	return functionCallInfosFromResponseOutput(wrapper.Response.Output), nil
+}
+
+func functionCallInfosFromResponseOutput(output []json.RawMessage) []protocol.ToolCallInfo {
+	var infos []protocol.ToolCallInfo
+	for _, raw := range output {
+		var typeCheck struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &typeCheck); err != nil || typeCheck.Type != "function_call" {
 			continue
 		}
 
-		var wrapper struct {
-			Response ResponsesResponse `json:"response"`
-		}
-		if err := json.Unmarshal([]byte(evt.Data), &wrapper); err != nil {
-			return nil, err
+		var fc FunctionCallItem
+		if err := json.Unmarshal(raw, &fc); err != nil {
+			continue
 		}
 
-		var infos []protocol.ToolCallInfo
-		for _, raw := range wrapper.Response.Output {
-			var typeCheck struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(raw, &typeCheck); err != nil || typeCheck.Type != "function_call" {
-				continue
-			}
+		infos = append(infos, protocol.ToolCallInfo{
+			ID:        firstNonEmptyString(fc.CallID, fc.ID),
+			Name:      fc.Name,
+			Arguments: fc.Arguments,
+		})
+	}
+	return infos
+}
 
-			var fc FunctionCallItem
-			if err := json.Unmarshal(raw, &fc); err != nil {
-				continue
-			}
+type responsesToolAccumulator struct {
+	infos         []protocol.ToolCallInfo
+	byCallID      map[string]int
+	byItemID      map[string]int
+	byOutputIndex map[int]int
+	lastIndex     int
+}
 
-			infos = append(infos, protocol.ToolCallInfo{
-				ID:        fc.CallID,
-				Name:      fc.Name,
-				Arguments: fc.Arguments,
-			})
-		}
+func newResponsesToolAccumulator() *responsesToolAccumulator {
+	return &responsesToolAccumulator{
+		byCallID:      make(map[string]int),
+		byItemID:      make(map[string]int),
+		byOutputIndex: make(map[int]int),
+		lastIndex:     -1,
+	}
+}
 
-		return infos, nil
+func (a *responsesToolAccumulator) infosOrNil() []protocol.ToolCallInfo {
+	if len(a.infos) == 0 {
+		return nil
+	}
+	return a.infos
+}
+
+func (a *responsesToolAccumulator) observeItem(result gjson.Result) {
+	item := result.Get("item")
+	if !item.Exists() {
+		item = result
+	}
+	if item.Get("type").String() != "function_call" {
+		return
 	}
 
-	return nil, nil
+	outputIndex, hasOutputIndex := responsesOutputIndex(item)
+	idx := a.ensureIndex(item.Get("call_id").String(), item.Get("id").String(), outputIndex, hasOutputIndex)
+	info := &a.infos[idx]
+	if info.ID == "" {
+		info.ID = firstNonEmptyString(item.Get("call_id").String(), item.Get("id").String())
+	}
+	if info.Name == "" {
+		info.Name = item.Get("name").String()
+	}
+	if args := resultStringOrRaw(item.Get("arguments")); args != "" && info.Arguments == "" {
+		info.Arguments = args
+	}
+	a.lastIndex = idx
+}
+
+func (a *responsesToolAccumulator) appendArgumentsDelta(result gjson.Result) {
+	delta := result.Get("delta").String()
+	if delta == "" {
+		return
+	}
+	idx := a.lookupIndex(result)
+	if idx < 0 {
+		return
+	}
+	a.infos[idx].Arguments += delta
+	a.lastIndex = idx
+}
+
+func (a *responsesToolAccumulator) setArguments(result gjson.Result) {
+	args := resultStringOrRaw(result.Get("arguments"))
+	if args == "" {
+		return
+	}
+	idx := a.lookupIndex(result)
+	if idx < 0 {
+		return
+	}
+	a.infos[idx].Arguments = args
+	a.lastIndex = idx
+}
+
+func (a *responsesToolAccumulator) ensureIndex(callID, itemID string, outputIndex int, hasOutputIndex bool) int {
+	if idx := a.lookupByKey(callID, itemID, outputIndex, hasOutputIndex); idx >= 0 {
+		a.recordKeys(idx, callID, itemID, outputIndex, hasOutputIndex)
+		return idx
+	}
+
+	idx := len(a.infos)
+	a.infos = append(a.infos, protocol.ToolCallInfo{})
+	a.recordKeys(idx, callID, itemID, outputIndex, hasOutputIndex)
+	return idx
+}
+
+func (a *responsesToolAccumulator) lookupIndex(result gjson.Result) int {
+	callID := result.Get("call_id").String()
+	itemID := firstNonEmptyString(result.Get("item_id").String(), result.Get("id").String())
+	outputIndex, hasOutputIndex := responsesOutputIndex(result)
+	if idx := a.lookupByKey(callID, itemID, outputIndex, hasOutputIndex); idx >= 0 {
+		return idx
+	}
+	if a.lastIndex >= 0 {
+		return a.lastIndex
+	}
+	if len(a.infos) == 1 {
+		return 0
+	}
+	return -1
+}
+
+func (a *responsesToolAccumulator) lookupByKey(callID, itemID string, outputIndex int, hasOutputIndex bool) int {
+	if callID != "" {
+		if idx, ok := a.byCallID[callID]; ok {
+			return idx
+		}
+	}
+	if itemID != "" {
+		if idx, ok := a.byItemID[itemID]; ok {
+			return idx
+		}
+	}
+	if hasOutputIndex {
+		if idx, ok := a.byOutputIndex[outputIndex]; ok {
+			return idx
+		}
+	}
+	return -1
+}
+
+func (a *responsesToolAccumulator) recordKeys(idx int, callID, itemID string, outputIndex int, hasOutputIndex bool) {
+	if callID != "" {
+		a.byCallID[callID] = idx
+	}
+	if itemID != "" {
+		a.byItemID[itemID] = idx
+	}
+	if hasOutputIndex {
+		a.byOutputIndex[outputIndex] = idx
+	}
+}
+
+func responsesOutputIndex(result gjson.Result) (int, bool) {
+	for _, key := range []string{"output_index", "item_index", "index"} {
+		value := result.Get(key)
+		if value.Exists() && value.Type == gjson.Number {
+			return int(value.Int()), true
+		}
+	}
+	return 0, false
+}
+
+func resultStringOrRaw(result gjson.Result) string {
+	if !result.Exists() {
+		return ""
+	}
+	if result.Type == gjson.String {
+		return result.String()
+	}
+	return result.Raw
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // AssembleResponsesStream extracts the completed Responses API object from an SSE stream

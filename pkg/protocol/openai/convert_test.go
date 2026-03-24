@@ -18,7 +18,7 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
-				Tools: []json.RawMessage{json.RawMessage(`{"type":"function","name":"lookup","description":"lookup data","parameters":{"type":"object"}}`)},
+				Tools: []json.RawMessage{json.RawMessage(`{"type":"function","name":"lookup","description":"lookup data","parameters":{"type":"object"},"strict":true}`)},
 			},
 			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
 				if len(chatReq.Messages) != 1 {
@@ -29,6 +29,9 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 				}
 				if len(chatReq.Tools) != 1 || chatReq.Tools[0].Function.Name != "lookup" {
 					t.Fatalf("unexpected tools: %#v", chatReq.Tools)
+				}
+				if chatReq.Tools[0].Function.Strict == nil || !*chatReq.Tools[0].Function.Strict {
+					t.Fatalf("expected strict tool to be preserved, got %#v", chatReq.Tools[0].Function.Strict)
 				}
 			},
 		},
@@ -78,6 +81,36 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "map max_output_tokens to max_completion_tokens",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"max_output_tokens": json.RawMessage(`128`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if got := string(chatReq.Extra["max_completion_tokens"]); got != `128` {
+					t.Fatalf("max_completion_tokens = %s, want 128", got)
+				}
+				if _, ok := chatReq.Extra["max_output_tokens"]; ok {
+					t.Fatal("max_output_tokens should not be forwarded directly")
+				}
+			},
+		},
+		{
+			name: "normalize function tool_choice object",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Tools: []json.RawMessage{json.RawMessage(`{"type":"function","name":"lookup","parameters":{"type":"object"}}`)},
+				Extra: map[string]json.RawMessage{"tool_choice": json.RawMessage(`{"type":"function","name":"lookup"}`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if got := string(chatReq.Extra["tool_choice"]); got != `{"function":{"name":"lookup"},"type":"function"}` {
+					t.Fatalf("tool_choice = %s, want canonical function tool_choice", got)
+				}
+			},
+		},
+		{
 			name: "reject previous response id",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
@@ -92,10 +125,10 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
-				Extra: map[string]json.RawMessage{"max_output_tokens": json.RawMessage(`128`)},
+				Extra: map[string]json.RawMessage{"reasoning": json.RawMessage(`{"effort":"medium"}`)},
 			},
 			wantErr:   true,
-			errSubstr: "max_output_tokens",
+			errSubstr: "reasoning",
 		},
 		{
 			name: "reject n greater than one",
@@ -116,6 +149,30 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			},
 			wantErr:   true,
 			errSubstr: "unsupported tool type",
+		},
+		{
+			name: "reject conflicting max_output_tokens and max_completion_tokens",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{
+					"max_output_tokens":     json.RawMessage(`128`),
+					"max_completion_tokens": json.RawMessage(`64`),
+				},
+			},
+			wantErr:   true,
+			errSubstr: "conflicts with max_completion_tokens",
+		},
+		{
+			name: "reject tool_choice referencing unknown function",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Tools: []json.RawMessage{json.RawMessage(`{"type":"function","name":"lookup","parameters":{"type":"object"}}`)},
+				Extra: map[string]json.RawMessage{"tool_choice": json.RawMessage(`{"type":"function","name":"missing"}`)},
+			},
+			wantErr:   true,
+			errSubstr: "unknown function",
 		},
 	}
 

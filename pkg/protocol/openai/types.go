@@ -186,6 +186,7 @@ type Function struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  any    `json:"parameters"`
+	Strict      *bool  `json:"strict,omitempty"`
 }
 
 // ToolCall represents a tool call in a response.

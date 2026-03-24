@@ -44,12 +44,18 @@ func ResponsesRequestToChatRequest(respReq ResponsesRequest) (ChatCompletionRequ
 		Extra:  make(map[string]json.RawMessage),
 	}
 
+	tools, toolNames, err := convertResponsesTools(respReq.Tools)
+	if err != nil {
+		return chatReq, fmt.Errorf("convert tool: %w", err)
+	}
+	chatReq.Tools = tools
+
 	messages, err := convertResponsesInputToMessages(respReq.Input)
 	if err != nil {
 		return chatReq, fmt.Errorf("convert input: %w", err)
 	}
 
-	messages, extra, err := convertResponsesRequestExtras(messages, respReq.Extra)
+	messages, extra, err := convertResponsesRequestExtras(messages, respReq.Extra, toolNames)
 	if err != nil {
 		return chatReq, err
 	}
@@ -58,18 +64,10 @@ func ResponsesRequestToChatRequest(respReq ResponsesRequest) (ChatCompletionRequ
 		maps.Copy(chatReq.Extra, extra)
 	}
 
-	for _, rawTool := range respReq.Tools {
-		tool, err := convertResponsesToolToChatTool(rawTool)
-		if err != nil {
-			return chatReq, fmt.Errorf("convert tool: %w", err)
-		}
-		chatReq.Tools = append(chatReq.Tools, tool)
-	}
-
 	return chatReq, nil
 }
 
-func convertResponsesRequestExtras(messages []Message, extra map[string]json.RawMessage) ([]Message, map[string]json.RawMessage, error) {
+func convertResponsesRequestExtras(messages []Message, extra map[string]json.RawMessage, toolNames map[string]struct{}) ([]Message, map[string]json.RawMessage, error) {
 	if len(extra) == 0 {
 		return messages, nil, nil
 	}
@@ -89,6 +87,14 @@ func convertResponsesRequestExtras(messages []Message, extra map[string]json.Raw
 				Role:    "developer",
 				Content: instructions,
 			}}, messages...)
+		case "max_output_tokens":
+			mapped, include, err := convertResponsesMaxOutputTokens(raw, extra)
+			if err != nil {
+				return nil, nil, fmt.Errorf("convert max_output_tokens: %w", err)
+			}
+			if include {
+				chatExtra["max_completion_tokens"] = mapped
+			}
 		case "previous_response_id":
 			return nil, nil, fmt.Errorf("previous_response_id is not supported in responses_to_chat mode")
 		case "n":
@@ -100,6 +106,12 @@ func convertResponsesRequestExtras(messages []Message, extra map[string]json.Raw
 				return nil, nil, fmt.Errorf("n > 1 is not supported in responses_to_chat mode")
 			}
 			chatExtra[key] = raw
+		case "tool_choice":
+			toolChoice, err := normalizeResponsesToolChoice(raw, toolNames)
+			if err != nil {
+				return nil, nil, fmt.Errorf("convert tool_choice: %w", err)
+			}
+			chatExtra[key] = toolChoice
 		default:
 			if _, ok := responsesToChatAllowedExtraFields[key]; !ok {
 				return nil, nil, fmt.Errorf("responses field %q is not supported in responses_to_chat mode", key)
@@ -291,6 +303,22 @@ func normalizeResponsesBlocksToChat(blocks []any) []any {
 	return normalized
 }
 
+func convertResponsesTools(rawTools []json.RawMessage) ([]Tool, map[string]struct{}, error) {
+	tools := make([]Tool, 0, len(rawTools))
+	toolNames := make(map[string]struct{}, len(rawTools))
+	for _, rawTool := range rawTools {
+		tool, err := convertResponsesToolToChatTool(rawTool)
+		if err != nil {
+			return nil, nil, err
+		}
+		tools = append(tools, tool)
+		if name := strings.TrimSpace(tool.Function.Name); name != "" {
+			toolNames[name] = struct{}{}
+		}
+	}
+	return tools, toolNames, nil
+}
+
 func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
 	var typeCheck struct {
 		Type string `json:"type"`
@@ -320,8 +348,126 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
 			Name:        flatTool.Name,
 			Description: flatTool.Description,
 			Parameters:  params,
+			Strict:      flatTool.Strict,
 		},
 	}, nil
+}
+
+func convertResponsesMaxOutputTokens(raw json.RawMessage, extra map[string]json.RawMessage) (json.RawMessage, bool, error) {
+	limit, err := decodeTokenLimit(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, key := range []string{"max_completion_tokens", "max_tokens"} {
+		otherRaw, ok := extra[key]
+		if !ok {
+			continue
+		}
+		otherLimit, err := decodeTokenLimit(otherRaw)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s: %w", key, err)
+		}
+		if !limit.equals(otherLimit) {
+			return nil, false, fmt.Errorf("conflicts with %s", key)
+		}
+		return nil, false, nil
+	}
+	if limit.infinite {
+		return nil, false, nil
+	}
+	mapped, err := json.Marshal(limit.value)
+	if err != nil {
+		return nil, false, err
+	}
+	return mapped, true, nil
+}
+
+func normalizeResponsesToolChoice(raw json.RawMessage, toolNames map[string]struct{}) (json.RawMessage, error) {
+	var toolChoiceType string
+	if err := json.Unmarshal(raw, &toolChoiceType); err == nil {
+		switch toolChoiceType {
+		case "auto", "none":
+			return json.RawMessage(strconv.Quote(toolChoiceType)), nil
+		case "required":
+			if len(toolNames) == 0 {
+				return nil, fmt.Errorf("requires at least one function tool")
+			}
+			return json.RawMessage(`"required"`), nil
+		default:
+			return nil, fmt.Errorf("unsupported string value %q", toolChoiceType)
+		}
+	}
+
+	var choice struct {
+		Type     string `json:"type"`
+		Name     string `json:"name"`
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		return nil, fmt.Errorf("unsupported shape")
+	}
+
+	switch choice.Type {
+	case "auto", "none", "required":
+		return normalizeResponsesToolChoice(json.RawMessage(strconv.Quote(choice.Type)), toolNames)
+	case "function":
+		name := strings.TrimSpace(choice.Name)
+		if nestedName := strings.TrimSpace(choice.Function.Name); nestedName != "" {
+			if name != "" && name != nestedName {
+				return nil, fmt.Errorf("function name mismatch between name and function.name")
+			}
+			name = nestedName
+		}
+		if name == "" {
+			return nil, fmt.Errorf("function name is required")
+		}
+		if len(toolNames) == 0 {
+			return nil, fmt.Errorf("references function %q but no function tools are configured", name)
+		}
+		if _, ok := toolNames[name]; !ok {
+			return nil, fmt.Errorf("references unknown function %q", name)
+		}
+		return json.Marshal(map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": name,
+			},
+		})
+	default:
+		return nil, fmt.Errorf("unsupported type %q", choice.Type)
+	}
+}
+
+type tokenLimit struct {
+	infinite bool
+	value    int64
+}
+
+func (l tokenLimit) equals(other tokenLimit) bool {
+	if l.infinite || other.infinite {
+		return l.infinite == other.infinite
+	}
+	return l.value == other.value
+}
+
+func decodeTokenLimit(raw json.RawMessage) (tokenLimit, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if strings.EqualFold(strings.TrimSpace(s), "inf") {
+			return tokenLimit{infinite: true}, nil
+		}
+	}
+
+	value, err := decodePositiveInt(raw)
+	if err != nil {
+		return tokenLimit{}, err
+	}
+	if value <= 0 {
+		return tokenLimit{}, fmt.Errorf("expected positive integer or \"inf\"")
+	}
+	return tokenLimit{value: value}, nil
 }
 
 // ChatResponseToResponsesResponse converts a Chat Completions response to a Responses API response.

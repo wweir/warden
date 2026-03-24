@@ -118,7 +118,7 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 	gw := NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
-	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"qwen3-coder-plus","input":"hello","max_output_tokens":64}`))
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"qwen3-coder-plus","input":"hello","reasoning":{"effort":"medium"}}`))
 	rec := httptest.NewRecorder()
 
 	gw.ServeHTTP(rec, req)
@@ -126,11 +126,79 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "max_output_tokens") {
+	if !strings.Contains(rec.Body.String(), "reasoning") {
 		t.Fatalf("body = %q, want unsupported field message", rec.Body.String())
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("upstream hits = %d, want 0", upstreamHits)
+	}
+}
+
+func TestGatewayResponsesToChatMapsMaxOutputTokensAndNormalizesToolChoice(t *testing.T) {
+	t.Parallel()
+
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"ali-coding": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponsesStateless,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{
+		"model":"qwen3-coder-plus",
+		"input":"hello",
+		"max_output_tokens":64,
+		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
+		"tool_choice":{"type":"function","name":"lookup"}
+	}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := gjson.GetBytes(gotBody, "max_completion_tokens").Int(); got != 64 {
+		t.Fatalf("max_completion_tokens = %d, want 64", got)
+	}
+	if gjson.GetBytes(gotBody, "max_output_tokens").Exists() {
+		t.Fatalf("upstream body should not include max_output_tokens: %s", string(gotBody))
+	}
+	if got := gjson.GetBytes(gotBody, "tool_choice.type").String(); got != "function" {
+		t.Fatalf("tool_choice.type = %q, want function", got)
+	}
+	if got := gjson.GetBytes(gotBody, "tool_choice.function.name").String(); got != "lookup" {
+		t.Fatalf("tool_choice.function.name = %q, want lookup", got)
 	}
 }
 
