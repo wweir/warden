@@ -4,13 +4,15 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
 
 func TestDashboardMetricsStoreUpdate(t *testing.T) {
-	store := newDashboardMetricsStore(2*time.Second, 3)
+	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 3)
 	base := time.Unix(1700000000, 0)
 
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp:    base,
 		Requests:     100,
 		Failures:     5,
@@ -23,7 +25,7 @@ func TestDashboardMetricsStoreUpdate(t *testing.T) {
 		Failovers:    1,
 		StreamErrors: 2,
 	})
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp:    base.Add(2 * time.Second),
 		Requests:     104,
 		Failures:     6,
@@ -74,16 +76,16 @@ func TestDashboardMetricsStoreUpdate(t *testing.T) {
 }
 
 func TestDashboardMetricsStoreResetOnCounterRollback(t *testing.T) {
-	store := newDashboardMetricsStore(2*time.Second, 3)
+	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 3)
 	base := time.Unix(1700000000, 0)
 
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base,
 		Requests:  10,
 		Tokens:    100,
 		RouteReqs: map[string]float64{"/openai": 10},
 	})
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base.Add(2 * time.Second),
 		Requests:  12,
 		Tokens:    140,
@@ -93,7 +95,7 @@ func TestDashboardMetricsStoreResetOnCounterRollback(t *testing.T) {
 		t.Fatalf("expected history before reset, got %d", got)
 	}
 
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base.Add(4 * time.Second),
 		Requests:  3,
 		Tokens:    20,
@@ -115,15 +117,15 @@ func TestDashboardMetricsStoreResetOnCounterRollback(t *testing.T) {
 }
 
 func TestDashboardMetricsStoreResetOnRouteCounterRollback(t *testing.T) {
-	store := newDashboardMetricsStore(2*time.Second, 3)
+	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 3)
 	base := time.Unix(1700000000, 0)
 
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base,
 		Requests:  20,
 		RouteReqs: map[string]float64{"/openai": 20},
 	})
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base.Add(2 * time.Second),
 		Requests:  22,
 		RouteReqs: map[string]float64{"/openai": 22},
@@ -132,7 +134,7 @@ func TestDashboardMetricsStoreResetOnRouteCounterRollback(t *testing.T) {
 		t.Fatalf("expected route history before reset, got %d", got)
 	}
 
-	store.Update(dashboardCounterSample{
+	store.Update(telemetrypkg.DashboardCounterSample{
 		Timestamp: base.Add(4 * time.Second),
 		Requests:  25,
 		RouteReqs: map[string]float64{"/openai": 5},
@@ -144,13 +146,13 @@ func TestDashboardMetricsStoreResetOnRouteCounterRollback(t *testing.T) {
 }
 
 func TestDashboardMetricsStoreHistoryLimit(t *testing.T) {
-	store := newDashboardMetricsStore(2*time.Second, 2)
+	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 2)
 	base := time.Unix(1700000000, 0)
 
-	store.Update(dashboardCounterSample{Timestamp: base, Requests: 10, Tokens: 100, RouteReqs: map[string]float64{"/openai": 10}})
-	store.Update(dashboardCounterSample{Timestamp: base.Add(2 * time.Second), Requests: 11, Tokens: 120, RouteReqs: map[string]float64{"/openai": 11}})
-	store.Update(dashboardCounterSample{Timestamp: base.Add(4 * time.Second), Requests: 12, Tokens: 150, RouteReqs: map[string]float64{"/openai": 12}})
-	store.Update(dashboardCounterSample{Timestamp: base.Add(6 * time.Second), Requests: 13, Tokens: 190, RouteReqs: map[string]float64{"/openai": 13}})
+	store.Update(telemetrypkg.DashboardCounterSample{Timestamp: base, Requests: 10, Tokens: 100, RouteReqs: map[string]float64{"/openai": 10}})
+	store.Update(telemetrypkg.DashboardCounterSample{Timestamp: base.Add(2 * time.Second), Requests: 11, Tokens: 120, RouteReqs: map[string]float64{"/openai": 11}})
+	store.Update(telemetrypkg.DashboardCounterSample{Timestamp: base.Add(4 * time.Second), Requests: 12, Tokens: 150, RouteReqs: map[string]float64{"/openai": 12}})
+	store.Update(telemetrypkg.DashboardCounterSample{Timestamp: base.Add(6 * time.Second), Requests: 13, Tokens: 190, RouteReqs: map[string]float64{"/openai": 13}})
 
 	snapshot := store.Snapshot()
 	if len(snapshot.Usage) != 2 {

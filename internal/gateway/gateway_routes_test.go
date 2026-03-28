@@ -570,6 +570,82 @@ func TestGatewayAnthropicRouteBridgesToChatProvider(t *testing.T) {
 	}
 }
 
+func TestGatewayProxyPrefersLongestMatchingRoutePrefix(t *testing.T) {
+	t.Parallel()
+
+	shortUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		t.Fatalf("short prefix upstream should not be selected: path=%q", r.URL.Path)
+	}))
+	defer shortUpstream.Close()
+
+	var gotPath string
+	longUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte("long-prefix"))
+	}))
+	defer longUpstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"short": {
+				URL:      shortUpstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token-short"),
+			},
+			"long": {
+				URL:      longUpstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token-long"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/api": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-short": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "short", Model: "gpt-short"}),
+				},
+			},
+			"/api/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-long": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "long", Model: "gpt-long"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/openai/files", nil)
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotPath != "/files" {
+		t.Fatalf("upstream path = %q, want /files", gotPath)
+	}
+	if rec.Body.String() != "long-prefix" {
+		t.Fatalf("body = %q, want long-prefix", rec.Body.String())
+	}
+}
+
 func TestGatewayAnthropicToChatFailoverKeepsPublicModelName(t *testing.T) {
 	t.Parallel()
 
@@ -656,6 +732,198 @@ func TestGatewayAnthropicToChatFailoverKeepsPublicModelName(t *testing.T) {
 	}
 	if gjson.Get(rec.Body.String(), "content.0.text").String() != "ok" {
 		t.Fatalf("response text = %q, want ok", gjson.Get(rec.Body.String(), "content.0.text").String())
+	}
+}
+
+func TestGatewayResponsesFailoverSwitchesToResponsesToChatProvider(t *testing.T) {
+	t.Parallel()
+
+	var primaryHits int
+	var fallbackHits int
+	var fallbackPath string
+	var fallbackBody []byte
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		primaryHits++
+		if r.URL.Path != "/responses" {
+			t.Fatalf("primary upstream path = %q, want /responses", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"primary failed"}}`))
+	}))
+	defer primary.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		fallbackHits++
+		fallbackPath = r.URL.Path
+		fallbackBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_789","object":"chat.completion","created":1,"model":"gpt-4.1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer fallback.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary": {
+				URL:      primary.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token-primary"),
+			},
+			"fallback": {
+				URL:             fallback.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token-fallback"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponsesStateless,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-public": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o"},
+						&config.RouteUpstreamConfig{Provider: "fallback", Model: "gpt-4.1"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"gpt-public","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("primary hits = %d, want 1", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("fallback hits = %d, want 1", fallbackHits)
+	}
+	if fallbackPath != "/chat/completions" {
+		t.Fatalf("fallback path = %q, want /chat/completions", fallbackPath)
+	}
+	if got := gjson.GetBytes(fallbackBody, "model").String(); got != "gpt-4.1" {
+		t.Fatalf("fallback model = %q, want gpt-4.1", got)
+	}
+	if got := gjson.Get(rec.Body.String(), "output.0.type").String(); got != "message" {
+		t.Fatalf("response output type = %q, want message", got)
+	}
+}
+
+func TestGatewayAnthropicFailoverSwitchesToAnthropicToChatProvider(t *testing.T) {
+	t.Parallel()
+
+	var primaryHits int
+	var fallbackHits int
+	var fallbackPath string
+	var fallbackBody []byte
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		primaryHits++
+		if r.URL.Path != "/v1/messages" {
+			t.Fatalf("primary upstream path = %q, want /v1/messages", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"overloaded_error","message":"primary failed"}}`))
+	}))
+	defer primary.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		fallbackHits++
+		fallbackPath = r.URL.Path
+		fallbackBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_999","object":"chat.completion","created":1,"model":"gpt-4.1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer fallback.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary": {
+				URL:      primary.URL + "/v1",
+				Protocol: "anthropic",
+				APIKey:   config.SecretString("token-primary"),
+			},
+			"fallback": {
+				URL:             fallback.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token-fallback"),
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/anthropic": {
+				Protocol: config.RouteProtocolAnthropic,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-public": exactModel(config.RouteProtocolAnthropic,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "claude-3-5-sonnet"},
+						&config.RouteUpstreamConfig{Provider: "fallback", Model: "gpt-4.1"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/messages", strings.NewReader(`{"model":"claude-public","messages":[{"role":"user","content":"hello"}],"max_tokens":64}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if primaryHits != 1 {
+		t.Fatalf("primary hits = %d, want 1", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Fatalf("fallback hits = %d, want 1", fallbackHits)
+	}
+	if fallbackPath != "/chat/completions" {
+		t.Fatalf("fallback path = %q, want /chat/completions", fallbackPath)
+	}
+	if got := gjson.GetBytes(fallbackBody, "model").String(); got != "gpt-4.1" {
+		t.Fatalf("fallback model = %q, want gpt-4.1", got)
+	}
+	if got := gjson.Get(rec.Body.String(), "content.0.text").String(); got != "ok" {
+		t.Fatalf("response text = %q, want ok", got)
 	}
 }
 

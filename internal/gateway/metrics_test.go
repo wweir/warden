@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	dto "github.com/prometheus/client_model/go"
+	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
 
 func TestHistogramQuantile(t *testing.T) {
@@ -14,7 +15,7 @@ func TestHistogramQuantile(t *testing.T) {
 		{UpperBound: ptrFloat64(50), CumulativeCount: ptrUint64(100)},
 	}
 
-	got := histogramQuantile(0.95, buckets)
+	got := telemetrypkg.HistogramQuantile(0.95, buckets)
 	want := 47.857142857142854
 	if math.Abs(got-want) > 0.001 {
 		t.Fatalf("histogramQuantile(0.95) = %v, want %v", got, want)
@@ -27,14 +28,14 @@ func TestHistogramQuantile_InfFallback(t *testing.T) {
 		{UpperBound: ptrFloat64(math.Inf(1)), CumulativeCount: ptrUint64(100)},
 	}
 
-	got := histogramQuantile(0.99, buckets)
+	got := telemetrypkg.HistogramQuantile(0.99, buckets)
 	if got != 10 {
 		t.Fatalf("histogramQuantile(0.99) with +Inf bucket = %v, want 10", got)
 	}
 }
 
 func TestHistogramQuantile_Empty(t *testing.T) {
-	if got := histogramQuantile(0.95, nil); got != 0 {
+	if got := telemetrypkg.HistogramQuantile(0.95, nil); got != 0 {
 		t.Fatalf("histogramQuantile(0.95, nil) = %v, want 0", got)
 	}
 }

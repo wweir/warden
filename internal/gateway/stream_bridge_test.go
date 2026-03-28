@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 )
 
 func TestGatewayAnthropicToChatStreamRelaysFirstFrameWithoutBuffering(t *testing.T) {
@@ -89,7 +90,7 @@ func TestGatewayAnthropicToChatStreamRelaysFirstFrameWithoutBuffering(t *testing
 	frameCh := make(chan []byte, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		frame, readErr := readSSEFrame(reader)
+		frame, readErr := bridgepkg.ReadSSEFrame(reader)
 		if readErr != nil {
 			errCh <- readErr
 			return
@@ -192,7 +193,7 @@ func TestGatewayAnthropicNativeStreamRelaysFirstFrameWithoutBuffering(t *testing
 	frameCh := make(chan []byte, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		frame, readErr := readSSEFrame(reader)
+		frame, readErr := bridgepkg.ReadSSEFrame(reader)
 		if readErr != nil {
 			errCh <- readErr
 			return

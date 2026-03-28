@@ -24,10 +24,19 @@ Warden 是一个 route-centric 的 AI Gateway。
 cmd/warden/          # 进程入口、信号处理、配置加载、版本注入
 config/              # 配置模型、校验、路由运行时编译、示例配置
 internal/
-  gateway/           # HTTP 网关、管理 API、指标、协议桥接、hook 集成
+  gateway/           # HTTP 网关、协议桥接、指标聚合、管理面组装
+    admin/           # 管理端 HTTP surface、嵌入式 SPA、配置/Provider/Route/Admin API
+    httpmw/          # Recovery/CORS/API key 鉴权中间件
+    logging/         # 请求日志后端构建与 attempt 日志辅助
+    observe/         # 推理日志拼装、stream 组装、tool call 观测与 hook 分发
+    proxy/           # 透明代理 surface、proxy 请求日志拼装、SSE 响应日志归一化
+    requestctx/      # 请求级上下文元数据（client request/hooks/api key）
+    snapshot/        # admin-facing metrics/api key 运行时快照组装
+    telemetry/       # Prometheus collector、dashboard 时序存储、metrics helper
+    upstream/        # 协议/传输适配、编码协商、转发头处理
   install/           # systemd 安装
-  reqlog/            # 请求日志、SSE 广播
-  selector/          # provider 选择、探活、抑制、failover 状态
+  reqlog/            # 请求日志、指纹生成、JSON 清洗、SSE 广播
+  selector/          # provider 选择、探活、抑制、failover 状态、模型发现
 pkg/
   protocol/          # OpenAI / Anthropic 协议类型与转换
   provider/          # Qwen / Copilot OAuth token 管理
@@ -87,6 +96,28 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `responses_to_chat` 与 `anthropic_to_chat` 的流式桥接采用逐帧 relay，不允许先完整缓冲上游 body 再回放
 - 流式请求按三阶段记账：`pre_stream` 表示建流前失败，可 auth retry / failover；`in_stream` 表示开始向客户端 relay 后上游中断，只记 provider 失败；只有完整结束才记 success
 
+当前内部进一步分成两个实现层：
+
+- `gateway` 根包保留 HTTP surface、middleware 装配，以及少量必须从运行时状态读取的 admin callback 组装
+- 根包启动期会先把 `route` 编译成按前缀长度降序的绑定表，HTTP 路由注册和透明代理 fallback 共用同一份有序视图，避免重叠前缀依赖 Go map 遍历顺序
+- `internal/gateway/admin` 子包承载管理面路由、嵌入式前端分发，以及 provider 协议探测和 tool-hook suggestion 聚合等 admin-only 逻辑；只对 selector/broadcaster 和少量运行时快照回调做依赖注入，避免反向依赖根包
+- `internal/gateway/admin` 包内再按 `router/auth`、`config`、`status+logs+metrics`、`providers`、`routes`、`apikeys` 分文件组织，避免管理面继续退化成单个超大 handler 文件
+- `internal/gateway/httpmw` 子包承载 Recovery/CORS/API key 鉴权等通用 HTTP 中间件，避免根包继续混放基础 HTTP 基建
+- `internal/gateway/logging` 子包承载请求日志后端构建与轻量 request attempt 日志，避免根包继续持有日志输出装配细节
+- `internal/gateway/observe` 子包承载推理请求日志参数组装、stream log 归一化、tool call 解析与 hook 分发，避免根包继续混放响应观测逻辑
+- `internal/gateway/proxy` 子包承载透明代理 handler、proxy provider 选择和 proxy 响应日志归一化，避免 fallback path 继续把 provider 选择、auth retry、SSE 日志拼装塞回根包
+- `internal/gateway/requestctx` 子包承载请求级 context 元数据读写，避免 API key、原始请求句柄和 route hooks 的上下文键继续散落在根包
+- `internal/gateway/snapshot` 子包承载 admin-facing metrics payload、dashboard counter sample 与 API key usage 汇总，避免根包继续混放只服务管理面的数据拼装
+- `internal/gateway/bridge` 子包承载 SSE relay 和 Chat/Responses/Messages 之间的流式桥接，避免协议流转换细节继续堆在根包 handler 中
+- `internal/gateway/inference` 子包承载 route-model 匹配、auth retry、failover trail 与当前 upstream target 状态，避免在 chat / responses / messages handler 内重复维护生命周期控制流
+- `gateway` 根包内部再通过共享 inference session helper 统一 metric label 刷新、pending log 发布和 failover 后当前 target 切换，减少各协议入口重复脚手架代码
+- `gateway` 根包内部对 `responses_to_chat` / `anthropic_to_chat` 再复用共享 chat-bridge helper，统一流式桥接重试、stream phase 记账和最终日志拼装
+- `gateway` 根包内部对 `chat` / 原生 `responses` 再复用共享 buffered inference helper，统一一次性上游请求的准备、重试和日志写入
+- 上述 buffered / relay helper 在 failover 后不会把请求锁死在旧执行分支；provider 切换到 bridge-capable 实现时，会重新走对应 bridge handler
+- `internal/gateway/telemetry` 子包承载 Prometheus collector、label helper、dashboard rolling store 和 output rate tracker
+- `internal/gateway/upstream` 子包承载协议 endpoint 映射、上游 HTTP 请求执行、请求/响应编解码、Accept-Encoding 协商和转发头清洗；根包不再直接持有 JSON/SSE upstream transport 细节
+- admin metrics/API-key 回调直接指向 `internal/gateway/snapshot`，根包删除了只做一层转发的包装方法，减少无意义的运行时胶水代码
+
 `Gateway.Close()` 负责：
 
 - 取消后台 context
@@ -104,6 +135,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 聚合 provider 状态供管理端展示
 - 维护 provider 协议展示检测结果与 `provider + model + protocol` 精确探测结果
 - provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节
+- 包内按职责拆成 `select`、`state`、`models`、`errors`、`types` 多文件，避免继续把选择策略、状态机和模型发现堆在单文件中
 
 这里的设计原则是：路由决策与协议适配分离，避免在 handler 内部散落 provider 选择逻辑。
 
@@ -160,8 +192,9 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
 - 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
 - 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
+- 包内按 `types`、`fingerprint`、`record sanitize/id`、`backend`、`broadcast` 分文件组织，避免日志模型、指纹算法和后端实现继续混写
 
-Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
+Prometheus 指标与 Dashboard rolling store 由 `internal/gateway/telemetry` 维护，`internal/gateway` 根包负责把这些数据装配成 admin API 输出。Dashboard 读取两类数据：
 
 - 即时聚合指标
 - 内存中的滚动时间序列
@@ -186,8 +219,8 @@ Prometheus 指标由 `internal/gateway` 维护，Dashboard 读取两类数据：
 - `Providers` 页面负责单个 provider 配置编辑
 - `provider.models` 在管理端中被定义为 provider 可用模型的静态基线与发现失败兜底，并复用运行时已发现模型作为录入建议来源；它不负责声明 route 对外公开模型面
 - `Providers` 页面支持两类协议探测：
-  - provider 级轻量检测，只更新展示协议，不进入运行时路由判断
-  - `provider + model + protocol` 精确探测，用于确认某个模型是否真实可跑某个协议
+    - provider 级轻量检测，只更新展示协议，不进入运行时路由判断
+    - `provider + model + protocol` 精确探测，用于确认某个模型是否真实可跑某个协议
 - 管理端 provider 数据把 `configured_protocols` / `supported_protocols` 作为静态配置真相，把 `display_protocols` 作为轻量探测展示值；两者不能混用
 - `Routes` 页面负责 route 配置编辑，包括 `exact_models` / `wildcard_models`
 - `Routes` 页面必须先锁定 `route.protocol`，模型映射不再自带 `protocols` 分支

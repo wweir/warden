@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	adminpkg "github.com/wweir/warden/internal/gateway/admin"
 	"github.com/wweir/warden/internal/reqlog"
 )
 
@@ -16,8 +17,9 @@ func TestHandleLogStreamDisablesProxyBufferingAndFlushesPrelude(t *testing.T) {
 	t.Parallel()
 
 	gw := &Gateway{broadcaster: reqlog.NewBroadcaster()}
+	handler := adminpkg.NewHandler(adminpkg.Deps{Broadcaster: gw.broadcaster})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gw.handleLogStream(w, r, nil)
+		handler.HandleLogStream(w, r, nil)
 	}))
 	defer srv.Close()
 

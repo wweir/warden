@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"net/http"
 	"testing"
+
+	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 )
 
 func TestBuildProxyRequestHeadersSanitizesAndOverwrites(t *testing.T) {
@@ -37,7 +39,7 @@ func TestBuildProxyRequestHeadersSanitizesAndOverwrites(t *testing.T) {
 	req.Header.Set("X-Proxy-Conn", "bad-proxy-value")
 	req.Header.Set("User-Agent", "unit-test-agent")
 
-	got := buildProxyRequestHeaders(req, true)
+	got := upstreampkg.BuildProxyRequestHeaders(req, true)
 
 	if got.Get("User-Agent") != "unit-test-agent" {
 		t.Fatalf("User-Agent not preserved, got %q", got.Get("User-Agent"))
@@ -96,7 +98,7 @@ func TestBuildProxyRequestHeadersNoAcceptEncodingAndHTTPS(t *testing.T) {
 	req.Host = "gateway.example"
 	req.TLS = &tls.ConnectionState{}
 
-	got := buildProxyRequestHeaders(req, false)
+	got := upstreampkg.BuildProxyRequestHeaders(req, false)
 
 	if got.Get("Accept-Encoding") != "" {
 		t.Fatalf("Accept-Encoding should be empty, got %q", got.Get("Accept-Encoding"))

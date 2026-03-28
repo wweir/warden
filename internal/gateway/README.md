@@ -2,7 +2,7 @@
 
 ## Responsibilities
 
-`internal/gateway` contains the core HTTP gateway and admin API implementation:
+`internal/gateway` contains the core HTTP gateway runtime and composes the admin API package:
 
 - Registers route handlers for proxy, chat completions, responses, admin API, and Prometheus metrics.
 - Validates client API keys for route traffic when `config.api_keys` is non-empty, then strips client auth headers before upstream forwarding.
@@ -14,6 +14,18 @@
 - Keeps stream bridges live: `responses_to_chat` and `anthropic_to_chat` relay upstream SSE incrementally instead of buffering the whole body before writing downstream.
 - Logs inspectable upstream response bodies; transparent proxy logs decompress `gzip`/`br`/`zstd` bodies before persistence when possible.
 - Keeps failover trail on request logs, so a single successful client request still shows intermediate upstream switches.
+- Delegates the admin HTTP surface, embedded SPA wiring, provider protocol probes, and tool-hook suggestion aggregation to `internal/gateway/admin` instead of keeping admin-only logic in the root package.
+- Delegates shared recovery/CORS/client-auth middleware to `internal/gateway/httpmw`.
+- Delegates log sink construction and request-attempt logging helpers to `internal/gateway/logging`.
+- Delegates inference log assembly, stream normalization, and observed tool-hook dispatch to `internal/gateway/observe`.
+- Delegates transparent proxy request handling, proxy-specific provider selection, and proxy response log assembly to `internal/gateway/proxy`.
+- Delegates request-scoped context metadata helpers to `internal/gateway/requestctx`.
+- Delegates admin-facing runtime metrics/API-key snapshot assembly to `internal/gateway/snapshot`.
+- Delegates live SSE relay and protocol stream conversion to `internal/gateway/bridge`.
+- Delegates shared inference target selection, auth retry, and failover state to `internal/gateway/inference`.
+- Delegates protocol/transport adaptation helpers and upstream HTTP execution to `internal/gateway/upstream`.
+- Delegates Prometheus collector ownership, metric label shaping, and dashboard telemetry primitives to `internal/gateway/telemetry`, while the root package keeps middleware wiring and admin-facing snapshot assembly.
+- Compiles route config into a deterministic longest-prefix binding table so transparent proxy fallback does not depend on Go map iteration when route prefixes overlap.
 
 ## Route-Centric Runtime
 
@@ -41,9 +53,28 @@
 ## Key Interfaces
 
 - `Gateway`: owns runtime dependencies, route registration, graceful shutdown, and admin handlers.
+- `internal/gateway/proxy`: owns transparent proxy handling plus shared helpers for proxy protocol classification and SSE-to-object log assembly.
+- `internal/gateway/httpmw`: owns shared HTTP middleware for panic recovery, CORS, and client API key auth.
+- `internal/gateway/logging`: owns log sink construction and lightweight request-attempt logging helpers.
+- `internal/gateway/observe`: owns inference-observation helpers for request logs, stream assembly, tool-call extraction, and route hook dispatch.
+- `internal/gateway/bridge`: owns SSE relay and live protocol stream conversion between chat / responses / messages surfaces.
+- `internal/gateway/inference`: owns route-model matching plus per-request auth retry / failover lifecycle state.
+- `internal/gateway/admin`: owns the admin HTTP surface plus admin-only probe/suggestion helpers, while `gateway` injects selector/broadcaster plus the few runtime callbacks that still need root state.
+- `internal/gateway/admin` now keeps router/auth wiring separate from config/status/provider/route/API-key handlers, so admin-only changes stay localized instead of growing one monolithic entry file.
+- `internal/gateway/requestctx`: owns request-context helpers for original client requests, route hooks, and authenticated API key labels.
+- `internal/gateway/snapshot`: owns admin-facing snapshot assembly for dashboard metrics and API key usage payloads.
+- `internal/gateway/upstream`: owns protocol endpoint mapping, upstream request execution, body conversion, encoding negotiation, and forwarded-header sanitization.
+- `internal/gateway/telemetry`: owns Prometheus collectors, metric helpers, dashboard rolling store, and output-rate freshness tracking.
 - `PromMiddleware`: records request-level Prometheus metrics for business endpoints.
 - Client API key usage is tracked separately from provider usage, so gateway auth and upstream auth remain decoupled.
-- `dashboardMetricsStore`: maintains in-memory rolling dashboard points sampled from Prometheus collectors.
+- Shared inference helpers centralize JSON request parsing, metric-header wiring, and common response headers so chat / responses / messages handlers stay behaviorally aligned.
+- Shared inference helpers also centralize route-context bootstrap, request-id/start-time allocation, manager creation, and route-model prompt injection, so protocol handlers keep only protocol-specific branching.
+- Shared inference session helpers centralize current provider/target refresh, per-attempt log params, pending-log emission, and metric-label refresh after failover so chat / responses / messages handlers no longer duplicate the same lifecycle scaffolding.
+- Chat-bridge helpers also centralize the shared `responses_to_chat` / `anthropic_to_chat` retry loop, pre-stream vs in-stream failure accounting, and final response logging so the two bridge paths stop carrying near-identical control flow.
+- Buffered inference helpers now also centralize the common `chat` / native `responses` request loop: upstream request preparation, retry/failover handling, success-path tool hook dispatch, and final log writing no longer live in two separate copies.
+- Buffered / relay helpers preserve protocol-path switching across failover: if a request starts on a native provider and retries onto a bridge-capable provider, control flow re-enters the correct `responses_to_chat` or `anthropic_to_chat` path instead of staying pinned to the old execution branch.
+- Dashboard and API key snapshots stay in the root package as admin callbacks, but Prometheus collector ownership and rolling time-series state now live in `internal/gateway/telemetry`.
+- Gateway root no longer keeps one-line snapshot wrapper methods that only forwarded to `internal/gateway/snapshot`; callback wiring now points at the snapshot package directly.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
 - Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion; Responses stream tool hooks also recover function calls from incremental events when `response.completed` never arrives.
@@ -51,7 +82,7 @@
 
 ## Admin Telemetry Flow
 
-1. Business requests update Prometheus collectors in `metrics.go`.
-2. `dashboardMetricsStore` samples cumulative counters every 2 seconds, while output-rate samples come from an in-memory freshness tracker updated by `RecordTokenMetrics`.
+1. Business requests update Prometheus collectors owned by `internal/gateway/telemetry`.
+2. `internal/gateway/telemetry` samples cumulative counters every 2 seconds, while output-rate samples come from an in-memory freshness tracker updated by `RecordTokenMetrics`.
 3. The store converts counter deltas into usage/error points, stores total output TPS plus per-provider output TPS samples, and also keeps per-route request-rate, error-rate, and output-rate time series for the routes page. Stale output-rate entries expire after one sample interval, so idle charts fall back to `0` instead of showing the last request forever.
 4. `GET /_admin/api/metrics/stream` returns current aggregated metrics plus the rolling time series for the dashboard and routes charts.

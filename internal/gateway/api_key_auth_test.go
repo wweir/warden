@@ -9,6 +9,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/wweir/warden/config"
+	adminpkg "github.com/wweir/warden/internal/gateway/admin"
+	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
 
 func testExactModel(protocol string, upstreams ...*config.RouteUpstreamConfig) *config.ExactRouteModelConfig {
@@ -68,9 +70,9 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	gw := NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
-	beforeRequests := testutil.ToFloat64(apiKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
-	beforePrompt := testutil.ToFloat64(apiKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
-	beforeCompletion := testutil.ToFloat64(apiKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	beforeRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
+	beforePrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
+	beforeCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer "+clientKeyValue)
@@ -89,9 +91,9 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 		t.Fatalf("upstream X-Api-Key should be stripped, got %q", gotClientAPIKey)
 	}
 
-	afterRequests := testutil.ToFloat64(apiKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
-	afterPrompt := testutil.ToFloat64(apiKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
-	afterCompletion := testutil.ToFloat64(apiKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	afterRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
+	afterPrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
+	afterCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
 
 	if afterRequests-beforeRequests != 1 {
 		t.Fatalf("api key request delta = %v, want 1", afterRequests-beforeRequests)
@@ -163,17 +165,17 @@ func TestMaskAPIKeysRedactsKeyValues(t *testing.T) {
 		},
 	}
 
-	maskAPIKeys(cfg)
+	adminpkg.MaskAPIKeys(cfg)
 
-	if cfg["admin_password"] != redactedPlaceholder {
+	if cfg["admin_password"] != adminpkg.RedactedPlaceholder {
 		t.Fatalf("admin_password = %#v", cfg["admin_password"])
 	}
 	apiKeys := cfg["api_keys"].(map[string]any)
-	if apiKeys["client-a"] != redactedPlaceholder || apiKeys["client-b"] != redactedPlaceholder {
+	if apiKeys["client-a"] != adminpkg.RedactedPlaceholder || apiKeys["client-b"] != adminpkg.RedactedPlaceholder {
 		t.Fatalf("api_keys not redacted: %#v", apiKeys)
 	}
 	provider := cfg["provider"].(map[string]any)["openai"].(map[string]any)
-	if provider["api_key"] != redactedPlaceholder {
+	if provider["api_key"] != adminpkg.RedactedPlaceholder {
 		t.Fatalf("provider api_key = %#v", provider["api_key"])
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	"github.com/wweir/warden/internal/reqlog"
 )
 
@@ -193,7 +194,7 @@ func TestAssembleProxyResponseConvertsAnthropicChatStreamToChatCompletionObject(
 		"event: message_stop\n" +
 		"data: {\"type\":\"message_stop\"}\n\n"
 
-	logged := assembleProxyResponse(config.RouteProtocolChat, "anthropic", []byte(streamBody))
+	logged := proxypkg.AssembleResponse(config.RouteProtocolChat, "anthropic", []byte(streamBody))
 	if !gjson.ValidBytes(logged) {
 		t.Fatalf("logged response is not valid JSON: %q", string(logged))
 	}

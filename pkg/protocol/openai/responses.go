@@ -77,7 +77,7 @@ func (req *ResponsesRequest) Validate() error {
 type ResponsesResponse struct {
 	ID     string                     `json:"id"`
 	Status string                     `json:"status,omitempty"` // "completed", "incomplete", "failed"
-	Output []json.RawMessage          `json:"output"` // output items, keep as RawMessage
+	Output []json.RawMessage          `json:"output"`           // output items, keep as RawMessage
 	Extra  map[string]json.RawMessage `json:"-"`
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/wweir/warden/config"
+	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/selector"
 )
 
@@ -49,11 +50,9 @@ func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
 	clientReq.RemoteAddr = wantForwardedIP + ":53001"
 	clientReq.Host = "gateway.local:8080"
 
-	ctx := withClientRequest(context.Background(), clientReq)
-
-	_, _, err := sendRequest(ctx, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	_, _, err := upstreampkg.SendRequest(context.Background(), clientReq, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
 	if err != nil {
-		t.Fatalf("sendRequest() error = %v", err)
+		t.Fatalf("SendRequest() error = %v", err)
 	}
 
 	if gotHeaders.Get("User-Agent") != wantUserAgent {
@@ -100,9 +99,9 @@ func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 		APIKey:   config.SecretString("provider-token"),
 	}
 
-	_, _, err := sendRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	_, _, err := upstreampkg.SendRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
 	if err != nil {
-		t.Fatalf("sendRequest() error = %v", err)
+		t.Fatalf("SendRequest() error = %v", err)
 	}
 
 	if gotAuthorization != "Bearer provider-token" {
@@ -119,7 +118,7 @@ func TestWriteUpstreamAwareError_PreservesUpstreamStatusAndJSONBody(t *testing.T
 		Body: `{"error":{"type":"key_model_access_denied","message":"denied"}}`,
 	}
 
-	writeUpstreamAwareError(rec, err)
+	upstreampkg.WriteUpstreamAwareError(rec, err)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
@@ -138,7 +137,7 @@ func TestWriteUpstreamAwareError_WrappedNonUpstreamFallsBackTo502(t *testing.T) 
 	rec := httptest.NewRecorder()
 	err := fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
 
-	writeUpstreamAwareError(rec, err)
+	upstreampkg.WriteUpstreamAwareError(rec, err)
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
@@ -163,7 +162,7 @@ func TestSendStreamingRequestRejectsHTTP200JSONErrorBody(t *testing.T) {
 		APIKey:   config.SecretString("provider-token"),
 	}
 
-	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	reader, _, err := upstreampkg.SendStreamingRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
 	if reader != nil {
 		t.Fatal("reader should be nil on HTTP 200 error body")
 	}
@@ -195,7 +194,7 @@ func TestSendStreamingRequestRejectsHTTP200HTMLBody(t *testing.T) {
 		APIKey:   config.SecretString("provider-token"),
 	}
 
-	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	reader, _, err := upstreampkg.SendStreamingRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
 	if reader != nil {
 		t.Fatal("reader should be nil on HTML error body")
 	}
@@ -231,9 +230,9 @@ func TestSendStreamingRequestDecompressesGzipWithoutHeader(t *testing.T) {
 		APIKey:   config.SecretString("provider-token"),
 	}
 
-	reader, _, err := sendStreamingRequest(context.Background(), provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	reader, _, err := upstreampkg.SendStreamingRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
 	if err != nil {
-		t.Fatalf("sendStreamingRequest() error = %v", err)
+		t.Fatalf("SendStreamingRequest() error = %v", err)
 	}
 	defer reader.Close()
 

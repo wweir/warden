@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	adminpkg "github.com/wweir/warden/internal/gateway/admin"
 	sel "github.com/wweir/warden/internal/selector"
 	"gopkg.in/yaml.v3"
 )
@@ -42,7 +43,7 @@ func TestNormalizePromptConfigJSONDropsDisabledFalseFlagsWithoutPrompt(t *testin
 		},
 	}
 
-	normalizePromptConfigJSON(cfg)
+	adminpkg.NormalizePromptConfigJSON(cfg)
 
 	route := cfg["route"].(map[string]any)["/openai"].(map[string]any)
 	exact := route["exact_models"].(map[string]any)["gpt-5.3-codex"].(map[string]any)
@@ -76,7 +77,7 @@ func TestNormalizePromptConfigJSONKeepsEnabledPromptFlags(t *testing.T) {
 		},
 	}
 
-	normalizePromptConfigJSON(cfg)
+	adminpkg.NormalizePromptConfigJSON(cfg)
 
 	exact := cfg["route"].(map[string]any)["/openai"].(map[string]any)["exact_models"].(map[string]any)["gpt-5.3-codex"].(map[string]any)
 	if promptEnabled, ok := exact["prompt_enabled"].(bool); !ok || !promptEnabled {
@@ -101,7 +102,7 @@ func TestNormalizeSecretConfigJSONEncodesSecretFields(t *testing.T) {
 		},
 	}
 
-	normalizeSecretConfigJSON(cfg)
+	adminpkg.NormalizeSecretConfigJSON(cfg)
 
 	if got := cfg["admin_password"]; got != config.EncodeSecret("admin-secret") {
 		t.Fatalf("admin_password = %v, want encoded secret", got)
@@ -168,7 +169,7 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 
 	getReq := httptest.NewRequest(http.MethodGet, "/_admin/api/config", nil)
 	getRec := httptest.NewRecorder()
-	gw.handleAdminConfigGet(getRec, getReq, nil)
+	gw.adminHandler().HandleAdminConfigGet(getRec, getReq, nil)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want %d, body=%q", getRec.Code, http.StatusOK, getRec.Body.String())
 	}
@@ -176,7 +177,7 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 	putReq := httptest.NewRequest(http.MethodPut, "/_admin/api/config", strings.NewReader(getRec.Body.String()))
 	putReq.Header.Set("Content-Type", "application/json")
 	putRec := httptest.NewRecorder()
-	gw.handleAdminConfigPut(putRec, putReq, nil)
+	gw.adminHandler().HandleAdminConfigPut(putRec, putReq, nil)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want %d, body=%q", putRec.Code, http.StatusOK, putRec.Body.String())
 	}
@@ -239,7 +240,7 @@ func TestWriteStatusSSEReturnsConfiguredAndDisplayProtocolsSeparately(t *testing
 	}
 
 	rec := httptest.NewRecorder()
-	gw.writeStatusSSE(rec)
+	gw.adminHandler().WriteStatusSSE(rec)
 
 	body := strings.TrimSpace(rec.Body.String())
 	if !strings.HasPrefix(body, "data: ") {
@@ -312,7 +313,7 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 
 	req := httptest.NewRequest(http.MethodGet, "/_admin/api/providers/detail?name=openai", nil)
 	rec := httptest.NewRecorder()
-	gw.handleProviderDetail(rec, req, nil)
+	gw.adminHandler().HandleProviderDetail(rec, req, nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
@@ -341,6 +342,63 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 	if got := payload.DisplayProtocols; !sameStrings(got, []string{config.RouteProtocolChat}) {
 		t.Fatalf("display_protocols = %v, want [chat]", got)
 	}
+}
+
+func TestNewGatewayRefreshesProviderModelsForExactRoutes(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "gpt-4o", "object": "model", "owned_by": "openai"},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		models := gw.selector.ProviderModels("openai")
+		if len(models) == 1 {
+			status := gw.selector.ProviderDetail("openai")
+			if status == nil {
+				t.Fatal("ProviderDetail() = nil")
+			}
+			if status.ModelCount != 1 {
+				t.Fatalf("ModelCount = %d, want 1", status.ModelCount)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("ProviderModels() did not refresh for exact route, got %d models", len(gw.selector.ProviderModels("openai")))
 }
 
 func sameStrings(got, want []string) bool {

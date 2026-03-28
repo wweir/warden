@@ -1,6 +1,10 @@
 package gateway
 
-import "testing"
+import (
+	"testing"
+
+	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+)
 
 func TestSelectAcceptedEncoding(t *testing.T) {
 	t.Parallel()
@@ -41,7 +45,7 @@ func TestSelectAcceptedEncoding(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := selectAcceptedEncoding(tt.header, tt.preferred)
+			got := upstreampkg.SelectAcceptedEncoding(tt.header, tt.preferred)
 			if got != tt.want {
 				t.Fatalf("selectAcceptedEncoding() = %q, want %q", got, tt.want)
 			}
@@ -82,7 +86,7 @@ func TestBuildUpstreamAcceptEncoding(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := buildUpstreamAcceptEncoding(tt.header, tt.preferred)
+			got := upstreampkg.BuildUpstreamAcceptEncoding(tt.header, tt.preferred)
 			if got != tt.want {
 				t.Fatalf("buildUpstreamAcceptEncoding() = %q, want %q", got, tt.want)
 			}
@@ -108,7 +112,7 @@ func TestNormalizeContentEncoding(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := normalizeContentEncoding(tt.input)
+			got := upstreampkg.NormalizeContentEncoding(tt.input)
 			if got != tt.want {
 				t.Fatalf("normalizeContentEncoding() = %q, want %q", got, tt.want)
 			}
