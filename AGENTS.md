@@ -5,10 +5,9 @@ Use Simplified Chinese to answer my questions.
 
 ## Documentation Rules
 
-1. 根目录维护 `ARCHITECTURE.md`，描述代码架构和设计决策
-2. 复杂包在目录下维护 `README.md`，说明职责和接口
-3. 设计调整需同步更新 `ARCHITECTURE.md` 和相关包的 `README.md` 等文档
-4. 大型方案设计、决策过程及实施进度在 `docs/` 目录下维护文档，推进开始、结束一个阶段时更新文档记录
+1. 根目录维护 `ARCHITECTURE.md`，描述整体架构、系统边界、分层职责、关键数据流、设计决策、文档链接
+2. 设计调整需同步更新 `ARCHITECTURE.md` 和相关包的 `README.md` 等文档。
+3. 大型方案设计、决策过程及实施进度在 `docs/` 目录下维护文档，推进开始、结束一个阶段时更新文档记录
 
 ## Coding Agent Rules
 
@@ -21,6 +20,7 @@ Use Simplified Chinese to answer my questions.
 7. 代码简洁，避免过早设计和不必要抽象
 8. 英文注释，仅注释复杂逻辑
 9. git 使用 commitizen 规范，英文提交信息
+10. 按需构建单元测试、集成测试
 
 ## Design Preferences
 
