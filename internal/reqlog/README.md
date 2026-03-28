@@ -105,7 +105,7 @@ func BuildFingerprint(rawBody json.RawMessage) string
 - `sys_hash`：所有 system prompt 文本拼接后的 FNV-32a hash，6 位十六进制
 - `fsm_chain`：每轮用户/助手输入的 hash，宽度依序递减（6→5→4→3→2→2→…），无分隔符
 
-**会话连续性**：两条记录属于同一会话，当且仅当 model 相同、`sys_hash` 相同、且较早记录的指纹是较新记录指纹的严格前缀。
+**会话连续性**：指纹本身只表达 system prompt 与对话步骤序列，不包含 model / route。管理端在日志页中会先用显式 `previous_response_id -> response.id` 续接；没有显式续接时，再把同 route 下且 `sys_hash` 相同、并满足“较早记录指纹是较新记录指纹严格前缀”的请求保守归并为同一会话。
 
 **稳定性保证**：
 - 过滤 `x-anthropic-billing-header:` 行（billing token 变化不影响指纹）

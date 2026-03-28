@@ -10,46 +10,116 @@
 
 		<div v-if="error" class="msg msg-error">{{ error }}</div>
 
-		<div class="tabs" v-if="routeKeys.length">
-			<button
-				class="tab"
-				:class="{ active: activeTab === '' }"
-				@click="activeTab = ''"
+		<div class="logs-workspace" :class="{ 'logs-workspace-tree-collapsed': sessionTreeCollapsed }">
+			<aside
+				v-if="routeTree.length"
+				class="session-tree-panel panel"
+				:class="{ collapsed: sessionTreeCollapsed }"
 			>
-				{{ $t('logs.all') }}
-				<span class="badge">{{ chainedLogs.length }}</span>
-			</button>
-			<button
-				v-for="key in routeKeys"
-				:key="key"
-				class="tab"
-				:class="{ active: activeTab === key }"
-				@click="activeTab = key"
-			>
-				{{ key }}
-				<span class="badge">{{ chainsByRoute[key] || 0 }}</span>
-			</button>
-		</div>
+				<div class="session-tree-header">
+					<div>
+						<div class="section-eyebrow">{{ $t('logs.sessions') }}</div>
+						<h3 class="session-tree-title">{{ $t('logs.sessionExplorer') }}</h3>
+					</div>
+					<div class="session-tree-actions">
+						<span class="badge">{{ chainedLogs.length }}</span>
+						<button
+							class="btn btn-secondary btn-sm session-tree-collapse-btn"
+							type="button"
+							:aria-expanded="!sessionTreeCollapsed"
+							:aria-label="sessionTreeCollapsed ? $t('logs.expandSessionTree') : $t('logs.collapseSessionTree')"
+							@click="toggleSessionTree"
+						>
+							{{ sessionTreeCollapsed ? "▶" : "◀" }}
+						</button>
+					</div>
+				</div>
 
-		<div class="sessions" v-if="sessionChips.length">
-			<span class="sessions-label">{{ $t('logs.sessions') }}</span>
-			<button
-				v-for="chip in sessionChips"
-				:key="chip.id"
-				class="tab session-chip"
-				:class="{ active: activeSession === chip.id }"
-				@click="activeSession = activeSession === chip.id ? null : chip.id"
-			>
-				{{ sessionName(chip) }}
-				<span class="badge">{{ chip.logs.length }} {{ $t('logs.reqs') }}</span>
-			</button>
-		</div>
+				<template v-if="!sessionTreeCollapsed">
+					<button
+						class="tree-root-button"
+						:class="{ active: activeTab === '' && activeSession === null }"
+						type="button"
+						@click="selectAllLogs"
+					>
+						<span class="tree-root-title">{{ $t('logs.allRequests') }}</span>
+						<span class="tree-root-meta">{{ logs.length }} {{ $t('logs.reqs') }}</span>
+					</button>
 
-		<div class="table-wrap panel" ref="tableWrap">
-			<table v-if="logs.length" class="data-table">
+					<div class="tree-scroll" role="tree" :aria-label="$t('logs.sessionExplorer')">
+					<section
+						v-for="group in routeTree"
+						:key="group.key"
+						class="route-branch"
+					>
+						<div class="route-branch-header">
+							<button
+								class="route-branch-button"
+								:class="{ active: activeTab === group.key && activeSession === null }"
+								type="button"
+								@click="selectRoute(group.key)"
+							>
+								<span class="route-branch-label">{{ group.key }}</span>
+								<span class="badge">{{ group.chains.length }}</span>
+							</button>
+							<button
+								class="route-branch-toggle"
+								type="button"
+								:aria-expanded="isRouteGroupExpanded(group.key)"
+								:aria-label="isRouteGroupExpanded(group.key) ? $t('logs.collapseRouteGroup') : $t('logs.expandRouteGroup')"
+								@click="toggleRouteGroup(group.key)"
+							>
+								{{ isRouteGroupExpanded(group.key) ? "−" : "+" }}
+							</button>
+						</div>
+
+						<ul v-if="isRouteGroupExpanded(group.key)" class="session-tree-list" role="group">
+							<li
+								v-for="chain in group.chains"
+								:key="chain.id"
+								class="session-tree-item"
+							>
+								<button
+									class="session-node-button"
+									:class="{ active: activeSession === chain.id }"
+									type="button"
+									:aria-pressed="activeSession === chain.id"
+									@click="selectSession(chain, group.key)"
+								>
+									<span class="session-node-main">
+										<span class="session-node-title">{{ sessionName(chain) }}</span>
+										<span class="session-node-meta">
+											{{ formatTime(chain.logs[0].timestamp) }} · {{ chain.logs.length }} {{ $t('logs.reqs') }}
+										</span>
+									</span>
+								</button>
+							</li>
+						</ul>
+					</section>
+					</div>
+				</template>
+			</aside>
+
+			<section class="logs-content">
+				<div class="logs-scope">
+					<div>
+						<div class="section-eyebrow">{{ activeSession ? $t('logs.selectedSession') : $t('logs.currentScope') }}</div>
+						<h3 class="logs-scope-title">{{ scopeTitle }}</h3>
+					</div>
+					<div class="logs-scope-meta">
+						<span class="badge">{{ filteredLogCount }} {{ $t('logs.reqs') }}</span>
+					</div>
+				</div>
+
+				<div class="table-wrap panel">
+			<table v-if="logs.length" class="data-table desktop-log-table">
 				<thead>
 					<tr>
-						<th class="th-toggle"></th>
+						<th class="th-toggle">
+							<div class="th-col">
+								<span>{{ $t('logs.actions') }}</span>
+							</div>
+						</th>
 						<th>
 							<div class="th-col">
 								<span>{{ $t('logs.time') }}</span>
@@ -63,6 +133,7 @@
 									class="col-filter"
 									:class="{ active: filters.prompt }"
 									:placeholder="$t('common.filter')"
+									:aria-label="$t('logs.filterPrompt')"
 									@click.stop
 								/>
 							</div>
@@ -75,6 +146,7 @@
 									class="col-filter"
 									:class="{ active: filters.model }"
 									:placeholder="$t('common.filter')"
+									:aria-label="$t('logs.filterModel')"
 									@click.stop
 								/>
 							</div>
@@ -87,6 +159,7 @@
 									class="col-filter"
 									:class="{ active: filters.provider }"
 									:placeholder="$t('common.filter')"
+									:aria-label="$t('logs.filterProvider')"
 									@click.stop
 								/>
 							</div>
@@ -104,6 +177,7 @@
 									class="col-filter"
 									:class="{ active: filters.status }"
 									:placeholder="$t('common.filter')"
+									:aria-label="$t('logs.filterStatus')"
 									@click.stop
 								/>
 							</div>
@@ -116,9 +190,17 @@
 						<tr
 							v-if="chain.displayLogs.length === 1"
 							:class="rowClass(chain.displayLogs[0])"
-							@click="showDetail(chain.displayLogs[0])"
 						>
-							<td></td>
+							<td class="cell-actions">
+								<button
+									class="btn btn-secondary btn-sm action-btn"
+									type="button"
+									:aria-label="$t('logs.viewLogDetails')"
+									@click="showDetail(chain.displayLogs[0], $event.currentTarget)"
+								>
+									{{ $t('logs.view') }}
+								</button>
+							</td>
 							<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
 							<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
 							<td>{{ chain.displayLogs[0].model }}</td>
@@ -129,14 +211,24 @@
 						<!-- multi-request chain -->
 						<template v-else>
 							<tr
-								class="row-chain-head row-clickable"
+								class="row-chain-head"
 								:class="chainRowClass(chain)"
-								@click="toggleChain(chain.id)"
 							>
 								<td class="cell-toggle">
-									<span class="toggle-icon">{{
-										expandedChains.has(chain.id) ? "▼" : "▶"
-									}}</span>
+									<button
+										class="btn btn-secondary btn-sm toggle-btn"
+										type="button"
+										:aria-expanded="expandedChains.has(chain.id)"
+										:aria-label="expandedChains.has(chain.id) ? $t('logs.collapseSession') : $t('logs.expandSession')"
+										@click="toggleChain(chain.id)"
+									>
+										<span class="toggle-icon">{{
+											expandedChains.has(chain.id) ? "▼" : "▶"
+										}}</span>
+										<span class="sr-only">
+											{{ expandedChains.has(chain.id) ? $t('logs.collapseSession') : $t('logs.expandSession') }}
+										</span>
+									</button>
 								</td>
 								<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
 								<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
@@ -147,16 +239,15 @@
 									<span class="badge badge-chain"
 										>{{ chain.displayLogs.length }} {{ $t('logs.reqs') }}</span
 									>
-									{{ chainStatus(chain) !== "OK" ? " · " + chainStatus(chain) : "" }}
+									{{ chainStatus(chain) !== $t('common.ok') ? " · " + chainStatus(chain) : "" }}
 								</td>
 							</tr>
 							<template v-if="expandedChains.has(chain.id)">
 								<tr
 									v-for="(log, idx) in chain.displayLogs"
 									:key="log.request_id"
-									class="row-chain-child row-clickable"
+									class="row-chain-child"
 									:class="childRowClass(log)"
-									@click.stop="showDetail(log)"
 								>
 									<td class="cell-chain-indent">
 										<span
@@ -165,6 +256,14 @@
 												'chain-line-last': idx === chain.displayLogs.length - 1,
 											}"
 										></span>
+										<button
+											class="btn btn-secondary btn-sm action-btn chain-detail-btn"
+											type="button"
+											:aria-label="$t('logs.viewLogDetails')"
+											@click="showDetail(log, $event.currentTarget)"
+										>
+											{{ $t('logs.view') }}
+										</button>
 									</td>
 									<td>{{ formatTime(log.timestamp) }}</td>
 									<td class="cell-prompt">{{ lastUserPreview(log) }}</td>
@@ -181,20 +280,101 @@
 				</tr>
 			</tbody>
 			</table>
+
+			<div v-if="logs.length" class="mobile-log-list">
+				<template v-for="chain in filteredChains" :key="chain.id + '-mobile'">
+					<article class="mobile-log-card panel" :class="mobileCardClass(chain)">
+						<div class="mobile-log-top">
+							<div class="mobile-log-time">{{ formatTime(chain.displayLogs[0].timestamp) }}</div>
+							<div class="mobile-log-actions">
+								<button
+									v-if="chain.displayLogs.length > 1"
+									class="btn btn-secondary btn-sm"
+									type="button"
+									:aria-expanded="expandedChains.has(chain.id)"
+									@click="toggleChain(chain.id)"
+								>
+									{{ expandedChains.has(chain.id) ? $t('logs.collapse') : $t('logs.expand') }}
+								</button>
+								<button
+									v-else
+									class="btn btn-secondary btn-sm"
+									type="button"
+									@click="showDetail(chain.displayLogs[0], $event.currentTarget)"
+								>
+									{{ $t('logs.view') }}
+								</button>
+							</div>
+						</div>
+						<div class="mobile-log-prompt">{{ lastUserPreview(chain.displayLogs[0]) || $t('logs.noPrompt') }}</div>
+						<dl class="mobile-log-meta">
+							<div>
+								<dt>{{ $t('logs.model') }}</dt>
+								<dd>{{ chain.displayLogs[0].model || "—" }}</dd>
+							</div>
+							<div>
+								<dt>{{ $t('logs.provider') }}</dt>
+								<dd>{{ chain.displayLogs[0].provider || "—" }}</dd>
+							</div>
+							<div>
+								<dt>{{ $t('logs.duration') }}</dt>
+								<dd>{{ formatDuration(chain.displayLogs.length > 1 ? chainTotalDuration(chain) : chain.displayLogs[0].duration_ms) }}</dd>
+							</div>
+							<div>
+								<dt>{{ $t('logs.status') }}</dt>
+								<dd>
+									<span v-if="chain.displayLogs.length > 1" class="badge badge-chain">
+										{{ chain.displayLogs.length }} {{ $t('logs.reqs') }}
+									</span>
+									<span>{{ chain.displayLogs.length > 1 ? chainStatus(chain) : statusText(chain.displayLogs[0]) }}</span>
+								</dd>
+							</div>
+						</dl>
+						<div v-if="chain.displayLogs.length > 1 && expandedChains.has(chain.id)" class="mobile-log-children">
+							<button
+								v-for="log in chain.displayLogs"
+								:key="log.request_id + '-child-mobile'"
+								class="mobile-log-child"
+								type="button"
+								@click="showDetail(log, $event.currentTarget)"
+							>
+								<span class="mobile-log-child-time">{{ formatTime(log.timestamp) }}</span>
+								<span class="mobile-log-child-main">{{ lastUserPreview(log) || $t('logs.noPrompt') }}</span>
+								<span class="mobile-log-child-status">{{ statusText(log) }}</span>
+							</button>
+						</div>
+					</article>
+				</template>
+				<div v-if="!filteredChains.length" class="empty-hint">
+					{{ hasFilters ? $t('logs.noMatchingLogs') : $t('logs.noLogsYet') }}
+				</div>
+			</div>
+			<div v-else class="empty-hint">
+				{{ hasFilters ? $t('logs.noMatchingLogs') : $t('logs.noLogsYet') }}
+			</div>
+				</div>
+			</section>
 		</div>
 
 		<!-- Detail Modal -->
-		<div v-if="selected" class="modal-overlay" @click.self="selected = null">
-			<div class="modal">
+		<div v-if="selected" class="modal-overlay" @click.self="closeDetail">
+			<div
+				ref="modalRef"
+				class="modal"
+				role="dialog"
+				aria-modal="true"
+				:aria-labelledby="detailTitleId"
+				@keydown="handleModalKeydown"
+			>
 				<div class="modal-header">
-					<h3>{{ $t('logs.requestDetail') }}</h3>
+					<h3 :id="detailTitleId">{{ $t('logs.requestDetail') }}</h3>
 					<div class="modal-header-actions">
 						<div class="view-toggle">
 							<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
 							<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
 						</div>
 						<button class="btn btn-secondary btn-sm" @click="copyJSON">{{ copied ? '✓' : $t('common.copy') }}</button>
-						<button class="btn btn-secondary btn-sm" @click="selected = null">{{ $t('common.close') }}</button>
+						<button ref="closeButtonRef" class="btn btn-secondary btn-sm" @click="closeDetail">{{ $t('common.close') }}</button>
 					</div>
 				</div>
 
@@ -205,117 +385,162 @@
 					</div>
 
 					<!-- === Timeline View === -->
-					<div v-else>
-						<table class="meta-table">
-							<tr><td>{{ $t('logs.requestId') }}</td><td><code>{{ selected.request_id }}</code></td></tr>
-							<tr><td>{{ $t('logs.route') }}</td><td><code>{{ selected.route }}</code></td></tr>
-							<tr><td>{{ $t('logs.model') }}</td><td>{{ selected.model }}</td></tr>
-							<tr><td>{{ $t('logs.provider') }}</td><td>{{ selected.provider }}</td></tr>
-							<tr><td>{{ $t('logs.duration') }}</td><td>{{ formatDuration(selected.duration_ms) }}</td></tr>
-							<tr v-if="selected.fingerprint"><td>{{ $t('logs.session') }}</td><td><code class="fp-str">{{ selected.fingerprint }}</code></td></tr>
-						</table>
+					<div v-else class="detail-layout">
+						<section class="detail-summary panel">
+							<div class="detail-summary-head">
+								<div>
+									<div class="section-eyebrow">{{ $t('logs.requestSummary') }}</div>
+									<h4 class="detail-summary-title">{{ detailTitle }}</h4>
+								</div>
+								<span class="detail-status-pill" :class="responseClass(selected)">
+									{{ selected.error || responseStatusText(selected) }}
+								</span>
+							</div>
 
-						<!-- Timeline nodes -->
-						<div class="chain" v-if="timelineNodes.length">
-							<div
-								v-for="(node, i) in timelineNodes"
-								:key="i"
-								class="chain-node"
-								:class="{ 'chain-node-last': i === timelineNodes.length - 1 }"
-							>
-								<div class="chain-dot" :class="'dot-' + node.dotType"></div>
-								<div class="chain-content">
-									<div class="chain-label">{{ node.label }}</div>
+							<div class="detail-meta-grid">
+								<div class="detail-meta-item">
+									<span>{{ $t('logs.requestId') }}</span>
+									<code>{{ selected.request_id }}</code>
+								</div>
+								<div class="detail-meta-item">
+									<span>{{ $t('logs.route') }}</span>
+									<code>{{ selected.route }}</code>
+								</div>
+								<div class="detail-meta-item">
+									<span>{{ $t('logs.model') }}</span>
+									<strong>{{ selected.model }}</strong>
+								</div>
+								<div class="detail-meta-item">
+									<span>{{ $t('logs.provider') }}</span>
+									<strong>{{ selected.provider }}</strong>
+								</div>
+								<div class="detail-meta-item">
+									<span>{{ $t('logs.duration') }}</span>
+									<strong>{{ formatDuration(selected.duration_ms) }}</strong>
+								</div>
+								<div v-if="selected.fingerprint" class="detail-meta-item detail-meta-item-wide">
+									<span>{{ $t('logs.session') }}</span>
+									<code class="fp-str">{{ selected.fingerprint }}</code>
+								</div>
+							</div>
+						</section>
 
-									<!-- text preview (system gets single-line truncated style) -->
-									<div
-										v-if="node.preview"
-										class="chain-preview"
-										:class="{ 'chain-preview-oneline': node.dotType === 'system' }"
-									>{{ node.preview }}</div>
+						<section class="detail-section panel">
+							<div class="detail-section-head">
+								<div>
+									<div class="section-eyebrow">{{ $t('logs.conversation') }}</div>
+									<h4 class="detail-section-title">{{ $t('logs.timeline') }}</h4>
+								</div>
+							</div>
 
-									<!-- tool call + result pair -->
-									<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
-										<div class="tool-chip">
-											<span class="tool-arrow">call</span>
-											<code>{{ node.toolName }}</code>
+							<div class="chain" v-if="timelineNodes.length">
+								<div
+									v-for="(node, i) in timelineNodes"
+									:key="i"
+									class="chain-node"
+									:class="{ 'chain-node-last': i === timelineNodes.length - 1 }"
+								>
+									<div class="chain-dot" :class="'dot-' + node.dotType"></div>
+									<div class="chain-content">
+										<div class="chain-label">{{ node.label }}</div>
+
+										<!-- text preview (system gets single-line truncated style) -->
+										<div
+											v-if="node.preview"
+											class="chain-preview"
+											:class="{ 'chain-preview-oneline': node.dotType === 'system' }"
+										>{{ node.preview }}</div>
+
+										<!-- tool call + result pair -->
+										<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
+											<div class="tool-chip">
+												<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
+												<code>{{ node.toolName }}</code>
+											</div>
+											<details class="tool-pair-details" :open="node.defaultOpen || undefined">
+												<summary>{{ $t('logs.arguments') }}</summary>
+												<pre class="code-block">{{ formatJSON(node.toolArgs) }}</pre>
+											</details>
+											<div class="tool-chip" v-if="node.toolResult !== undefined">
+												<span class="tool-arrow" :class="{ 'text-error': node.toolError }">{{ node.toolError ? $t('logs.toolFail') : $t('logs.toolResult') }}</span>
+											</div>
+											<details v-if="node.toolResult !== undefined" class="tool-pair-details" :open="node.defaultOpen || undefined">
+												<summary>{{ $t('logs.output') }}</summary>
+												<pre class="code-block code-block-raw">{{ renderEscapes(node.toolResult) }}</pre>
+											</details>
 										</div>
-										<details class="tool-pair-details" :open="node.defaultOpen || undefined">
-											<summary>arguments</summary>
-											<pre class="code-block">{{ formatJSON(node.toolArgs) }}</pre>
-										</details>
-										<div class="tool-chip" v-if="node.toolResult !== undefined">
-											<span class="tool-arrow" :class="{ 'text-error': node.toolError }">{{ node.toolError ? 'fail' : 'result' }}</span>
+
+										<!-- tool_calls from assistant (unpaired) -->
+										<div v-if="node.toolCalls?.length" class="chain-tools">
+											<div v-for="(tc, j) in node.toolCalls" :key="j" class="tool-chip">
+												<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
+												<code>{{ tc.function?.name || tc.name }}</code>
+												<details :open="node.defaultOpen || undefined">
+													<summary>{{ $t('logs.arguments') }}</summary>
+													<pre class="code-block">{{ formatJSON(tc.function?.arguments || tc.arguments) }}</pre>
+												</details>
+											</div>
 										</div>
-										<details v-if="node.toolResult !== undefined" class="tool-pair-details" :open="node.defaultOpen || undefined">
-											<summary>output</summary>
-											<pre class="code-block code-block-raw">{{ renderEscapes(node.toolResult) }}</pre>
+
+										<!-- expandable raw content -->
+										<details v-if="node.raw" :open="node.defaultOpen || undefined">
+											<summary>{{ $t('logs.raw') }}</summary>
+											<pre class="code-block code-block-raw">{{ renderEscapes(typeof node.raw === 'string' ? node.raw : formatJSON(node.raw)) }}</pre>
 										</details>
 									</div>
+								</div>
+							</div>
 
-									<!-- tool_calls from assistant (unpaired) -->
-									<div v-if="node.toolCalls?.length" class="chain-tools">
-										<div v-for="(tc, j) in node.toolCalls" :key="j" class="tool-chip">
-											<span class="tool-arrow">call</span>
-											<code>{{ tc.function?.name || tc.name }}</code>
-											<details :open="node.defaultOpen || undefined">
-												<summary>args</summary>
-												<pre class="code-block">{{ formatJSON(tc.function?.arguments || tc.arguments) }}</pre>
+							<div v-else class="chain">
+								<div class="chain-node">
+									<div class="chain-dot dot-user"></div>
+									<div class="chain-content">
+										<div class="chain-label">{{ $t('logs.request') }}</div>
+										<details open>
+											<summary>{{ $t('logs.body') }}</summary>
+											<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.request)) }}</pre>
+										</details>
+									</div>
+								</div>
+							</div>
+						</section>
+
+						<section class="detail-section panel">
+							<div class="detail-section-head">
+								<div>
+									<div class="section-eyebrow">{{ $t('logs.result') }}</div>
+									<h4 class="detail-section-title">{{ $t('logs.response') }}</h4>
+								</div>
+							</div>
+
+							<div class="response-block" :class="responseClass(selected)">
+								<span class="response-status">{{ selected.error || responseStatusText(selected) }}</span>
+								<div v-if="selected.response" class="response-pane">
+									<div class="pane-label">{{ $t('logs.response') }}</div>
+									<!-- tool_use blocks from Anthropic response -->
+									<div v-if="responseToolCalls.length" class="chain-tools" style="margin-bottom:8px">
+										<div v-for="(tc, j) in responseToolCalls" :key="j" class="tool-chip">
+											<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
+											<code>{{ tc.name }}</code>
+											<details>
+												<summary>{{ $t('logs.arguments') }}</summary>
+												<pre class="code-block">{{ formatJSON(tc.input) }}</pre>
 											</details>
 										</div>
 									</div>
-
-									<!-- expandable raw content -->
-									<details v-if="node.raw" :open="node.defaultOpen || undefined">
-										<summary>raw</summary>
-										<pre class="code-block code-block-raw">{{ renderEscapes(typeof node.raw === 'string' ? node.raw : formatJSON(node.raw)) }}</pre>
+									<!-- assembled text content -->
+									<details v-if="responseHasText" :open="true">
+										<summary>{{ $t('logs.content') }}</summary>
+										<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
+									</details>
+									<!-- raw JSON fallback -->
+									<details v-else :open="true">
+										<summary>{{ $t('logs.content') }}</summary>
+										<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.response)) }}</pre>
 									</details>
 								</div>
 							</div>
-						</div>
-
-						<!-- Fallback: no messages parsed -->
-						<div v-else class="chain">
-							<div class="chain-node">
-								<div class="chain-dot dot-user"></div>
-								<div class="chain-content">
-									<div class="chain-label">{{ $t('logs.request') }}</div>
-									<details open>
-										<summary>body</summary>
-										<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.request)) }}</pre>
-									</details>
-								</div>
-							</div>
-						</div>
-
-						<!-- Response -->
-						<div class="response-block" :class="responseClass(selected)">
-							<span class="response-status">{{ selected.error || responseStatusText(selected) }}</span>
-							<div v-if="selected.response" class="response-pane">
-								<div class="pane-label">{{ $t('logs.response') }}</div>
-								<!-- tool_use blocks from Anthropic response -->
-								<div v-if="responseToolCalls.length" class="chain-tools" style="margin-bottom:8px">
-									<div v-for="(tc, j) in responseToolCalls" :key="j" class="tool-chip">
-										<span class="tool-arrow">call</span>
-										<code>{{ tc.name }}</code>
-										<details>
-											<summary>args</summary>
-											<pre class="code-block">{{ formatJSON(tc.input) }}</pre>
-										</details>
-									</div>
-								</div>
-								<!-- assembled text content -->
-								<details v-if="responseHasText" :open="true">
-									<summary>{{ $t('logs.content') }}</summary>
-									<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
-								</details>
-								<!-- raw JSON fallback -->
-								<details v-else :open="true">
-									<summary>{{ $t('logs.content') }}</summary>
-									<pre class="code-block code-block-raw">{{ renderEscapes(formatJSON(selected.response)) }}</pre>
-								</details>
-							</div>
-						</div>
+						</section>
 					</div>
 				</div>
 			</div>
@@ -329,11 +554,12 @@ import { useI18n } from "vue-i18n";
 import { createLogStream } from "../api.js";
 import { formatDuration } from "../utils.js";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const logs = ref([]);
 const paused = ref(false);
 const error = ref("");
-const tableWrap = ref(null);
+const modalRef = ref(null);
+const closeButtonRef = ref(null);
 const selected = ref(null);
 const detailView = ref("timeline"); // "timeline" | "json"
 const copied = ref(false);
@@ -341,9 +567,17 @@ let copyTimer = null;
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 let stopStream = null;
 const MAX_LOGS = 500;
+const detailTitleId = "log-detail-title";
+let lastFocusedElement = null;
+let autoScrollFrame = 0;
+let flushFrame = 0;
+let pendingLogs = [];
+const requestIndexMap = new Map();
 
 const activeTab = ref("");
 const activeSession = ref(null);
+const sessionTreeCollapsed = ref(false);
+const collapsedRouteGroups = ref(new Set());
 
 const groupedLogs = computed(() => {
 	const map = {};
@@ -360,7 +594,15 @@ const routeKeys = computed(() => Object.keys(groupedLogs.value));
 
 function formatTime(t) {
 	if (!t) return "";
-	return new Date(t).toLocaleTimeString();
+	const date = new Date(t);
+	if (Number.isNaN(date.getTime())) return "";
+	return new Intl.DateTimeFormat(locale.value, {
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+	}).format(date);
 }
 
 function formatJSON(data) {
@@ -415,6 +657,73 @@ function copyTextFallback(text) {
 	textarea.setSelectionRange(0, textarea.value.length);
 	document.execCommand("copy");
 	document.body.removeChild(textarea);
+}
+
+function closeDetail() {
+	selected.value = null;
+}
+
+function showDetail(log, trigger = null) {
+	lastFocusedElement = trigger instanceof HTMLElement ? trigger : document.activeElement;
+	selected.value = log;
+	detailView.value = log.error ? "json" : "timeline";
+}
+
+function selectAllLogs() {
+	activeTab.value = "";
+	activeSession.value = null;
+}
+
+function toggleSessionTree() {
+	sessionTreeCollapsed.value = !sessionTreeCollapsed.value;
+}
+
+function isRouteGroupExpanded(routeKey) {
+	return !collapsedRouteGroups.value.has(routeKey);
+}
+
+function toggleRouteGroup(routeKey) {
+	if (collapsedRouteGroups.value.has(routeKey)) {
+		collapsedRouteGroups.value.delete(routeKey);
+	} else {
+		collapsedRouteGroups.value.add(routeKey);
+	}
+	collapsedRouteGroups.value = new Set(collapsedRouteGroups.value);
+}
+
+function expandRouteGroup(routeKey) {
+	if (!collapsedRouteGroups.value.has(routeKey)) return;
+	collapsedRouteGroups.value.delete(routeKey);
+	collapsedRouteGroups.value = new Set(collapsedRouteGroups.value);
+}
+
+function selectRoute(routeKey) {
+	sessionTreeCollapsed.value = false;
+	expandRouteGroup(routeKey);
+	activeTab.value = activeTab.value === routeKey && activeSession.value === null ? "" : routeKey;
+	activeSession.value = null;
+}
+
+function selectSession(chain, routeKey) {
+	sessionTreeCollapsed.value = false;
+	expandRouteGroup(routeKey);
+	activeTab.value = routeKey;
+	activeSession.value = activeSession.value === chain.id ? null : chain.id;
+}
+
+function mobileCardClass(chain) {
+	if (chain.displayLogs.some((log) => log.error)) return "mobile-log-card-error";
+	if (chain.displayLogs.some((log) => isRecoveredByFailover(log))) return "mobile-log-card-warn";
+	return "";
+}
+
+function resetLogs() {
+	logs.value = [];
+	requestIndexMap.clear();
+	selected.value = null;
+	activeSession.value = null;
+	expandedChains.value = new Set();
+	collapsedRouteGroups.value = new Set();
 }
 
 // extract assembled text content from a streaming response
@@ -512,14 +821,23 @@ function togglePause() {
 }
 
 function clear() {
-	logs.value = [];
+	pendingLogs = [];
+	resetLogs();
+}
+
+function rebuildRequestIndex() {
+	requestIndexMap.clear();
+	for (let i = 0; i < logs.value.length; i++) {
+		requestIndexMap.set(logs.value[i].request_id, i);
+	}
 }
 
 function upsertLog(log) {
-	const idx = logs.value.findIndex((item) => item.request_id === log.request_id);
+	const idx = requestIndexMap.get(log.request_id);
 	if (idx >= 0) {
 		logs.value[idx] = log;
 	} else {
+		requestIndexMap.set(log.request_id, logs.value.length);
 		logs.value.push(log);
 	}
 	if (selected.value?.request_id === log.request_id) {
@@ -527,12 +845,8 @@ function upsertLog(log) {
 	}
 	if (logs.value.length > MAX_LOGS) {
 		logs.value = logs.value.slice(-MAX_LOGS);
+		rebuildRequestIndex();
 	}
-}
-
-function showDetail(log) {
-	selected.value = log;
-	detailView.value = log.error ? "json" : "timeline";
 }
 
 const selectedJSON = computed(() => {
@@ -786,10 +1100,10 @@ function extractPreview(msg) {
 	if (!c) return "";
 	if (typeof c === "string") return truncate(c, 120);
 	if (Array.isArray(c)) {
-		// support both OpenAI content parts (type:"text") and Anthropic blocks (type:"text"|"tool_use"|"tool_result")
+		// support OpenAI/Responses/Anthropic text-like parts
 		const text = c
-			.filter((p) => p.type === "text")
-			.map((p) => p.text)
+			.filter((part) => ["text", "input_text", "output_text"].includes(part?.type) && typeof part.text === "string")
+			.map((part) => part.text)
 			.join(" ");
 		if (text) return truncate(text, 120);
 		const types = [...new Set(c.map((p) => p.type))];
@@ -798,8 +1112,49 @@ function extractPreview(msg) {
 	return "";
 }
 
+function extractUserMessageText(message) {
+	if (message == null) return "";
+	if (typeof message === "string") return message;
+
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		const text = content
+			.filter((part) => ["text", "input_text", "output_text"].includes(part?.type) && typeof part.text === "string")
+			.map((part) => part.text)
+			.join(" ");
+		if (text) return text;
+	}
+
+	if (Array.isArray(message.input_text)) {
+		const text = message.input_text
+			.filter((part) => typeof part === "string")
+			.join(" ");
+		if (text) return text;
+	}
+
+	if (typeof message.input_text === "string") return message.input_text;
+	if (typeof message.text === "string") return message.text;
+	return "";
+}
+
 function truncate(s, n) {
 	return s.length > n ? s.slice(0, n) + "..." : s;
+}
+
+function roleLabel(role) {
+	switch (role) {
+		case "system":
+			return t("logs.system");
+		case "user":
+			return t("logs.user");
+		case "assistant":
+			return t("logs.assistant");
+		case "tool":
+			return t("logs.tool");
+		default:
+			return role || t("logs.unknown");
+	}
 }
 
 // render escaped characters (\n, \t, etc.) in strings
@@ -843,15 +1198,21 @@ const timelineNodes = computed(() => {
 		if (msg.role === "assistant" && msg.toolCalls?.length) {
 			// assistant with tool_calls: always emit assistant node, then emit paired tool nodes
 			nodes.push({
-				type: "message", dotType: "assistant", label: "assistant",
-				preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
+				type: "message",
+				dotType: "assistant",
+				label: t("logs.assistant"),
+				preview: msg.preview,
+				raw: msg.raw,
+				defaultOpen: isLastSection,
 			});
 			for (const tc of msg.toolCalls) {
 				const callId = tc.id || tc.tool_call_id;
 				const result = callId ? toolResultMap.get(callId) : null;
 				if (result) pairedToolIds.add(callId);
 				nodes.push({
-					type: "tool-pair", dotType: "tool", label: (tc.function?.name || tc.name || "tool"),
+					type: "tool-pair",
+					dotType: "tool",
+					label: tc.function?.name || tc.name || t("logs.tool"),
 					toolName: tc.function?.name || tc.name,
 					toolArgs: tc.function?.arguments || tc.arguments,
 					toolResult: result ? (result.raw?.content ?? result.preview ?? "") : undefined,
@@ -865,7 +1226,7 @@ const timelineNodes = computed(() => {
 
 		// regular message node
 		nodes.push({
-			type: "message", dotType: msg.role, label: msg.role,
+			type: "message", dotType: msg.role, label: roleLabel(msg.role),
 			preview: msg.preview, raw: msg.raw, defaultOpen: isLastSection,
 		});
 	}
@@ -873,15 +1234,20 @@ const timelineNodes = computed(() => {
 	// append gateway steps
 	for (const step of selected.value.steps || []) {
 		const stepNode = {
-			type: "step", dotType: "step", label: "gateway step " + step.iteration,
+			type: "step",
+			dotType: "step",
+			label: t("logs.gatewayStep", { n: step.iteration }),
 		};
 		nodes.push(stepNode);
 		if (step.tool_calls?.length) {
 			for (const tc of step.tool_calls) {
 				const tr = step.tool_results?.find((r) => r.tool_call_id === tc.id);
 				nodes.push({
-					type: "tool-pair", dotType: "tool", label: tc.name || "tool",
-					toolName: tc.name, toolArgs: tc.arguments,
+					type: "tool-pair",
+					dotType: "tool",
+					label: tc.name || t("logs.tool"),
+					toolName: tc.name,
+					toolArgs: tc.arguments,
 					toolResult: tr ? tr.output : undefined,
 					toolError: tr?.is_error || false,
 				});
@@ -894,27 +1260,16 @@ const timelineNodes = computed(() => {
 
 // --- conversation chain grouping ---
 
-const CHAIN_TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes fallback for logs without fingerprint
 const EMPTY_HASHES = Object.freeze([]);
 
 // per-log caches to avoid repeated parse work in session grouping/filtering
 const parsedRequestCache = new WeakMap();
 const parsedResponseCache = new WeakMap();
 const previewCache = new WeakMap();
-const userHashesCache = new WeakMap();
 const fingerprintCache = new WeakMap();
 const timestampCache = new WeakMap();
 const previousResponseIDCache = new WeakMap();
 const responseIDCache = new WeakMap();
-
-// djb2 string hash (kept for fallback path)
-function hashStr(s) {
-	let h = 5381;
-	for (let i = 0; i < s.length; i++) {
-		h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-	}
-	return h.toString(36);
-}
 
 // parse fingerprint string "{sys_hash}{fsm}" into { sysHash, fsm }
 // sysHash = 6-hex-char hash of system prompt
@@ -1058,54 +1413,86 @@ function lastUserPreview(log) {
 	} else if (typeof lastMsg === "string") {
 		preview = truncate(lastMsg, 40);
 	} else {
-		preview = truncate(extractPreview(lastMsg), 40);
+		preview = truncate(extractUserMessageText(lastMsg) || extractPreview(lastMsg), 40);
 	}
 	previewCache.set(log, preview);
 	return preview;
 }
 
-function hashContent(content) {
-	return hashStr(typeof content === "string" ? content : JSON.stringify(content));
+function latestContentPreview(log) {
+	if (!log || typeof log !== "object") return "";
+
+	const responseText = extractAssembledText(log).trim();
+	if (responseText && responseText !== formatJSON(log.response)) {
+		return truncate(responseText.replace(/\s+/g, " "), 120);
+	}
+
+	const steps = Array.isArray(log.steps) ? log.steps : [];
+	for (let i = steps.length - 1; i >= 0; i--) {
+		const step = steps[i];
+		const stepResponse = step?.llm_response;
+		if (!stepResponse) continue;
+		const stepText = extractAssembledText({ response: stepResponse }).trim();
+		if (stepText && stepText !== formatJSON(stepResponse)) {
+			return truncate(stepText.replace(/\s+/g, " "), 120);
+		}
+	}
+
+	return lastUserPreview(log);
 }
 
-// extract hashes of all user messages in a request (ordered)
-function extractUserHashes(log) {
-	if (!log || typeof log !== "object") return EMPTY_HASHES;
-	if (userHashesCache.has(log)) return userHashesCache.get(log);
+function sessionTitlePreview(chain) {
+	if (!chain?.logs?.length) return "";
 
-	const req = parseRequest(log);
-	if (!req) {
-		userHashesCache.set(log, EMPTY_HASHES);
-		return EMPTY_HASHES;
-	}
+	let lastUserText = "";
+	for (const log of chain.logs) {
+		const req = parseRequest(log);
+		if (!req) continue;
 
-	// Chat Completions: request.messages
-	if (Array.isArray(req.messages)) {
-		const hashes = req.messages
-			.filter((m) => m.role === "user" && m.content != null)
-			.map((m) => hashContent(m.content));
-		userHashesCache.set(log, hashes);
-		return hashes;
-	}
+		if (Array.isArray(req.messages)) {
+			for (const message of req.messages) {
+				if (message?.role === "assistant") {
+					return truncate(lastUserText, 40);
+				}
+				if (message?.role !== "user") continue;
+				if (Array.isArray(message.content) && message.content.length > 0 &&
+					message.content.every((part) => part?.type === "tool_result")) {
+					continue;
+				}
+				const text = extractUserMessageText(message).trim();
+				if (text) lastUserText = text;
+			}
+			continue;
+		}
 
-	// Responses API: request.input
-	if (req.input != null) {
+		if (req.input == null) continue;
 		if (typeof req.input === "string") {
-			const hashes = [hashStr(req.input)];
-			userHashesCache.set(log, hashes);
-			return hashes;
+			lastUserText = req.input.trim() || lastUserText;
+			continue;
 		}
-		if (Array.isArray(req.input)) {
-			const hashes = req.input
-				.filter((m) => m.role === "user" || typeof m === "string")
-				.map((m) => hashContent(typeof m === "string" ? m : m.content || m));
-			userHashesCache.set(log, hashes);
-			return hashes;
+		if (!Array.isArray(req.input)) continue;
+
+		for (const item of req.input) {
+			if (typeof item === "string") {
+				const text = item.trim();
+				if (text) lastUserText = text;
+				continue;
+			}
+			if (item?.role === "assistant" || item?.type === "function_call" || item?.type === "message" && item?.role === "assistant") {
+				return truncate(lastUserText, 40);
+			}
+			if (item?.role !== "user" && item?.type !== "message") continue;
+			const text = extractUserMessageText(item).trim();
+			if (text) lastUserText = text;
 		}
 	}
 
-	userHashesCache.set(log, EMPTY_HASHES);
-	return EMPTY_HASHES;
+	if (lastUserText) return truncate(lastUserText, 40);
+	for (const log of chain.logs) {
+		const preview = lastUserPreview(log);
+		if (preview) return preview;
+	}
+	return "";
 }
 
 function getTimestampMs(log) {
@@ -1140,7 +1527,7 @@ function toggleChain(chainId) {
 
 // group all logs into conversation chains.
 // Prefer explicit Responses stateful links (previous_response_id -> response.id),
-// then fingerprint FSM prefix matching, then the legacy user-hash + time-gap heuristic.
+// then fingerprint FSM prefix matching scoped to the same route.
 const chainedLogs = computed(() => {
 	const items = logs.value;
 	if (!items.length) return [];
@@ -1149,10 +1536,8 @@ const chainedLogs = computed(() => {
 
 	// key = response.id -> chain index
 	const statefulChainsByResponseID = new Map();
-	// key = "{model}\0{sysHash}" -> chain indexes
+	// key = "{route}\0{sysHash}" -> chain indexes
 	const fpChainsByKey = new Map();
-	// key = "{lastUserHash}" -> chain indexes
-	const fallbackChainsByHash = new Map();
 	const chains = [];
 
 	function insertChainIndex(indexMap, key, chainIdx) {
@@ -1176,121 +1561,78 @@ const chainedLogs = computed(() => {
 		arr.push(chainIdx);
 	}
 
-	function removeChainIndex(indexMap, key, chainIdx) {
-		if (!key) return;
-		const arr = indexMap.get(key);
-		if (!arr) return;
-		const pos = arr.indexOf(chainIdx);
-		if (pos === -1) return;
-		arr.splice(pos, 1);
-		if (arr.length === 0) indexMap.delete(key);
+	function routeKey(log) {
+		return String(log?.route || "(unknown)");
 	}
 
-	function fpKey(model, sysHash) {
-		return String(model || "") + "\u0000" + sysHash;
+	function fpKey(route, sysHash) {
+		return route + "\u0000" + sysHash;
 	}
 
-	function reindexFallback(chain, nextHash) {
-		if (!chain.lastParsed && chain.lastUserHash) {
-			removeChainIndex(fallbackChainsByHash, chain.lastUserHash, chain.idx);
-		}
-		chain.lastUserHash = nextHash || null;
-		if (!chain.lastParsed && chain.lastUserHash) {
-			insertChainIndex(fallbackChainsByHash, chain.lastUserHash, chain.idx);
-		}
-	}
-
-	function upgradeFingerprintIndex(chain, parsed, model) {
+	function upgradeFingerprintIndex(chain, parsed, route) {
 		if (!parsed || parsed.fsm.length === 0) return;
 		if (!chain.fpKey) {
-			chain.fpKey = fpKey(model, parsed.sysHash);
+			chain.fpKey = fpKey(route, parsed.sysHash);
 			insertChainIndex(fpChainsByKey, chain.fpKey, chain.idx);
 		}
+		chain.routeKey = route;
 		chain.lastParsed = parsed;
-		chain.lastModel = model;
 	}
 
-	function maybeUpgradeFingerprintIndex(chain, parsed, model) {
+	function maybeUpgradeFingerprintIndex(chain, parsed, route) {
 		if (!parsed || parsed.fsm.length === 0) return;
 		if (!chain.lastParsed) {
-			upgradeFingerprintIndex(chain, parsed, model);
+			upgradeFingerprintIndex(chain, parsed, route);
 			return;
 		}
-		if (chain.fpKey && chain.fpKey !== fpKey(model, parsed.sysHash)) {
+		if (chain.routeKey !== route) {
+			return;
+		}
+		if (chain.fpKey && chain.fpKey !== fpKey(route, parsed.sysHash)) {
 			return;
 		}
 		if (isFSMPrefix(chain.lastParsed.fsm, parsed.fsm)) {
-			upgradeFingerprintIndex(chain, parsed, model);
+			upgradeFingerprintIndex(chain, parsed, route);
 		}
 	}
 
-	function appendToChain(chain, log, parsed, hashes) {
-		reindexFallback(chain, null);
+	function appendToChain(chain, log, parsed) {
 		chain.logs.push(log);
 		const responseID = getResponseID(log);
 		if (responseID) {
 			statefulChainsByResponseID.set(responseID, chain.idx);
 		}
-		maybeUpgradeFingerprintIndex(chain, parsed, log.model);
-		const nextHash = hashes.length > 0 ? hashes[hashes.length - 1] : null;
-		reindexFallback(chain, nextHash);
+		maybeUpgradeFingerprintIndex(chain, parsed, routeKey(log));
 	}
 
 	for (const log of sorted) {
 		const parsed = getParsedFingerprint(log);
-		const ts = getTimestampMs(log);
-		const hashes = extractUserHashes(log);
+		const currentRouteKey = routeKey(log);
 		const previousResponseID = getPreviousResponseID(log);
 		let matched = false;
 
 		if (previousResponseID) {
 			const chainIdx = statefulChainsByResponseID.get(previousResponseID);
 			const chain = chainIdx == null ? null : chains[chainIdx];
-			if (chain) {
-				appendToChain(chain, log, parsed, hashes);
+			if (chain && chain.routeKey === currentRouteKey) {
+				appendToChain(chain, log, parsed);
 				matched = true;
 			}
 		}
 
 		if (!matched && parsed) {
-			// fingerprint path: match by (model + sys_hash, FSM prefix)
-			const candidates = fpChainsByKey.get(fpKey(log.model, parsed.sysHash)) || EMPTY_HASHES;
+			// fingerprint path: match by (route + sys_hash, FSM prefix)
+			const candidates = fpChainsByKey.get(fpKey(currentRouteKey, parsed.sysHash)) || EMPTY_HASHES;
 			for (let i = candidates.length - 1; i >= 0; i--) {
 				const chain = chains[candidates[i]];
 				const lastParsed = chain.lastParsed;
 				if (!lastParsed) continue;
+				if (chain.routeKey !== currentRouteKey) continue;
 				if (isFSMPrefix(lastParsed.fsm, parsed.fsm)) {
-					appendToChain(chain, log, parsed, hashes);
+					appendToChain(chain, log, parsed);
 					matched = true;
 					break;
 				}
-			}
-		}
-
-		if (!matched && hashes.length > 0) {
-			// fallback: legacy hash + time-gap heuristic
-			let best = null;
-			let bestIdx = -1;
-			const hashSet = new Set(hashes);
-
-			for (const h of hashSet) {
-				const candidates = fallbackChainsByHash.get(h);
-				if (!candidates) continue;
-				for (let i = candidates.length - 1; i >= 0; i--) {
-					const idx = candidates[i];
-					if (idx <= bestIdx) break;
-					const chain = chains[idx];
-					if (!chain || chain.lastParsed) continue;
-					if (!chain.lastUserHash || !hashSet.has(chain.lastUserHash)) continue;
-					const lastTs = getTimestampMs(chain.logs[chain.logs.length - 1]);
-					if (ts - lastTs >= CHAIN_TIME_GAP_MS) continue;
-					best = chain;
-					bestIdx = idx;
-				}
-			}
-			if (best) {
-				appendToChain(best, log, parsed, hashes);
-				matched = true;
 			}
 		}
 
@@ -1299,15 +1641,12 @@ const chainedLogs = computed(() => {
 				idx: chains.length,
 				id: (log.request_id || "") + "_" + chains.length,
 				logs: [log],
-				lastModel: log.model,
+				routeKey: currentRouteKey,
 				lastParsed: null,
-				lastUserHash: null,
 				fpKey: "",
 			};
 			chains.push(chain);
-			maybeUpgradeFingerprintIndex(chain, parsed, log.model);
-			const nextHash = hashes.length > 0 ? hashes[hashes.length - 1] : null;
-			reindexFallback(chain, nextHash);
+			maybeUpgradeFingerprintIndex(chain, parsed, currentRouteKey);
 			const responseID = getResponseID(log);
 			if (responseID) {
 				statefulChainsByResponseID.set(responseID, chain.idx);
@@ -1334,7 +1673,6 @@ function rowClass(log) {
 	return {
 		"row-error": Boolean(log?.error),
 		"row-warn": isRecoveredByFailover(log),
-		"row-clickable": true,
 	};
 }
 
@@ -1358,9 +1696,9 @@ function chainStatus(chain) {
 	if (errors.length === 0 && recoveredFailovers > 0) {
 		return t("logs.failoverRecovered", { n: recoveredFailovers });
 	}
-	if (errors.length === 0) return "OK";
-	if (errors.length === chain.logs.length) return "FAIL";
-	return errors.length + "/" + chain.logs.length + " failed";
+	if (errors.length === 0) return t("common.ok");
+	if (errors.length === chain.logs.length) return t("logs.failedAll");
+	return t("logs.failed", { n: errors.length, total: chain.logs.length });
 }
 
 // single-log status text: includes step count if any
@@ -1401,37 +1739,74 @@ const hasFilters = computed(() =>
 	Object.values(filters.value).some((v) => v.trim()),
 );
 
-// count chains per route tab
-const chainsByRoute = computed(() => {
-	const map = {};
-	for (const chain of chainedLogs.value) {
-		const key = chain.logs[0]?.route || "(unknown)";
-		map[key] = (map[key] || 0) + 1;
-	}
-	return map;
-});
+const routeTree = computed(() => routeKeys.value.map((key) => ({
+	key,
+	chains: chainedLogs.value.filter((chain) => (chain.logs[0]?.route || "(unknown)") === key),
+})));
 
-// session chips: multi-log chains, filtered by active route tab
-const sessionChips = computed(() => {
-	const tab = activeTab.value;
-	return chainedLogs.value.filter((chain) => {
-		if (chain.logs.length < 2) return false;
-		if (tab && (chain.logs[0]?.route || "(unknown)") !== tab) return false;
-		return true;
-	});
+const filteredLogCount = computed(() =>
+	filteredChains.value.reduce((sum, chain) => sum + chain.displayLogs.length, 0),
+);
+
+const scopeTitle = computed(() => {
+	if (activeSession.value) {
+		const chain = chainedLogs.value.find((item) => item.id === activeSession.value);
+		if (chain) return sessionName(chain);
+	}
+	if (activeTab.value) return activeTab.value;
+	return t("logs.allRequests");
 });
 
 function sessionName(chain) {
-	const preview = lastUserPreview(chain.logs[0]);
+	const preview = sessionTitlePreview(chain);
 	return preview || formatTime(chain.logs[0].timestamp);
 }
+
+const detailTitle = computed(() => {
+	if (!selected.value) return "";
+	return latestContentPreview(selected.value) || selected.value.request_id || t("logs.requestDetail");
+});
 
 // clear session when route tab changes
 watch(activeTab, () => { activeSession.value = null; });
 
 // auto-expand selected session
 watch(activeSession, (id) => {
-	if (id) expandedChains.value = new Set([...expandedChains.value, id]);
+	if (!id) return;
+	expandedChains.value = new Set([...expandedChains.value, id]);
+	const chain = chainedLogs.value.find((item) => item.id === id);
+	const routeKey = chain?.logs[0]?.route || "(unknown)";
+	sessionTreeCollapsed.value = false;
+	expandRouteGroup(routeKey);
+});
+
+watch(routeKeys, (keys) => {
+	const next = new Set();
+	for (const key of collapsedRouteGroups.value) {
+		if (keys.includes(key)) next.add(key);
+	}
+	if (next.size !== collapsedRouteGroups.value.size) {
+		collapsedRouteGroups.value = next;
+	}
+});
+
+watch(paused, (value) => {
+	if (!value && pendingLogs.length > 0) {
+		flushPendingLogs();
+	}
+});
+
+watch(selected, async (value) => {
+	if (value) {
+		await nextTick();
+		closeButtonRef.value?.focus();
+		return;
+	}
+	await nextTick();
+	if (lastFocusedElement instanceof HTMLElement && document.contains(lastFocusedElement)) {
+		lastFocusedElement.focus();
+	}
+	lastFocusedElement = null;
 });
 
 // filter chainedLogs by active tab + session + per-column filters; each chain gets a displayLogs subset
@@ -1446,7 +1821,7 @@ const filteredChains = computed(() => {
 		if (!hasFilters.value) return [{ ...chain, displayLogs: chain.logs }];
 		const matchingLogs = chain.logs.filter((log) => {
 			const prompt = lastUserPreview(log);
-			const status = log.error || "OK";
+			const status = log.error || t("common.ok");
 			return (
 				colMatch(f.prompt, prompt) &&
 				colMatch(f.model, log.model) &&
@@ -1470,7 +1845,7 @@ const filteredChains = computed(() => {
 	for (const chain of tabChains) {
 		const matchingLogs = chain.logs.filter((log) => {
 			const prompt = lastUserPreview(log);
-			const status = log.error || "OK";
+			const status = log.error || t("common.ok");
 			return (
 				colMatch(f.prompt, prompt) &&
 				colMatch(f.model, log.model) &&
@@ -1485,12 +1860,67 @@ const filteredChains = computed(() => {
 	return result;
 });
 
-function scrollToBottom() {
-	nextTick(() => {
-		if (tableWrap.value) {
-			tableWrap.value.scrollTop = tableWrap.value.scrollHeight;
-		}
+function isNearBottom() {
+	return document.documentElement.scrollHeight - (window.scrollY + window.innerHeight) < 80;
+}
+
+function scheduleAutoScroll() {
+	if (autoScrollFrame) return;
+	autoScrollFrame = requestAnimationFrame(() => {
+		autoScrollFrame = 0;
+		window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
 	});
+}
+
+function flushPendingLogs() {
+	flushFrame = 0;
+	if (paused.value || pendingLogs.length === 0) return;
+	const shouldStickToBottom = isNearBottom();
+	const batch = pendingLogs;
+	pendingLogs = [];
+	for (const log of batch) {
+		upsertLog(log);
+	}
+	if (shouldStickToBottom) {
+		nextTick(() => {
+			scheduleAutoScroll();
+		});
+	}
+}
+
+function enqueueLog(log) {
+	pendingLogs.push(log);
+	if (flushFrame) return;
+	flushFrame = requestAnimationFrame(() => {
+		flushPendingLogs();
+	});
+}
+
+function getFocusableElements() {
+	if (!modalRef.value) return [];
+	return [...modalRef.value.querySelectorAll(
+		'button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+	)].filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
+}
+
+function handleModalKeydown(event) {
+	if (event.key === "Escape") {
+		event.preventDefault();
+		closeDetail();
+		return;
+	}
+	if (event.key !== "Tab") return;
+	const focusable = getFocusableElements();
+	if (focusable.length === 0) return;
+	const first = focusable[0];
+	const last = focusable[focusable.length - 1];
+	if (event.shiftKey && document.activeElement === first) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && document.activeElement === last) {
+		event.preventDefault();
+		first.focus();
+	}
 }
 
 onMounted(() => {
@@ -1498,8 +1928,7 @@ onMounted(() => {
 	stopStream = stream.start(
 		(data) => {
 			if (paused.value) return;
-			upsertLog(data);
-			scrollToBottom();
+			enqueueLog(data);
 		},
 		(err) => {
 			error.value = err.message;
@@ -1509,6 +1938,9 @@ onMounted(() => {
 
 onUnmounted(() => {
 	if (stopStream) stopStream();
+	if (flushFrame) cancelAnimationFrame(flushFrame);
+	if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
+	clearTimeout(copyTimer);
 });
 </script>
 
@@ -1517,15 +1949,227 @@ onUnmounted(() => {
 .header-row {
 	display: flex;
 	align-items: center;
+	justify-content: space-between;
 	gap: 12px;
-	margin-bottom: 16px;
+	margin-bottom: 18px;
+}
+
+.logs-workspace {
+	display: grid;
+	grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+	gap: 18px;
+	align-items: start;
+}
+
+.logs-workspace-tree-collapsed {
+	grid-template-columns: 88px minmax(0, 1fr);
+}
+
+.session-tree-panel {
+	position: sticky;
+	top: 16px;
+	padding: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.session-tree-panel.collapsed {
+	padding: 14px 10px;
+}
+
+.session-tree-header,
+.logs-scope,
+.detail-summary-head,
+.detail-section-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.session-tree-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.session-tree-collapse-btn {
+	min-width: 36px;
+	padding-inline: 0;
+}
+
+.section-eyebrow {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--c-text-3);
+	margin-bottom: 4px;
+}
+
+.session-tree-title,
+.logs-scope-title,
+.detail-summary-title,
+.detail-section-title {
+	margin: 0;
+	font-size: 18px;
+	line-height: 1.25;
+}
+
+.tree-root-button,
+.route-branch-button,
+.session-node-button {
+	width: 100%;
+	text-align: left;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	transition:
+		background-color 0.15s,
+		border-color 0.15s,
+		color 0.15s;
+}
+
+.tree-root-button,
+.route-branch-button,
+.session-node-button {
+	padding: 10px 12px;
+}
+
+.tree-root-button:hover,
+.route-branch-button:hover,
+.session-node-button:hover {
+	background: var(--c-surface-tint);
+	border-color: var(--c-border);
+}
+
+.tree-root-button.active,
+.route-branch-button.active,
+.session-node-button.active {
+	background: var(--c-primary-bg);
+	border-color: color-mix(in srgb, var(--c-primary) 24%, var(--c-border));
+}
+
+.tree-root-title,
+.route-branch-label,
+.session-node-title {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--c-text);
+}
+
+.tree-root-meta,
+.session-node-meta,
+.logs-scope-meta {
+	font-size: 12px;
+	color: var(--c-text-3);
+}
+
+.tree-scroll {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	max-height: calc(100vh - 180px);
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+.route-branch {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.route-branch-header {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 36px;
+	gap: 8px;
+	align-items: stretch;
+}
+
+.route-branch-button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.route-branch-toggle {
+	border: 1px solid var(--c-border);
+	border-radius: var(--radius-sm);
+	background: var(--c-surface);
+	color: var(--c-text-2);
+	cursor: pointer;
+	font-size: 18px;
+	line-height: 1;
+	transition:
+		background-color 0.15s,
+		border-color 0.15s,
+		color 0.15s;
+}
+
+.route-branch-toggle:hover {
+	background: var(--c-surface-tint);
+	border-color: var(--c-primary);
+	color: var(--c-text);
+}
+
+.session-tree-panel.collapsed .section-eyebrow,
+.session-tree-panel.collapsed .session-tree-title,
+.session-tree-panel.collapsed .badge {
+	display: none;
+}
+
+.session-tree-panel.collapsed .session-tree-header {
+	justify-content: center;
+}
+
+.session-tree-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+
+.session-tree-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-left: 10px;
+	border-left: 1px solid var(--c-border-light);
+}
+
+.session-tree-item {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.session-node-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.logs-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.logs-scope {
+	padding: 0 2px;
 }
 
 /* Table container */
 .table-wrap {
-	max-height: 70vh;
-	overflow-y: auto;
+	overflow: visible;
 	border-radius: var(--radius);
+	background: var(--c-surface);
 }
 
 .data-table th {
@@ -1547,92 +2191,38 @@ onUnmounted(() => {
 .col-filter {
 	width: 100%;
 	min-width: 60px;
-	padding: 2px 6px;
-	border: 1px solid var(--c-border-light);
-	border-radius: 3px;
-	background: var(--c-bg);
+	padding: 6px 8px;
+	border: 1px solid var(--c-border);
+	border-radius: var(--radius-sm);
+	background: var(--c-surface);
 	color: var(--c-text);
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 400;
 	outline: none;
 	box-sizing: border-box;
-	transition: border-color 0.15s;
+	transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 .col-filter:focus {
 	border-color: var(--c-primary);
+	box-shadow: 0 0 0 3px var(--c-primary-bg);
 }
 .col-filter.active {
 	border-color: var(--c-primary);
 	background: var(--c-primary-bg);
 }
 
-/* Session chips */
-.sessions {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin-bottom: 12px;
-	flex-wrap: wrap;
-	padding: 8px 12px;
-	background: var(--c-border-light);
-	border-radius: var(--radius);
-	border-left: 3px solid var(--c-primary);
-}
-.sessions-label {
-	font-size: 11px;
-	font-weight: 600;
-	color: var(--c-text-3);
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	white-space: nowrap;
-	margin-right: 2px;
-}
-.session-chip {
-	max-width: 260px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* Route tabs */
-.tabs {
-	display: flex;
-	gap: 4px;
-	margin-bottom: 12px;
-	flex-wrap: wrap;
-}
-.tab {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	padding: 6px 14px;
-	border: 1px solid var(--c-border-light);
-	border-radius: var(--radius);
-	background: var(--c-surface);
-	cursor: pointer;
-	font-size: 13px;
-	font-weight: 500;
-	color: var(--c-text-2);
-	transition: all 0.15s;
-}
-.tab:hover {
-	border-color: var(--c-primary);
-	color: var(--c-primary);
-}
-.tab.active {
-	background: var(--c-primary);
-	border-color: var(--c-primary);
-	color: #fff;
-}
-.tab.active .badge {
-	background: rgba(255, 255, 255, 0.25);
-}
 .badge {
 	font-size: 11px;
 	font-weight: 600;
 	padding: 1px 7px;
 	border-radius: 10px;
 	background: var(--c-border-light);
+}
+.desktop-log-table {
+	display: table;
+}
+.mobile-log-list {
+	display: none;
 }
 .empty-hint {
 	padding: 24px;
@@ -1647,17 +2237,14 @@ onUnmounted(() => {
 .row-warn {
 	background: var(--c-warning-bg);
 }
-.row-clickable {
-	cursor: pointer;
+.desktop-log-table tbody tr:hover {
+	background: var(--c-surface-tint);
 }
-.row-clickable:hover {
-	background: var(--c-primary-bg);
+.desktop-log-table tbody tr.row-warn:hover {
+	background: color-mix(in srgb, var(--c-warning-bg) 82%, var(--c-warning) 18%);
 }
-.row-warn.row-clickable:hover {
-	background: color-mix(in srgb, var(--c-warning-bg) 82%, #fcd34d 18%);
-}
-.row-error.row-clickable:hover {
-	background: #fecaca;
+.desktop-log-table tbody tr.row-error:hover {
+	background: color-mix(in srgb, var(--c-danger-bg) 82%, var(--c-danger) 18%);
 }
 
 /* Modal */
@@ -1667,7 +2254,7 @@ onUnmounted(() => {
 	left: 0;
 	right: 0;
 	bottom: 0;
-	background: rgba(0, 0, 0, 0.4);
+	background: var(--c-overlay);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -1711,29 +2298,88 @@ onUnmounted(() => {
 }
 .btn-primary {
 	background: var(--c-primary);
-	color: #fff;
+	color: var(--c-text-inverse);
 }
 .modal-body {
 	padding: 20px;
 	overflow-y: auto;
 }
 
-/* Meta table */
-.meta-table {
-	width: 100%;
-	margin-bottom: 16px;
-	border-collapse: collapse;
+.detail-layout {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
 }
-.meta-table td {
-	padding: 4px 12px 4px 0;
-	font-size: 13px;
-	border-bottom: 1px solid var(--c-border-light);
+
+.detail-summary,
+.detail-section {
+	padding: 16px;
+	box-shadow: none;
 }
-.meta-table td:first-child {
+
+.detail-summary {
+	background: linear-gradient(180deg, color-mix(in srgb, var(--c-surface-tint) 70%, var(--c-surface)) 0%, var(--c-surface) 100%);
+}
+
+.detail-status-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 6px 10px;
+	border-radius: 999px;
+	font-size: 12px;
 	font-weight: 600;
 	white-space: nowrap;
-	width: 100px;
+}
+
+.detail-status-pill.response-ok {
+	background: var(--c-success-soft);
+	color: var(--c-success-text);
+}
+
+.detail-status-pill.response-warn {
+	background: var(--c-warning-bg);
+	color: #92400e;
+}
+
+.detail-status-pill.response-error {
+	background: var(--c-danger-bg);
+	color: #991b1b;
+}
+
+.detail-meta-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 16px;
+}
+
+.detail-meta-item {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px;
+	border: 1px solid var(--c-border-light);
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--c-surface) 84%, var(--c-surface-tint));
+	min-width: 0;
+}
+
+.detail-meta-item span {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
 	color: var(--c-text-3);
+}
+
+.detail-meta-item strong,
+.detail-meta-item code {
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.detail-meta-item-wide {
+	grid-column: 1 / -1;
 }
 
 /* Details / summary */
@@ -1749,6 +2395,17 @@ summary {
 }
 summary:hover {
 	color: var(--c-primary);
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }
 /* Dependency chain */
 .chain {
@@ -1777,25 +2434,25 @@ summary:hover {
 	background: var(--c-primary);
 }
 .dot-system {
-	background: #94a3b8;
+	background: var(--c-text-3);
 }
 .dot-user {
 	background: var(--c-primary);
 }
 .dot-assistant {
-	background: #22c55e;
+	background: var(--c-success);
 }
 .dot-tool {
-	background: #f59e0b;
+	background: var(--c-warning);
 }
 .dot-step {
 	background: var(--c-text-3);
 }
 .dot-ok {
-	background: #22c55e;
+	background: var(--c-success);
 }
 .dot-error {
-	background: #ef4444;
+	background: var(--c-danger);
 }
 
 .chain-content {
@@ -1823,25 +2480,24 @@ summary:hover {
 	text-overflow: ellipsis;
 }
 .text-ok {
-	color: #22c55e;
+	color: var(--c-success);
 }
 .response-block {
-	margin-top: 12px;
 	padding: 10px 14px;
 	border-radius: var(--radius);
 	font-size: 13px;
 }
 .response-ok {
-	background: #f0fdf4;
-	border: 1px solid #bbf7d0;
+	background: var(--c-success-soft);
+	border: 1px solid color-mix(in srgb, var(--c-success) 28%, white);
 }
 .response-error {
-	background: #fef2f2;
-	border: 1px solid #fecaca;
+	background: var(--c-danger-bg);
+	border: 1px solid color-mix(in srgb, var(--c-danger) 28%, white);
 }
 .response-warn {
 	background: var(--c-warning-bg);
-	border: 1px solid #fcd34d;
+	border: 1px solid color-mix(in srgb, var(--c-warning) 28%, white);
 }
 .response-status {
 	font-weight: 600;
@@ -1933,18 +2589,26 @@ summary:hover {
 
 /* Chain grouping */
 .th-toggle {
-	width: 28px;
-	min-width: 28px;
-	max-width: 28px;
+	width: 88px;
+	min-width: 88px;
+	max-width: 88px;
 }
 .cell-toggle {
-	text-align: center;
-	width: 28px;
+	text-align: left;
+	width: 88px;
+	padding-right: 0;
+}
+.cell-actions {
+	width: 88px;
 }
 .toggle-icon {
 	font-size: 10px;
 	color: var(--c-text-3);
 	user-select: none;
+}
+.toggle-btn,
+.action-btn {
+	min-width: 72px;
 }
 .row-chain-head {
 	border-left: 3px solid var(--c-primary);
@@ -1955,7 +2619,7 @@ summary:hover {
 }
 .badge-chain {
 	background: var(--c-primary);
-	color: #fff;
+	color: var(--c-text-inverse);
 	font-size: 11px;
 	font-weight: 600;
 	padding: 1px 8px;
@@ -1978,12 +2642,12 @@ summary:hover {
 }
 .cell-chain-indent {
 	position: relative;
-	width: 28px;
-	padding: 0 !important;
+	width: 88px;
+	padding: 0 8px 0 0 !important;
 }
 .chain-line {
 	position: absolute;
-	left: 13px;
+	left: 18px;
 	top: 0;
 	bottom: 0;
 	width: 2px;
@@ -1994,12 +2658,17 @@ summary:hover {
 	position: absolute;
 	left: 0;
 	top: 50%;
-	width: 8px;
+	width: 10px;
 	height: 2px;
 	background: var(--c-border-light);
 }
 .chain-line-last {
 	bottom: 50%;
+}
+.chain-detail-btn {
+	position: relative;
+	z-index: 1;
+	margin-left: 22px;
 }
 .cell-prompt {
 	max-width: 200px;
@@ -2015,15 +2684,137 @@ summary:hover {
 	color: var(--c-text-3);
 }
 
+.mobile-log-card {
+	padding: 14px;
+	border: 1px solid var(--c-border);
+	box-shadow: none;
+}
+.mobile-log-card-error {
+	border-color: color-mix(in srgb, var(--c-danger) 35%, var(--c-border));
+	background: color-mix(in srgb, var(--c-danger-bg) 68%, var(--c-surface));
+}
+.mobile-log-card-warn {
+	border-color: color-mix(in srgb, var(--c-warning) 35%, var(--c-border));
+	background: color-mix(in srgb, var(--c-warning-bg) 68%, var(--c-surface));
+}
+.mobile-log-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+.mobile-log-time {
+	font-size: 12px;
+	color: var(--c-text-3);
+}
+.mobile-log-actions {
+	display: flex;
+	gap: 8px;
+}
+.mobile-log-prompt {
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.5;
+	margin-bottom: 12px;
+	overflow-wrap: anywhere;
+}
+.mobile-log-meta {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin: 0;
+}
+.mobile-log-meta div {
+	min-width: 0;
+}
+.mobile-log-meta dt {
+	font-size: 11px;
+	color: var(--c-text-3);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-bottom: 4px;
+}
+.mobile-log-meta dd {
+	margin: 0;
+	font-size: 13px;
+	overflow-wrap: anywhere;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+.mobile-log-children {
+	margin-top: 14px;
+	padding-top: 12px;
+	border-top: 1px solid var(--c-border-light);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.mobile-log-child {
+	display: grid;
+	grid-template-columns: 88px 1fr;
+	gap: 6px 10px;
+	padding: 10px 12px;
+	background: var(--c-surface);
+	border: 1px solid var(--c-border);
+	border-radius: var(--radius);
+	text-align: left;
+	cursor: pointer;
+}
+.mobile-log-child-time,
+.mobile-log-child-status {
+	font-size: 12px;
+	color: var(--c-text-3);
+}
+.mobile-log-child-main {
+	font-size: 13px;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
 @media (max-width: 768px) {
 	.header-row {
 		flex-wrap: wrap;
 		gap: 8px;
+		justify-content: flex-start;
+	}
+
+	.logs-workspace {
+		grid-template-columns: 1fr;
+	}
+
+	.logs-workspace-tree-collapsed {
+		grid-template-columns: 1fr;
+	}
+
+	.session-tree-panel {
+		position: static;
+		padding: 14px;
+	}
+
+	.tree-scroll {
+		max-height: 360px;
 	}
 
 	.table-wrap {
-		overflow-x: auto;
+		overflow: visible;
 		-webkit-overflow-scrolling: touch;
+		background: transparent;
+		border: none;
+		box-shadow: none;
+		max-height: none;
+	}
+
+	.desktop-log-table {
+		display: none;
+	}
+
+	.mobile-log-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
 
 	.modal {
@@ -2038,12 +2829,46 @@ summary:hover {
 		padding: 14px;
 	}
 
-	.meta-table td:first-child {
-		width: 80px;
+	.modal-header {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.modal-header-actions {
+		width: 100%;
+		flex-wrap: wrap;
+	}
+
+	.detail-summary-head,
+	.detail-section-head,
+	.logs-scope {
+		flex-direction: column;
+	}
+
+	.detail-meta-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.view-toggle {
+		width: 100%;
+	}
+
+	.view-toggle .btn {
+		flex: 1 1 0;
 	}
 
 	.response-dual {
 		flex-direction: column;
 	}
+
+	.mobile-log-meta {
+		grid-template-columns: 1fr;
+	}
+
+	.mobile-log-child {
+		grid-template-columns: 1fr;
+	}
+
 }
 </style>

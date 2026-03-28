@@ -17,6 +17,7 @@ import NavBar from './components/NavBar.vue'
   --c-primary-hover: #3b5ae0;
   --c-primary-light: #60a5fa;
   --c-primary-bg: #eef1fe;
+  --c-primary-contrast-soft: #dbe4ff;
   --c-success: #10b981;
   --c-success-bg: #d1fae5;
   --c-warning: #f59e0b;
@@ -27,6 +28,7 @@ import NavBar from './components/NavBar.vue'
   --c-surface: #ffffff;
   --c-surface-soft: #f8fafc;
   --c-surface-tint: #f8fbff;
+  --c-overlay: rgba(15, 23, 42, 0.48);
   --c-accent-soft: #eef2ff;
   --c-accent-text: #3730a3;
   --c-success-soft: #dcfce7;
@@ -36,6 +38,7 @@ import NavBar from './components/NavBar.vue'
   --c-text: #1e293b;
   --c-text-2: #475569;
   --c-text-3: #64748b;
+  --c-text-inverse: #f8fbff;
   --radius: 8px;
   --radius-sm: 6px;
   --radius-lg: 12px;
@@ -54,6 +57,11 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
 }
 
 .container {
@@ -121,7 +129,7 @@ code {
   min-height: 36px;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--c-primary); color: #fff; }
+.btn-primary { background: var(--c-primary); color: var(--c-text-inverse); }
 .btn-primary:not(:disabled):hover { background: var(--c-primary-hover); }
 .btn-secondary {
   background: var(--c-surface);
@@ -132,7 +140,7 @@ code {
   background: var(--c-border-light);
   border-color: #cbd5e1;
 }
-.btn-danger { background: var(--c-danger); color: #fff; }
+.btn-danger { background: var(--c-danger); color: var(--c-text-inverse); }
 .btn-danger:not(:disabled):hover { background: #dc2626; }
 .btn-sm { padding: 4px 10px; font-size: 12px; min-height: 32px; }
 .btn-icon {
@@ -155,6 +163,27 @@ code {
   justify-content: center;
 }
 .btn-icon:hover { background: var(--c-border-light); }
+
+@media (max-width: 768px) {
+  .container {
+    padding: 20px 14px;
+  }
+
+  .btn,
+  .btn-sm,
+  .btn-icon {
+    min-height: 44px;
+  }
+
+  .btn-sm {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .btn-icon {
+    min-width: 44px;
+  }
+}
 
 /* ---- Panel ---- */
 .panel {
