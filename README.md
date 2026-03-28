@@ -62,8 +62,6 @@ Warden 就是为这些问题准备的。
 
 ![Warden Admin Dashboard](docs/assets/admin-dashboard.png)
 
-![Warden Admin Providers](docs/assets/admin-providers.png)
-
 ![Warden Admin Routes](docs/assets/admin-routes.png)
 
 ## 最少步骤跑起来
