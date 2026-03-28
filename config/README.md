@@ -6,6 +6,27 @@
 - 在 `Validate()` 中做静态校验与规范化
 - 编译 route 模型匹配结构，供运行时快速查找
 
+相关文档：
+
+- 系统级说明：[ARCHITECTURE.md](/home/wweir/Mine/warden/ARCHITECTURE.md)
+- 项目入口：[README.md](/home/wweir/Mine/warden/README.md)
+- 专题索引：[docs/README.md](/home/wweir/Mine/warden/docs/README.md)
+
+## Scope
+
+`config` 只负责配置真相：
+
+- 配置结构定义
+- 本地可判定的静态校验
+- route 运行时匹配结构编译
+
+`config` 不负责：
+
+- 启动期网络探测
+- provider 健康检查
+- 管理端展示层 probe
+- 请求期 provider 选择
+
 ## File Roles
 
 - `config.go`：核心配置类型定义与运行时访问方法
@@ -29,6 +50,12 @@
 
 ## Compatibility Notes
 
+推荐先建立这个心智模型：
+
+- `provider` 描述上游能力与认证方式
+- `route` 描述对外暴露的协议面和模型面
+- 运行时路由真相由 `route.protocol + route model` 决定，不由展示层 probe 决定
+
 - route 配置的主结构是 `exact_models` / `wildcard_models`
 - `route.protocol` 是必填字段，且每个 route 只允许一个 `chat` / `responses_stateless` / `responses_stateful` / `anthropic`
 - route model 的额外提示词由模型自身的 `prompt_enabled` + `system_prompt` 表达
@@ -44,3 +71,11 @@
 - `anthropic_to_chat` 只允许配置在 `openai` provider 上，并且只对 `route.protocol=anthropic` 的 `/messages` 入口生效
 - `route` 的运行时派生字段只在 `Validate()` 后可依赖
 - `mcp` 与 `ssh` 配置块已移除，不再参与配置模型
+
+## Related Files
+
+- [config/config.go](/home/wweir/Mine/warden/config/config.go)
+- [config/validate.go](/home/wweir/Mine/warden/config/validate.go)
+- [config/route_runtime.go](/home/wweir/Mine/warden/config/route_runtime.go)
+- [config/secret.go](/home/wweir/Mine/warden/config/secret.go)
+- [config/warden.example.yaml](/home/wweir/Mine/warden/config/warden.example.yaml)

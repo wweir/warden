@@ -18,6 +18,19 @@ Warden 是一个 route-centric 的 AI Gateway。
 
 这不是表面删字段，而是收缩边界：Warden 现在只负责网关、协议、路由、hook、日志和观测，不再负责外部工具进程生命周期管理。
 
+相关文档入口：
+
+- 根使用说明：[README.md](/home/wweir/Mine/warden/README.md)
+- 专题文档索引：[docs/README.md](/home/wweir/Mine/warden/docs/README.md)
+- 配置说明：[config/README.md](/home/wweir/Mine/warden/config/README.md)
+
+文档分工：
+
+- `README.md` 负责项目入口、运行方式和最小使用示例
+- `ARCHITECTURE.md` 负责系统边界、运行时分层和关键设计决策
+- `docs/README.md` 负责仍需单独维护的专题文档索引
+- `config/README.md` 负责配置模型和校验规则
+
 ## Directory Layout
 
 ```text
@@ -342,6 +355,15 @@ OAuth 凭证读取现在只走本地文件：
 `/_admin/api/mcp/*` 已移除。
 
 Admin SSE 接口统一返回 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache, no-transform`，并在日志流建立后立即发送注释帧/空闲心跳，减少反向代理对小包 SSE 的缓冲延迟。
+
+## Document Map
+
+当前专题文档：
+
+- [docs/responses-stateful-stateless-support.md](/home/wweir/Mine/warden/docs/responses-stateful-stateless-support.md)：Responses stateless/stateful 与 `responses_to_chat` 的支持边界
+- [docs/provider-dynamic-capability-discovery-plan.md](/home/wweir/Mine/warden/docs/provider-dynamic-capability-discovery-plan.md)：provider 能力展示与单协议 route 设计
+- [docs/anthropic-messages-to-chat-plan.md](/home/wweir/Mine/warden/docs/anthropic-messages-to-chat-plan.md)：`anthropic_to_chat` 的桥接边界
+- [docs/api-key-design.md](/home/wweir/Mine/warden/docs/api-key-design.md)：客户端 API Key 与敏感信息编码方案
 
 ## Build Notes
 
