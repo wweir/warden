@@ -340,6 +340,7 @@ export default {
 		response: "Response",
 		content: "content",
 		gatewayStep: "gateway step {n}",
+		failoverRecovered: "Recovered after {n} failover(s)",
 		failed: "{n}/{total} failed",
 		steps: "{n} steps",
 	},

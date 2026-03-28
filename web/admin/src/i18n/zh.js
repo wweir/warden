@@ -323,6 +323,7 @@ export default {
 		response: "响应",
 		content: "内容",
 		gatewayStep: "网关步骤 {n}",
+		failoverRecovered: "{n} 次切换后成功",
 		failed: "{n}/{total} 失败",
 		steps: "{n} 步",
 	},

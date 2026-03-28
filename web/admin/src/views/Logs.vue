@@ -115,7 +115,7 @@
 						<!-- single request: flat row -->
 						<tr
 							v-if="chain.displayLogs.length === 1"
-							:class="{ 'row-error': chain.displayLogs[0].error, 'row-clickable': true }"
+							:class="rowClass(chain.displayLogs[0])"
 							@click="showDetail(chain.displayLogs[0])"
 						>
 							<td></td>
@@ -130,7 +130,7 @@
 						<template v-else>
 							<tr
 								class="row-chain-head row-clickable"
-								:class="{ 'row-error': chain.displayLogs.some((l) => l.error) }"
+								:class="chainRowClass(chain)"
 								@click="toggleChain(chain.id)"
 							>
 								<td class="cell-toggle">
@@ -155,7 +155,7 @@
 									v-for="(log, idx) in chain.displayLogs"
 									:key="log.request_id"
 									class="row-chain-child row-clickable"
-									:class="{ 'row-error': log.error }"
+									:class="childRowClass(log)"
 									@click.stop="showDetail(log)"
 								>
 									<td class="cell-chain-indent">
@@ -289,8 +289,8 @@
 						</div>
 
 						<!-- Response -->
-						<div class="response-block" :class="selected.error ? 'response-error' : 'response-ok'">
-							<span class="response-status">{{ selected.error || "OK" }}</span>
+						<div class="response-block" :class="responseClass(selected)">
+							<span class="response-status">{{ selected.error || responseStatusText(selected) }}</span>
 							<div v-if="selected.response" class="response-pane">
 								<div class="pane-label">{{ $t('logs.response') }}</div>
 								<!-- tool_use blocks from Anthropic response -->
@@ -1322,8 +1322,42 @@ function chainTotalDuration(chain) {
 	return chain.logs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 }
 
+function failoverCount(log) {
+	return Array.isArray(log?.failovers) ? log.failovers.length : 0;
+}
+
+function isRecoveredByFailover(log) {
+	return !log?.pending && !log?.error && failoverCount(log) > 0;
+}
+
+function rowClass(log) {
+	return {
+		"row-error": Boolean(log?.error),
+		"row-warn": isRecoveredByFailover(log),
+		"row-clickable": true,
+	};
+}
+
+function childRowClass(log) {
+	return {
+		"row-error": Boolean(log?.error),
+		"row-warn": isRecoveredByFailover(log),
+	};
+}
+
+function chainRowClass(chain) {
+	return {
+		"row-error": chain.displayLogs.some((log) => log.error),
+		"row-warn": chain.displayLogs.some((log) => isRecoveredByFailover(log)),
+	};
+}
+
 function chainStatus(chain) {
 	const errors = chain.logs.filter((l) => l.error);
+	const recoveredFailovers = chain.logs.reduce((sum, log) => sum + failoverCount(log), 0);
+	if (errors.length === 0 && recoveredFailovers > 0) {
+		return t("logs.failoverRecovered", { n: recoveredFailovers });
+	}
 	if (errors.length === 0) return "OK";
 	if (errors.length === chain.logs.length) return "FAIL";
 	return errors.length + "/" + chain.logs.length + " failed";
@@ -1333,8 +1367,27 @@ function chainStatus(chain) {
 function statusText(log) {
 	if (log.pending) return t("logs.streaming");
 	if (log.error) return log.error;
+	const parts = [];
+	const recoveredFailovers = failoverCount(log);
+	if (recoveredFailovers > 0) {
+		parts.push(t("logs.failoverRecovered", { n: recoveredFailovers }));
+	}
 	const steps = log.steps?.length;
-	return steps ? "OK · " + steps + " steps" : "OK";
+	if (steps) parts.push(t("logs.steps", { n: steps }));
+	return parts.length ? t("common.ok") + " · " + parts.join(" · ") : t("common.ok");
+}
+
+function responseClass(log) {
+	if (log?.error) return "response-error";
+	if (isRecoveredByFailover(log)) return "response-warn";
+	return "response-ok";
+}
+
+function responseStatusText(log) {
+	if (isRecoveredByFailover(log)) {
+		return t("logs.failoverRecovered", { n: failoverCount(log) });
+	}
+	return t("common.ok");
 }
 
 // substring match (case-insensitive)
@@ -1591,11 +1644,17 @@ onUnmounted(() => {
 .row-error {
 	background: var(--c-danger-bg);
 }
+.row-warn {
+	background: var(--c-warning-bg);
+}
 .row-clickable {
 	cursor: pointer;
 }
 .row-clickable:hover {
 	background: var(--c-primary-bg);
+}
+.row-warn.row-clickable:hover {
+	background: color-mix(in srgb, var(--c-warning-bg) 82%, #fcd34d 18%);
 }
 .row-error.row-clickable:hover {
 	background: #fecaca;
@@ -1780,6 +1839,10 @@ summary:hover {
 	background: #fef2f2;
 	border: 1px solid #fecaca;
 }
+.response-warn {
+	background: var(--c-warning-bg);
+	border: 1px solid #fcd34d;
+}
 .response-status {
 	font-weight: 600;
 }
@@ -1908,6 +1971,10 @@ summary:hover {
 .row-chain-child.row-error {
 	background: var(--c-danger-bg);
 	border-left-color: var(--c-danger);
+}
+.row-chain-child.row-warn {
+	background: var(--c-warning-bg);
+	border-left-color: var(--c-warning);
 }
 .cell-chain-indent {
 	position: relative;
