@@ -6,7 +6,9 @@
 
 | 文件 | 职责 |
 |------|------|
-| `reqlog.go` | 核心类型（`Record`、`Step`、`Logger` 接口）、`BuildFingerprint`、`GenerateID`、JSON 提取辅助函数 |
+| `types.go` | 核心类型（`Record`、`Step`、`Logger` 接口） |
+| `fingerprint.go` | `BuildFingerprint` 及其 JSON 提取、文本归一化、哈希辅助函数 |
+| `record.go` | `GenerateID`、`Record.Sanitize`、JSON 包装辅助函数 |
 | `file.go` | `FileLogger`：每条记录写入独立 JSON 文件 |
 | `http.go` | `HTTPLogger`：异步推送日志到 HTTP 端点，支持模板渲染 |
 | `broadcast.go` | `Broadcaster`：内存广播器，SSE 推送 + 环形缓冲 |

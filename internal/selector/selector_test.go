@@ -244,7 +244,7 @@ func TestSelector_Models(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	models := s.Models(cfg, route)
+	models := s.Models(route)
 	if len(models) != 3 {
 		t.Fatalf("Models() len = %d, want 3", len(models))
 	}
