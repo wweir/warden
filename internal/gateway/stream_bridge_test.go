@@ -222,6 +222,92 @@ func TestGatewayAnthropicNativeStreamRelaysFirstFrameWithoutBuffering(t *testing
 	}
 }
 
+func TestGatewayResponsesToChatStreamIncludesDoneSnapshotsAndIncompleteDetails(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},\"finish_reason\":null}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":5,\"total_tokens\":8}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponsesStateless,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/openai/responses", strings.NewReader(`{"model":"gpt-4o","input":"hello","stream":true}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("gateway request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d, body=%q", resp.StatusCode, http.StatusOK, string(body))
+	}
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "event: response.output_text.done") {
+		t.Fatalf("stream missing response.output_text.done: %q", body)
+	}
+	if !strings.Contains(body, "event: response.function_call_arguments.done") {
+		t.Fatalf("stream missing response.function_call_arguments.done: %q", body)
+	}
+	if !strings.Contains(body, "event: response.output_item.done") {
+		t.Fatalf("stream missing response.output_item.done: %q", body)
+	}
+	if !strings.Contains(body, `"text":"Hello"`) {
+		t.Fatalf("stream missing final text snapshot: %q", body)
+	}
+	if !strings.Contains(body, `"arguments":"{\"city\":\"Paris\"}"`) {
+		t.Fatalf("stream missing final arguments snapshot: %q", body)
+	}
+	if !strings.Contains(body, `"incomplete_details":{"reason":"max_output_tokens"}`) {
+		t.Fatalf("stream missing incomplete_details: %q", body)
+	}
+}
+
 func TestGatewayResponsesToChatCountsTruncatedUpstreamAsInStreamFailure(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/models") {

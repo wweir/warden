@@ -238,7 +238,7 @@ func (r ChatCompletionResponse) MarshalJSON() ([]byte, error) {
 	if b, err := json.Marshal(r.Choices); err == nil {
 		m["choices"] = b
 	}
-	if r.Usage != (Usage{}) {
+	if !r.Usage.IsZero() {
 		if b, err := json.Marshal(r.Usage); err == nil {
 			m["usage"] = b
 		}
@@ -290,7 +290,58 @@ type Choice struct {
 
 // Usage represents API token usage statistics.
 type Usage struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens     int64                      `json:"prompt_tokens"`
+	CompletionTokens int64                      `json:"completion_tokens"`
+	TotalTokens      int64                      `json:"total_tokens"`
+	Extra            map[string]json.RawMessage `json:"-"`
+}
+
+func (u Usage) IsZero() bool {
+	return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 && len(u.Extra) == 0
+}
+
+func (u Usage) MarshalJSON() ([]byte, error) {
+	m := make(map[string]json.RawMessage)
+	for k, v := range u.Extra {
+		m[k] = v
+	}
+	if u.PromptTokens != 0 {
+		if b, err := json.Marshal(u.PromptTokens); err == nil {
+			m["prompt_tokens"] = b
+		}
+	}
+	if u.CompletionTokens != 0 {
+		if b, err := json.Marshal(u.CompletionTokens); err == nil {
+			m["completion_tokens"] = b
+		}
+	}
+	if u.TotalTokens != 0 {
+		if b, err := json.Marshal(u.TotalTokens); err == nil {
+			m["total_tokens"] = b
+		}
+	}
+	return json.Marshal(m)
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	if v, ok := m["prompt_tokens"]; ok {
+		json.Unmarshal(v, &u.PromptTokens)
+		delete(m, "prompt_tokens")
+	}
+	if v, ok := m["completion_tokens"]; ok {
+		json.Unmarshal(v, &u.CompletionTokens)
+		delete(m, "completion_tokens")
+	}
+	if v, ok := m["total_tokens"]; ok {
+		json.Unmarshal(v, &u.TotalTokens)
+		delete(m, "total_tokens")
+	}
+	if len(m) > 0 {
+		u.Extra = m
+	}
+	return nil
 }

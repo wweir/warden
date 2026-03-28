@@ -261,6 +261,154 @@ func TestGatewayResponsesToChatConvertsInstructionsToDeveloperMessage(t *testing
 	}
 }
 
+func TestGatewayResponsesToChatNormalizesUsageAndFinishReason(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl_123",
+			"object":"chat.completion",
+			"created":1,
+			"model":"gpt-4o",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":"length"}],
+			"usage":{
+				"prompt_tokens":7,
+				"completion_tokens":11,
+				"total_tokens":18,
+				"prompt_tokens_details":{"cached_tokens":3},
+				"completion_tokens_details":{"reasoning_tokens":5}
+			}
+		}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"ali-coding": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponsesStateless,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"qwen3-coder-plus","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+	if got := gjson.GetBytes(body, "status").String(); got != "incomplete" {
+		t.Fatalf("status = %q, want incomplete", got)
+	}
+	if got := gjson.GetBytes(body, "incomplete_details.reason").String(); got != "max_output_tokens" {
+		t.Fatalf("incomplete_details.reason = %q, want max_output_tokens", got)
+	}
+	if got := gjson.GetBytes(body, "usage.input_tokens").Int(); got != 7 {
+		t.Fatalf("usage.input_tokens = %d, want 7", got)
+	}
+	if got := gjson.GetBytes(body, "usage.output_tokens").Int(); got != 11 {
+		t.Fatalf("usage.output_tokens = %d, want 11", got)
+	}
+	if got := gjson.GetBytes(body, "usage.input_tokens_details.cached_tokens").Int(); got != 3 {
+		t.Fatalf("usage.input_tokens_details.cached_tokens = %d, want 3", got)
+	}
+	if got := gjson.GetBytes(body, "usage.output_tokens_details.reasoning_tokens").Int(); got != 5 {
+		t.Fatalf("usage.output_tokens_details.reasoning_tokens = %d, want 5", got)
+	}
+}
+
+func TestGatewayResponsesToChatRetriesDeveloperRoleAsSystem(t *testing.T) {
+	t.Parallel()
+
+	var gotBodies [][]byte
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			gotBodies = append(gotBodies, body)
+			attempt := len(gotBodies)
+			mu.Unlock()
+			if attempt == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"message":"developer role is not supported","type":"invalid_request_error"}}`))
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"ali-coding": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				ResponsesToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolResponsesStateless,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"qwen3-coder-plus","input":"hello","instructions":"be precise"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if len(gotBodies) != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", len(gotBodies))
+	}
+	if got := gjson.GetBytes(gotBodies[0], "messages.0.role").String(); got != "developer" {
+		t.Fatalf("first attempt role = %q, want developer", got)
+	}
+	if got := gjson.GetBytes(gotBodies[1], "messages.0.role").String(); got != "system" {
+		t.Fatalf("second attempt role = %q, want system", got)
+	}
+}
+
 func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 	t.Parallel()
 

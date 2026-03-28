@@ -147,9 +147,11 @@ curl http://localhost:8080/openai/responses \
 - `anthropic_to_chat: true`：仅 `anthropic /messages` 的受控子集 → 上游 `/chat/completions`
 
 `responses_to_chat` 只支持受控的 Chat 兼容子集：字符串/数组 `input`、顶层 `instructions`、`function` tools，以及少量共享 chat 参数。
-其中会显式兼容 `max_output_tokens -> max_completion_tokens`，并把 Responses 风格的 `tool_choice` 规范化为 Chat 风格对象；不兼容的形状会直接返回 `400`。
+桥接回写时会把 Chat `usage` 规范化为 Responses 风格的 `input_tokens` / `output_tokens`，并把 Chat `finish_reason` 映射为 Responses `status` / `incomplete_details`。
+其中会显式兼容 `max_output_tokens -> max_completion_tokens`，并把 Responses 风格的 `tool_choice` 规范化为 Chat 风格对象；`function_call_output.output` 允许传入任意 JSON 并在转 Chat tool message 时规范化为字符串。
 不支持的 Responses 专有字段或未知 input item 会直接返回 `400`，不会再伪装成 function tool 继续转发。
 `responses_to_chat` 明确不支持 `previous_response_id`，因此不能承载 Responses 有状态续接。
+Responses 流式桥会补齐更接近原生协议的事件序列和关联字段；如果上游 `400` 明确拒绝 `developer` role，会自动回退为 `system` 后重试一次。
 原生 `/responses` 路径会透传 `previous_response_id` 等字段，但会话状态仍由上游 provider 维护；带 `previous_response_id` 的有状态请求会禁用协议转换和 failover。
 
 `anthropic_to_chat` 只支持受控的 Messages 兼容子集：字符串或纯文本 blocks 的 `system` / `messages`、`tool_use` / `tool_result`、`function` tools，以及少量共享采样参数。

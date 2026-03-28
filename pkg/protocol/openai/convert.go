@@ -4,10 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/wweir/warden/pkg/protocol"
+)
+
+const (
+	responsesMessageOutputIndex = 0
+	responsesMessageContentIdx  = 0
 )
 
 var responsesToChatAllowedExtraFields = map[string]struct{}{
@@ -65,6 +71,29 @@ func ResponsesRequestToChatRequest(respReq ResponsesRequest) (ChatCompletionRequ
 	}
 
 	return chatReq, nil
+}
+
+// DowngradeDeveloperMessages converts developer-role messages into system-role messages.
+// Some OpenAI-compatible providers reject developer even though the rest of the chat schema matches.
+func DowngradeDeveloperMessages(messages []Message) ([]Message, bool) {
+	if len(messages) == 0 {
+		return nil, false
+	}
+
+	cloned := make([]Message, len(messages))
+	changed := false
+	for i, msg := range messages {
+		cloned[i] = msg
+		if msg.Role == "developer" {
+			cloned[i].Role = "system"
+			changed = true
+		}
+	}
+
+	if !changed {
+		return messages, false
+	}
+	return cloned, true
 }
 
 func convertResponsesRequestExtras(messages []Message, extra map[string]json.RawMessage, toolNames map[string]struct{}) ([]Message, map[string]json.RawMessage, error) {
@@ -204,7 +233,11 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			if err := json.Unmarshal(raw, &out); err != nil {
 				return nil, fmt.Errorf("unmarshal function_call_output: %w", err)
 			}
-			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: out.Output})
+			content, err := normalizeFunctionCallOutputContent(out.Output)
+			if err != nil {
+				return nil, fmt.Errorf("normalize function_call_output.output: %w", err)
+			}
+			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: content})
 
 		case "reasoning":
 			return nil, fmt.Errorf("unsupported input item type %q", itemType.Type)
@@ -215,6 +248,23 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 	}
 
 	return messages, nil
+}
+
+func normalizeFunctionCallOutputContent(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	var compact json.RawMessage
+	if err := json.Unmarshal(raw, &compact); err != nil {
+		return nil, err
+	}
+	return string(compact), nil
 }
 
 func convertResponsesMessageItem(raw json.RawMessage) (Message, error) {
@@ -445,6 +495,12 @@ type tokenLimit struct {
 	value    int64
 }
 
+type responsesToolStreamState struct {
+	callID    string
+	name      string
+	arguments string
+}
+
 func (l tokenLimit) equals(other tokenLimit) bool {
 	if l.infinite || other.infinite {
 		return l.infinite == other.infinite
@@ -492,15 +548,16 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 	if chatResp.Created != 0 {
 		resp.Extra["created"] = mustMarshalRaw(chatResp.Created)
 	}
-	if chatResp.Usage != (Usage{}) {
-		resp.Extra["usage"] = mustMarshalRaw(chatResp.Usage)
+	if !chatResp.Usage.IsZero() {
+		resp.Extra["usage"] = mustMarshalRaw(normalizeChatUsageForResponses(chatResp.Usage))
 	}
 
 	if len(chatResp.Choices) == 0 {
 		return resp, nil
 	}
 
-	msg := chatResp.Choices[0].Message
+	choice := chatResp.Choices[0]
+	msg := choice.Message
 	if msg.Content != nil {
 		item := map[string]any{
 			"type":    "message",
@@ -529,6 +586,7 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 		resp.Output = append(resp.Output, raw)
 	}
 
+	applyFinishReasonToResponsesResponse(&resp, choice.FinishReason)
 	return resp, nil
 }
 
@@ -573,19 +631,94 @@ func messageRoleOrDefault(role string) string {
 	return role
 }
 
+func normalizeChatUsageForResponses(usage Usage) map[string]any {
+	normalized := make(map[string]any)
+	if usage.PromptTokens != 0 {
+		normalized["input_tokens"] = usage.PromptTokens
+	}
+	if usage.CompletionTokens != 0 {
+		normalized["output_tokens"] = usage.CompletionTokens
+	}
+	if usage.TotalTokens != 0 {
+		normalized["total_tokens"] = usage.TotalTokens
+	}
+	for key, value := range usage.Extra {
+		switch key {
+		case "prompt_tokens_details":
+			normalized["input_tokens_details"] = rawMessageToInterface(value)
+		case "completion_tokens_details":
+			normalized["output_tokens_details"] = rawMessageToInterface(value)
+		default:
+			normalized[key] = rawMessageToInterface(value)
+		}
+	}
+	return normalized
+}
+
+func applyFinishReasonToResponsesResponse(resp *ResponsesResponse, finishReason string) {
+	if resp == nil {
+		return
+	}
+
+	switch finishReason {
+	case "", "stop", "tool_calls", "function_call":
+		return
+	case "length":
+		resp.Status = "incomplete"
+		resp.Extra["incomplete_details"] = mustMarshalRaw(map[string]any{
+			"reason": "max_output_tokens",
+		})
+	case "content_filter":
+		resp.Status = "incomplete"
+		resp.Extra["incomplete_details"] = mustMarshalRaw(map[string]any{
+			"reason": "content_filter",
+		})
+	default:
+		resp.Status = "incomplete"
+		resp.Extra["incomplete_details"] = mustMarshalRaw(map[string]any{
+			"reason":        "finish_reason",
+			"finish_reason": finishReason,
+		})
+	}
+}
+
+func rawMessageToInterface(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	return v
+}
+
 func mustMarshalRaw(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
 
 type ChatResponsesStreamState struct {
-	messageAdded bool
-	toolAdded    map[int]bool
+	responseID     string
+	model          string
+	createdSent    bool
+	inProgressSent bool
+	messageAdded   bool
+	messageDone    bool
+	messageItemID  string
+	messageContent string
+	toolAdded      map[int]bool
+	toolDone       map[int]bool
+	toolItemID     map[int]string
+	tools          map[int]*responsesToolStreamState
 }
 
 func NewChatResponsesStreamState() *ChatResponsesStreamState {
 	return &ChatResponsesStreamState{
-		toolAdded: make(map[int]bool),
+		toolAdded:  make(map[int]bool),
+		toolDone:   make(map[int]bool),
+		toolItemID: make(map[int]string),
+		tools:      make(map[int]*responsesToolStreamState),
 	}
 }
 
@@ -603,6 +736,12 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 	if len(choices) == 0 {
 		return nil
 	}
+	if id, ok := chunk["id"].(string); ok && id != "" {
+		s.responseID = id
+	}
+	if model, ok := chunk["model"].(string); ok && model != "" {
+		s.model = model
+	}
 	choice, _ := choices[0].(map[string]any)
 	if choice == nil {
 		return nil
@@ -613,14 +752,28 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 	}
 
 	var responseChunks []string
+	responseChunks = append(responseChunks, s.ensureLifecycleEvents()...)
 	if content, ok := delta["content"].(string); ok && content != "" {
 		if !s.messageAdded {
+			s.messageItemID = s.makeMessageItemID()
 			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
-				"item": map[string]any{"type": "message", "role": "assistant", "content": []any{}},
+				"output_index": responsesMessageOutputIndex,
+				"item": map[string]any{
+					"id":      s.messageItemID,
+					"type":    "message",
+					"role":    "assistant",
+					"content": []any{},
+				},
 			}))
 			s.messageAdded = true
 		}
-		responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{"delta": content}))
+		s.messageContent += content
+		responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{
+			"output_index":  responsesMessageOutputIndex,
+			"item_id":       s.messageItemID,
+			"content_index": responsesMessageContentIdx,
+			"delta":         content,
+		}))
 	}
 
 	deltaToolCalls, _ := asArray(delta["tool_calls"])
@@ -633,7 +786,9 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 		fn, _ := dtc["function"].(map[string]any)
 
 		if !s.toolAdded[idx] {
-			item := map[string]any{"type": "function_call"}
+			itemID := s.makeToolItemID(idx, dtc)
+			s.toolItemID[idx] = itemID
+			item := map[string]any{"id": itemID, "type": "function_call"}
 			if id, ok := dtc["id"].(string); ok && id != "" {
 				item["call_id"] = id
 			}
@@ -642,18 +797,157 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 					item["name"] = name
 				}
 			}
-			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{"item": item}))
+			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+				"output_index": idx + 1,
+				"item":         item,
+			}))
 			s.toolAdded[idx] = true
+		}
+		toolState := s.ensureToolState(idx)
+		if id, ok := dtc["id"].(string); ok && id != "" {
+			toolState.callID = id
+		}
+		if fn != nil {
+			if name, ok := fn["name"].(string); ok && name != "" {
+				toolState.name = name
+			}
 		}
 
 		if fn != nil {
 			if args, ok := fn["arguments"].(string); ok && args != "" {
-				responseChunks = append(responseChunks, formatResponsesEvent("response.function_call_arguments.delta", map[string]any{"delta": args}))
+				toolState.arguments += args
+				payload := map[string]any{
+					"output_index": idx + 1,
+					"item_id":      s.toolItemID[idx],
+					"delta":        args,
+				}
+				if id, ok := dtc["id"].(string); ok && id != "" {
+					payload["call_id"] = id
+				}
+				responseChunks = append(responseChunks, formatResponsesEvent("response.function_call_arguments.delta", payload))
 			}
 		}
 	}
 
+	if finishReason, _ := choice["finish_reason"].(string); finishReason != "" {
+		responseChunks = append(responseChunks, s.finalizeOutputEvents()...)
+	}
+
 	return []byte(strings.Join(responseChunks, ""))
+}
+
+func (s *ChatResponsesStreamState) ensureLifecycleEvents() []string {
+	var events []string
+	response := s.responseObject("in_progress")
+	if !s.createdSent {
+		events = append(events, formatResponsesEvent("response.created", map[string]any{"response": response}))
+		s.createdSent = true
+	}
+	if !s.inProgressSent {
+		events = append(events, formatResponsesEvent("response.in_progress", map[string]any{"response": response}))
+		s.inProgressSent = true
+	}
+	return events
+}
+
+func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
+	var events []string
+	if s.messageAdded && !s.messageDone {
+		events = append(events, formatResponsesEvent("response.output_text.done", map[string]any{
+			"output_index":  responsesMessageOutputIndex,
+			"item_id":       s.messageItemID,
+			"content_index": responsesMessageContentIdx,
+			"text":          s.messageContent,
+		}))
+		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
+			"output_index": responsesMessageOutputIndex,
+			"item": map[string]any{
+				"id":   s.messageItemID,
+				"type": "message",
+				"role": "assistant",
+				"content": []any{map[string]any{
+					"type": "output_text",
+					"text": s.messageContent,
+				}},
+			},
+		}))
+		s.messageDone = true
+	}
+
+	toolIndexes := make([]int, 0, len(s.toolAdded))
+	for idx := range s.toolAdded {
+		toolIndexes = append(toolIndexes, idx)
+	}
+	slices.Sort(toolIndexes)
+	for _, idx := range toolIndexes {
+		if s.toolDone[idx] {
+			continue
+		}
+		toolState := s.ensureToolState(idx)
+		item := map[string]any{
+			"id":        s.toolItemID[idx],
+			"type":      "function_call",
+			"status":    "completed",
+			"arguments": toolState.arguments,
+		}
+		if toolState.callID != "" {
+			item["call_id"] = toolState.callID
+		}
+		if toolState.name != "" {
+			item["name"] = toolState.name
+		}
+		events = append(events, formatResponsesEvent("response.function_call_arguments.done", map[string]any{
+			"output_index": idx + 1,
+			"item_id":      s.toolItemID[idx],
+			"arguments":    toolState.arguments,
+		}))
+		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
+			"output_index": idx + 1,
+			"item":         item,
+		}))
+		s.toolDone[idx] = true
+	}
+	return events
+}
+
+func (s *ChatResponsesStreamState) responseObject(status string) map[string]any {
+	response := map[string]any{
+		"object": "response",
+		"status": status,
+	}
+	if s.responseID != "" {
+		response["id"] = s.responseID
+	}
+	if s.model != "" {
+		response["model"] = s.model
+	}
+	return response
+}
+
+func (s *ChatResponsesStreamState) makeMessageItemID() string {
+	if s.responseID != "" {
+		return s.responseID + "_msg_0"
+	}
+	return "msg_0"
+}
+
+func (s *ChatResponsesStreamState) makeToolItemID(idx int, toolCall map[string]any) string {
+	if id, ok := toolCall["id"].(string); ok && id != "" {
+		return id
+	}
+	if s.responseID != "" {
+		return fmt.Sprintf("%s_fc_%d", s.responseID, idx)
+	}
+	return fmt.Sprintf("fc_%d", idx)
+}
+
+func (s *ChatResponsesStreamState) ensureToolState(idx int) *responsesToolStreamState {
+	if toolState, ok := s.tools[idx]; ok {
+		return toolState
+	}
+	toolState := &responsesToolStreamState{}
+	s.tools[idx] = toolState
+	return toolState
 }
 
 func BuildChatResponsesCompletedEvent(rawSSE []byte, model string, streamComplete bool) []byte {
@@ -712,6 +1006,13 @@ func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
 }
 
 func formatResponsesEvent(eventType string, payload any) string {
-	data, _ := json.Marshal(payload)
+	dataMap, ok := payload.(map[string]any)
+	if !ok {
+		dataMap = map[string]any{"payload": payload}
+	}
+	if _, exists := dataMap["type"]; !exists {
+		dataMap["type"] = eventType
+	}
+	data, _ := json.Marshal(dataMap)
 	return "event: " + eventType + "\ndata: " + string(data) + "\n\n"
 }

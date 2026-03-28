@@ -40,11 +40,14 @@
 - `chat` routes expose only `/chat/completions`.
 - `responses_stateless` routes expose only stateless `/responses`.
 - `responses_stateless` routes reject `previous_response_id`.
-- `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`, while compatible `function` tools keep their `strict` flag, `max_output_tokens` is mapped to `max_completion_tokens`, and Responses-style `tool_choice` is normalized before forwarding.
+- `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`, while compatible `function` tools keep their `strict` flag, `max_output_tokens` is mapped to `max_completion_tokens`, Responses-style `tool_choice` is normalized before forwarding, and `function_call_output.output` may carry arbitrary JSON before being normalized into chat tool content.
+- Chat -> Responses rewrite normalizes Chat `usage` into Responses `input_tokens` / `output_tokens`, maps Chat `finish_reason` into Responses `status` / `incomplete_details`, and includes final item snapshots in `response.output_item.done` events for better SDK state-machine compatibility.
 - `responses_stateful` routes accept both stateless and stateful `/responses`; stateful requests bypass `responses_to_chat` conversion and disable failover.
 - Providers with `responses_to_chat` enabled cannot back `responses_stateful` route models, because that bridge does not implement `previous_response_id`.
+- If a `responses_to_chat` upstream rejects `developer` role with a pre-stream `400`, the chat bridge retries the same provider once after downgrading those messages to `system`.
 - Anthropic routes still expose only `/messages`.
 - `anthropic_to_chat` accepts only a constrained Messages subset; non-text content blocks, mixed user text + tool_result messages, and unknown Anthropic-only fields fail fast with `400`.
+- The Responses stream bridge emits a richer event sequence (`response.created`, `response.in_progress`, `response.output_text.done`, `response.function_call_arguments.done`, `response.output_item.done`) and attaches stable `output_index` / `item_id` metadata so stricter SDK state machines can track items incrementally.
 - Streaming provider accounting distinguishes `pre_stream` from `in_stream`: pre-stream failures may retry/fail over, in-stream upstream truncation only marks the current provider unhealthy, and downstream disconnects do not suppress the provider.
 - Non-inference subpaths that fall through to transparent proxying keep raw passthrough behavior; route protocol checks only gate recognized inference endpoints.
 - Provider family compatibility is derived centrally from provider config: `openai => chat + responses_*` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `qwen/copilot/ollama => chat`.

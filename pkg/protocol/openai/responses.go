@@ -199,9 +199,9 @@ func (f *FunctionCallItem) UnmarshalJSON(data []byte) error {
 // FunctionCallOutputItem represents a function_call_output input item
 // constructed by the gateway after executing injected tools.
 type FunctionCallOutputItem struct {
-	Type   string `json:"type"` // always "function_call_output"
-	CallID string `json:"call_id"`
-	Output string `json:"output"`
+	Type   string          `json:"type"` // always "function_call_output"
+	CallID string          `json:"call_id"`
+	Output json.RawMessage `json:"output"`
 }
 
 // ResponsesFunctionTool represents a function tool definition

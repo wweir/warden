@@ -290,7 +290,10 @@ route 对外暴露哪些协议面，直接由 `route.protocol` 决定。
 - 运行时路由只依赖 `route.protocol + route model` 配置，不依赖 provider 卡片上的展示协议
 - provider family 只承担“上游适配器”职责：`openai => chat + responses_*`，开启 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`qwen/copilot/ollama => chat`
 - `responses_to_chat` 只对无状态 Responses 请求生效；带 `previous_response_id` 的有状态请求只允许原生 `/responses` 透传，且禁用 failover
-- `responses_to_chat` 只接受受控的 stateless Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 在入口直接拒绝，不做 mock passthrough；兼容层会显式把 `max_output_tokens` 映射为 `max_completion_tokens`，并校验/规范化 `tool_choice`
+- `responses_to_chat` 只接受受控的 stateless Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 在入口直接拒绝，不做 mock passthrough；兼容层会显式把 `max_output_tokens` 映射为 `max_completion_tokens`，校验/规范化 `tool_choice`，并允许 `function_call_output.output` 使用非字符串 JSON 值
+- `responses_to_chat` 的 `instructions` 默认映射为首条 `developer` message；如果上游以 `400` 明确拒绝 `developer` role，bridge 会在同一 provider 上自动降级重试为 `system`
+- `responses_to_chat` 的 Chat SSE -> Responses SSE 转换会补齐生命周期事件和关联元数据（如 `response.created` / `response.in_progress` / `response.output_item.done` / `output_index` / `item_id`），并在 done 事件中携带最终 item 快照，以提高对官方 SDK 状态机的兼容性
+- `responses_to_chat` 在 Chat -> Responses 回写阶段会把 Chat `usage` 规范化为 Responses 风格的 `input_tokens` / `output_tokens`（并映射 `*_tokens_details`），同时把 Chat `finish_reason` 映射为 Responses `status` / `incomplete_details`
 - `anthropic_to_chat` 只对 `route.protocol=anthropic` 的 `/messages` 请求生效；网关会把受控 Messages 子集转换为上游 Chat 请求，并把 Chat JSON / SSE 再转回 Anthropic Messages 形状
 - `anthropic_to_chat` 明确不支持非文本 content block、`tool_result` 与普通 user text 混合块、以及未映射的 Anthropic 专有字段；这些请求在入口直接 `400`
 

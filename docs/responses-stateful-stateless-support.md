@@ -59,6 +59,11 @@ Responses 相关 route 必须直接锁定唯一协议：
 - 只接受受控的 Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 直接返回 `400`
 - 会显式兼容 `max_output_tokens -> max_completion_tokens`
 - 会校验并规范化 Responses 风格 `tool_choice`；未知形状或引用未知 `function` tool 会直接返回 `400`
+- `function_call_output.output` 可为字符串或任意 JSON；转换到 Chat `tool` message 时会规范化成字符串内容
+- Chat -> Responses 回写会把 Chat `usage` 规范化为 Responses 风格的 `input_tokens` / `output_tokens`，并映射 `prompt_tokens_details/completion_tokens_details`
+- Chat -> Responses 回写会把 Chat `finish_reason` 映射为 Responses `status` / `incomplete_details`
+- 流式桥会补齐更接近原生 Responses 的生命周期事件和关联字段，而不是只输出最小 delta 集合；`response.output_item.done` 会附带最终 item 快照
+- 如果上游以 `400` 明确拒绝 `developer` role，bridge 会在同一 provider 上自动回退为 `system` 重试一次
 - 这是兼容桥接，不是完整 Responses 协议等价实现
 
 ## 5. 当前判断

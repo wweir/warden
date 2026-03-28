@@ -3,6 +3,8 @@ package openai
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestResponsesRequestToChatRequest(t *testing.T) {
@@ -43,7 +45,7 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 					{"type":"message","role":"developer","content":"be precise"},
 					{"type":"message","role":"user","content":"weather?"},
 					{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{}"},
-					{"type":"function_call_output","call_id":"call_1","output":"sunny"}
+					{"type":"function_call_output","call_id":"call_1","output":{"status":"sunny"}}
 				]`),
 			},
 			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
@@ -58,6 +60,9 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 				}
 				if chatReq.Messages[3].Role != "tool" || chatReq.Messages[3].ToolCallID != "call_1" {
 					t.Fatalf("unexpected tool output message: %#v", chatReq.Messages[3])
+				}
+				if got := chatReq.Messages[3].Content; got != `{"status":"sunny"}` {
+					t.Fatalf("unexpected tool output content: %#v", got)
 				}
 			},
 		},
@@ -213,7 +218,15 @@ func TestChatResponseToResponsesResponse(t *testing.T) {
 			},
 			FinishReason: "tool_calls",
 		}},
-		Usage: Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+		Usage: Usage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+			Extra: map[string]json.RawMessage{
+				"prompt_tokens_details":     json.RawMessage(`{"cached_tokens":2}`),
+				"completion_tokens_details": json.RawMessage(`{"reasoning_tokens":1}`),
+			},
+		},
 	}
 
 	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
@@ -234,6 +247,49 @@ func TestChatResponseToResponsesResponse(t *testing.T) {
 	}
 	if resp.Status != "completed" {
 		t.Fatalf("expected completed status, got %s", resp.Status)
+	}
+	usageJSON := resp.Extra["usage"]
+	if got := gjson.GetBytes(usageJSON, "input_tokens").Int(); got != 10 {
+		t.Fatalf("usage.input_tokens = %d, want 10", got)
+	}
+	if got := gjson.GetBytes(usageJSON, "output_tokens").Int(); got != 5 {
+		t.Fatalf("usage.output_tokens = %d, want 5", got)
+	}
+	if got := gjson.GetBytes(usageJSON, "total_tokens").Int(); got != 15 {
+		t.Fatalf("usage.total_tokens = %d, want 15", got)
+	}
+	if got := gjson.GetBytes(usageJSON, "input_tokens_details.cached_tokens").Int(); got != 2 {
+		t.Fatalf("usage.input_tokens_details.cached_tokens = %d, want 2", got)
+	}
+	if got := gjson.GetBytes(usageJSON, "output_tokens_details.reasoning_tokens").Int(); got != 1 {
+		t.Fatalf("usage.output_tokens_details.reasoning_tokens = %d, want 1", got)
+	}
+}
+
+func TestChatResponseToResponsesResponseMapsIncompleteFinishReason(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:    "assistant",
+				Content: "partial",
+			},
+			FinishReason: "length",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if resp.Status != "incomplete" {
+		t.Fatalf("expected incomplete status, got %s", resp.Status)
+	}
+	if got := string(resp.Extra["incomplete_details"]); got != `{"reason":"max_output_tokens"}` {
+		t.Fatalf("unexpected incomplete_details: %s", got)
 	}
 }
 
@@ -265,8 +321,35 @@ data: [DONE]
 	if !contains(outputStr, "event: response.completed") {
 		t.Fatal("expected response.completed event")
 	}
+	if !contains(outputStr, "event: response.created") {
+		t.Fatal("expected response.created event")
+	}
+	if !contains(outputStr, "event: response.in_progress") {
+		t.Fatal("expected response.in_progress event")
+	}
+	if !contains(outputStr, "event: response.output_text.done") {
+		t.Fatal("expected response.output_text.done event")
+	}
+	if !contains(outputStr, "event: response.function_call_arguments.done") {
+		t.Fatal("expected response.function_call_arguments.done event")
+	}
+	if !contains(outputStr, "event: response.output_item.done") {
+		t.Fatal("expected response.output_item.done event")
+	}
+	if !contains(outputStr, `"output_index":0`) {
+		t.Fatal("expected output_index metadata")
+	}
+	if !contains(outputStr, `"item_id":"chatcmpl_1_msg_0"`) {
+		t.Fatal("expected message item_id metadata")
+	}
 	if !contains(outputStr, `"name":"lookup"`) {
 		t.Fatal("expected function name in output")
+	}
+	if !contains(outputStr, `"text":"Hello"`) {
+		t.Fatal("expected final text snapshot in done events")
+	}
+	if !contains(outputStr, `"arguments":"{\"city\":\"Paris\"}"`) {
+		t.Fatal("expected final function arguments snapshot in done events")
 	}
 	if !contains(outputStr, `"status":"completed"`) {
 		t.Fatal("expected status:completed for complete stream")
@@ -292,6 +375,26 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choi
 	}
 	if !contains(outputStr, "stream disconnected before completion") {
 		t.Fatal("expected stream disconnected error message")
+	}
+}
+
+func TestChatSSEToResponsesSSEMapsLengthFinishReasonToIncomplete(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	outputStr := string(output)
+	if !contains(outputStr, `"status":"incomplete"`) {
+		t.Fatal("expected status:incomplete for length finish_reason")
+	}
+	if !contains(outputStr, `"incomplete_details":{"reason":"max_output_tokens"}`) {
+		t.Fatal("expected max_output_tokens incomplete_details")
 	}
 }
 

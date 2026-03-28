@@ -2,10 +2,12 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wweir/warden/config"
@@ -13,6 +15,7 @@ import (
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
@@ -55,6 +58,7 @@ func (g *Gateway) handleChatBridge(
 	}
 	session := newInferenceSession(g, w, r, route, spec.serviceProtocol, spec.endpoint, sessionReq, manager, startTime, reqID)
 	chatReq.Model = session.target.UpstreamModel
+	retriedDeveloperFallback := make(map[string]bool)
 
 	for {
 		session.logAttempt(logModel)
@@ -76,6 +80,9 @@ func (g *Gateway) handleChatBridge(
 				reqBody,
 			)
 			if sendErr != nil {
+				if retryWithSystemRole(sendErr, session.provider.Name, retriedDeveloperFallback, &chatReq) {
+					continue
+				}
 				g.selector.RecordOutcomeWithSource(session.provider.Name, sendErr, latency, "pre_stream")
 				g.RecordStreamErrorMetric(session.metricLabels, "pre_stream")
 				if session.handleError(sendErr) {
@@ -112,6 +119,9 @@ func (g *Gateway) handleChatBridge(
 
 		chatResp, _, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, chatReq)
 		if forwardErr != nil {
+			if retryWithSystemRole(forwardErr, session.provider.Name, retriedDeveloperFallback, &chatReq) {
+				continue
+			}
 			g.selector.RecordOutcome(session.provider.Name, forwardErr, latency)
 			if session.handleError(forwardErr) {
 				chatReq.Model = session.target.UpstreamModel
@@ -134,4 +144,36 @@ func (g *Gateway) handleChatBridge(
 		observepkg.RecordInferenceLog(logParams, respBody, "", nil, g.RecordTokenMetrics, g.recordAndBroadcast)
 		return
 	}
+}
+
+func retryWithSystemRole(err error, providerName string, retried map[string]bool, chatReq *openai.ChatCompletionRequest) bool {
+	if retried[providerName] || !developerRoleRejected(err) {
+		return false
+	}
+
+	messages, changed := openai.DowngradeDeveloperMessages(chatReq.Messages)
+	if !changed {
+		return false
+	}
+
+	chatReq.Messages = messages
+	retried[providerName] = true
+	return true
+}
+
+func developerRoleRejected(err error) bool {
+	var upErr *sel.UpstreamError
+	if !errors.As(err, &upErr) {
+		return false
+	}
+	if upErr.Code != http.StatusBadRequest {
+		return false
+	}
+
+	body := strings.ToLower(upErr.Body)
+	return strings.Contains(body, "developer") &&
+		(strings.Contains(body, "unsupported") ||
+			strings.Contains(body, "not supported") ||
+			strings.Contains(body, "invalid") ||
+			strings.Contains(body, "unknown"))
 }
