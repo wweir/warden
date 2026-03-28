@@ -110,6 +110,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `internal/gateway/snapshot` 子包承载 admin-facing metrics payload、dashboard counter sample 与 API key usage 汇总，避免根包继续混放只服务管理面的数据拼装
 - `internal/gateway/bridge` 子包承载 SSE relay 和 Chat/Responses/Messages 之间的流式桥接，避免协议流转换细节继续堆在根包 handler 中
 - `internal/gateway/inference` 子包承载 route-model 匹配、auth retry、failover trail 与当前 upstream target 状态，避免在 chat / responses / messages handler 内重复维护生命周期控制流
+- 当某个 route model 只剩 1 个未被手动抑制的候选 provider 时，请求级重试会绕过自动抑制窗口，不再把该 provider 排除出本次请求，避免单 provider 路由被自动抑制直接打死
 - `gateway` 根包内部再通过共享 inference session helper 统一 metric label 刷新、pending log 发布和 failover 后当前 target 切换，减少各协议入口重复脚手架代码
 - `gateway` 根包内部对 `responses_to_chat` / `anthropic_to_chat` 再复用共享 chat-bridge helper，统一流式桥接重试、stream phase 记账和最终日志拼装
 - `gateway` 根包内部对 `chat` / 原生 `responses` 再复用共享 buffered inference helper，统一一次性上游请求的准备、重试和日志写入
@@ -132,6 +133,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - failover 的最小运行单元是单个 route model，不是整个 route
 - 管理 provider 抑制窗口与失败计数
 - 支持 failover
+- 自动抑制只参与多 provider 竞争；若手动抑制导致某个 route model 已无可用 provider，selector 会先解除其它候选 provider 的自动抑制，再按原优先级继续选择
 - 聚合 provider 状态供管理端展示
 - 维护 provider 协议展示检测结果与 `provider + model + protocol` 精确探测结果
 - provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节

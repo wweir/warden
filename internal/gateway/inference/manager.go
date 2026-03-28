@@ -83,6 +83,10 @@ func (m *Manager) HandleError(err error) bool {
 	if m.current.Target == nil || m.current.Model == nil {
 		return false
 	}
+	if m.selector.CountAvailableProviders(m.cfg, m.serviceProtocol, m.current.Model, m.requestedModel) <= 1 {
+		slog.Warn("Retrying only available provider despite auto suppression", "provider", m.current.Provider.Name, "route", m.route.Prefix, "endpoint", m.endpoint, "error", err)
+		return true
+	}
 
 	m.excluded = append(m.excluded, m.current.Target.Key)
 	m.selector.RecordFailover(m.current.Provider.Name)

@@ -6,6 +6,7 @@
 
 - Selects the current provider/route target for one public route model.
 - Tracks suppression windows, failover counters, stream-phase error counters, and provider status snapshots.
+- Releases automatic suppression for remaining route candidates when manual suppression would otherwise leave the route with no selectable provider.
 - Loads provider models from static config and upstream `/models`.
 - Stores admin-facing protocol probe state.
 - Exposes shared provider auth-header injection for gateway upstream calls.

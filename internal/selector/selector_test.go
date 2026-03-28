@@ -145,6 +145,59 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 	}
 }
 
+func TestSelector_SelectReleasesAutoSuppressionWhenManualSuppressLeavesNoAvailableProvider(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"primary":   {URL: "http://primary.example.com", Protocol: "openai"},
+			"secondary": {URL: "http://secondary.example.com", Protocol: "openai"},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/test": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": testExactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o"},
+						&config.RouteUpstreamConfig{Provider: "secondary", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	route := mustValidateConfig(t, cfg)
+	matched := route.MatchModel("gpt-4o")
+	if matched == nil {
+		t.Fatal("MatchModel(gpt-4o) = nil")
+	}
+
+	s := NewSelector(cfg)
+	if ok := s.SetManualSuppress("primary", true); !ok {
+		t.Fatal("SetManualSuppress(primary, true) = false")
+	}
+
+	s.mu.Lock()
+	s.states["secondary"].suppressUntil = time.Now().Add(2 * time.Minute)
+	s.mu.Unlock()
+
+	target, prov, err := s.Select(cfg, config.RouteProtocolChat, matched, "gpt-4o")
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	if prov.Name != "secondary" || target.ProviderName != "secondary" {
+		t.Fatalf("Select() should choose secondary, got provider=%s target=%s", prov.Name, target.ProviderName)
+	}
+
+	status := s.ProviderDetail("secondary")
+	if status == nil {
+		t.Fatal("ProviderDetail(secondary) = nil")
+	}
+	if status.Suppressed {
+		t.Fatal("secondary should have auto suppression cleared")
+	}
+	if !status.SuppressUntil.IsZero() {
+		t.Fatalf("secondary suppress_until = %v, want zero", status.SuppressUntil)
+	}
+}
+
 func TestSelector_SelectRespectsServiceProtocolFilters(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
