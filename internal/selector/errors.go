@@ -147,8 +147,8 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	// Client cancellation is not retryable
-	if err == context.Canceled {
+	// Request-context termination is not retryable
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 

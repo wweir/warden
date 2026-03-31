@@ -1,6 +1,8 @@
 package inference
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/wweir/warden/config"
@@ -23,8 +25,8 @@ func mustValidateRoute(t *testing.T, cfg *config.ConfigStruct) *config.RouteConf
 	return cfg.Route["/test"]
 }
 
-func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
-	t.Parallel()
+func newSingleProviderManager(t *testing.T) *Manager {
+	t.Helper()
 
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
@@ -48,6 +50,13 @@ func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
+	return manager
+}
+
+func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
+	t.Parallel()
+
+	manager := newSingleProviderManager(t)
 
 	current := manager.Current()
 	if current.Provider.Name != "primary" {
@@ -63,6 +72,28 @@ func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
 	}
 	if len(manager.Failovers()) != 0 {
 		t.Fatalf("failovers len = %d, want 0", len(manager.Failovers()))
+	}
+}
+
+func TestManagerHandleErrorDoesNotRetryWrappedContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	manager := newSingleProviderManager(t)
+
+	retried := manager.HandleError(fmt.Errorf("send request: %w", context.Canceled))
+	if retried {
+		t.Fatal("HandleError() = true, want false for wrapped context.Canceled")
+	}
+}
+
+func TestManagerHandleErrorDoesNotRetryWrappedContextDeadlineExceeded(t *testing.T) {
+	t.Parallel()
+
+	manager := newSingleProviderManager(t)
+
+	retried := manager.HandleError(fmt.Errorf("send request: %w", context.DeadlineExceeded))
+	if retried {
+		t.Fatal("HandleError() = true, want false for wrapped context.DeadlineExceeded")
 	}
 }
 

@@ -130,7 +130,7 @@ func RunRouteToolHooks(ctx context.Context, gatewayAddr string, calls []protocol
 			slog.Warn(op, "tool", call.Name, "error", err)
 			continue
 		}
-		go toolhook.RunPost(ctx, gatewayAddr, hooks, hctx)
+		go toolhook.RunPost(postHookContext(ctx), gatewayAddr, hooks, hctx)
 	}
 }
 
@@ -223,6 +223,16 @@ func splitObservedToolName(name string) (mcpName string, toolName string) {
 		return parts[0], parts[1]
 	}
 	return "", name
+}
+
+func postHookContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	// Post hooks are audit-only asynchronous work. Keep request-scoped values
+	// such as route hook config, but do not let downstream cancellation kill the
+	// goroutine before the hook's own timeout applies.
+	return context.WithoutCancel(ctx)
 }
 
 func gjsonType(raw json.RawMessage) string {

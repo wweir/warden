@@ -14,9 +14,23 @@ func TestIsRetryableError_Nil(t *testing.T) {
 	}
 }
 
-func TestIsRetryableError_ContextCanceled(t *testing.T) {
-	if IsRetryableError(context.Canceled) {
-		t.Error("IsRetryableError(context.Canceled) = true, want false")
+func TestIsRetryableError_ContextTermination(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "canceled", err: context.Canceled},
+		{name: "wrapped canceled", err: fmt.Errorf("send request: %w", context.Canceled)},
+		{name: "deadline exceeded", err: context.DeadlineExceeded},
+		{name: "wrapped deadline exceeded", err: fmt.Errorf("send request: %w", context.DeadlineExceeded)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if IsRetryableError(tt.err) {
+				t.Errorf("IsRetryableError(%v) = true, want false", tt.err)
+			}
+		})
 	}
 }
 
