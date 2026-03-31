@@ -1,25 +1,38 @@
 <template>
 	<div>
 		<div class="header-row">
-			<h2 class="page-title">{{ $t('logs.title') }}</h2>
-			<button @click="togglePause" class="btn btn-secondary btn-sm">
-				{{ paused ? $t('logs.resume') : $t('logs.pause') }}
-			</button>
-			<button @click="clear" class="btn btn-secondary btn-sm">{{ $t('logs.clear') }}</button>
+			<div class="page-heading">
+				<div class="section-eyebrow">{{ $t('logs.currentScope') }}</div>
+				<h2 class="page-title">{{ $t('logs.title') }}</h2>
+				<p class="page-subtitle">{{ $t('logs.pageSubtitle') }}</p>
+			</div>
+			<div class="header-actions">
+				<button @click="togglePause" class="btn btn-secondary btn-sm">
+					{{ paused ? $t('logs.resume') : $t('logs.pause') }}
+				</button>
+				<button @click="clear" class="btn btn-secondary btn-sm">{{ $t('logs.clear') }}</button>
+			</div>
 		</div>
 
 		<div v-if="error" class="msg msg-error">{{ error }}</div>
 
-		<div class="logs-workspace" :class="{ 'logs-workspace-tree-collapsed': sessionTreeCollapsed }">
+		<div
+			class="logs-workspace"
+			:class="{
+				'logs-workspace-tree-collapsed': sessionTreeCollapsed,
+				'logs-workspace-no-tree': !routeTree.length,
+			}"
+		>
 			<aside
 				v-if="routeTree.length"
 				class="session-tree-panel panel"
 				:class="{ collapsed: sessionTreeCollapsed }"
 			>
 				<div class="session-tree-header">
-					<div>
+					<div class="session-tree-copy">
 						<div class="section-eyebrow">{{ $t('logs.sessions') }}</div>
 						<h3 class="session-tree-title">{{ $t('logs.sessionExplorer') }}</h3>
+						<p class="section-note">{{ $t('logs.sessionExplorerHint') }}</p>
 					</div>
 					<div class="session-tree-actions">
 						<span class="badge">{{ chainedLogs.length }}</span>
@@ -100,14 +113,29 @@
 				</template>
 			</aside>
 
-			<section class="logs-content">
-				<div class="logs-scope">
-					<div>
-						<div class="section-eyebrow">{{ activeSession ? $t('logs.selectedSession') : $t('logs.currentScope') }}</div>
+			<section class="logs-content" :class="scopeStateClass">
+				<div class="logs-scope panel">
+					<div class="logs-scope-main">
+						<div class="section-eyebrow">{{ scopeEyebrow }}</div>
 						<h3 class="logs-scope-title">{{ scopeTitle }}</h3>
+						<p class="logs-scope-description">{{ scopeDescription }}</p>
 					</div>
-					<div class="logs-scope-meta">
-						<span class="badge">{{ filteredLogCount }} {{ $t('logs.reqs') }}</span>
+					<div class="logs-scope-side">
+						<div class="logs-scope-pills">
+							<span class="scope-pill">
+								<span class="scope-pill-label">{{ $t('logs.route') }}</span>
+								{{ scopeRouteLabel }}
+							</span>
+							<span class="scope-pill">
+								<span class="scope-pill-label">{{ $t('logs.sessions') }}</span>
+								{{ visibleSessionCount }}
+							</span>
+							<span v-if="scopeWindowLabel" class="scope-pill">
+								<span class="scope-pill-label">{{ $t('logs.time') }}</span>
+								{{ scopeWindowLabel }}
+							</span>
+							<span class="scope-pill scope-pill-strong">{{ filteredLogCount }} {{ $t('logs.reqs') }}</span>
+						</div>
 					</div>
 				</div>
 
@@ -202,7 +230,10 @@
 								</button>
 							</td>
 							<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
-							<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
+							<td class="cell-prompt">
+								<span v-if="showRowRouteMeta" class="row-route-chip">{{ routeName(chain.displayLogs[0]?.route) }}</span>
+								<span class="cell-prompt-text">{{ lastUserPreview(chain.displayLogs[0]) }}</span>
+							</td>
 							<td>{{ chain.displayLogs[0].model }}</td>
 							<td>{{ chain.displayLogs[0].provider }}</td>
 							<td>{{ formatDuration(chain.displayLogs[0].duration_ms) }}</td>
@@ -231,7 +262,10 @@
 									</button>
 								</td>
 								<td>{{ formatTime(chain.displayLogs[0].timestamp) }}</td>
-								<td class="cell-prompt">{{ lastUserPreview(chain.displayLogs[0]) }}</td>
+								<td class="cell-prompt">
+									<span v-if="showRowRouteMeta" class="row-route-chip">{{ routeName(chain.displayLogs[0]?.route) }}</span>
+									<span class="cell-prompt-text">{{ lastUserPreview(chain.displayLogs[0]) }}</span>
+								</td>
 								<td>{{ chain.displayLogs[0].model }}</td>
 								<td>-</td>
 								<td>{{ formatDuration(chainTotalDuration(chain)) }}</td>
@@ -266,7 +300,10 @@
 										</button>
 									</td>
 									<td>{{ formatTime(log.timestamp) }}</td>
-									<td class="cell-prompt">{{ lastUserPreview(log) }}</td>
+									<td class="cell-prompt">
+										<span v-if="showRowRouteMeta" class="row-route-chip">{{ routeName(log.route) }}</span>
+										<span class="cell-prompt-text">{{ lastUserPreview(log) }}</span>
+									</td>
 									<td>{{ log.model }}</td>
 									<td>{{ log.provider }}</td>
 									<td>{{ formatDuration(log.duration_ms) }}</td>
@@ -603,6 +640,11 @@ function formatTime(t) {
 		minute: "2-digit",
 		second: "2-digit",
 	}).format(date);
+}
+
+function routeName(route) {
+	if (typeof route === "string" && route.trim()) return route;
+	return t("logs.unknown");
 }
 
 function formatJSON(data) {
@@ -1748,11 +1790,65 @@ const filteredLogCount = computed(() =>
 	filteredChains.value.reduce((sum, chain) => sum + chain.displayLogs.length, 0),
 );
 
-const scopeTitle = computed(() => {
-	if (activeSession.value) {
-		const chain = chainedLogs.value.find((item) => item.id === activeSession.value);
-		if (chain) return sessionName(chain);
+const activeSessionChain = computed(() => {
+	if (!activeSession.value) return null;
+	return chainedLogs.value.find((item) => item.id === activeSession.value) || null;
+});
+
+const visibleSessionCount = computed(() => filteredChains.value.length);
+
+const visibleRouteCount = computed(() => {
+	const seen = new Set();
+	for (const chain of filteredChains.value) {
+		seen.add(routeName(chain.logs[0]?.route));
 	}
+	return seen.size;
+});
+
+const showRowRouteMeta = computed(() =>
+	!activeTab.value && !activeSession.value && visibleRouteCount.value > 1,
+);
+
+const scopeEyebrow = computed(() => {
+	if (activeSession.value) return t("logs.selectedSession");
+	if (activeTab.value) return t("logs.selectedRoute");
+	return t("logs.currentScope");
+});
+
+const scopeRouteLabel = computed(() => {
+	if (activeSessionChain.value) return routeName(activeSessionChain.value.logs[0]?.route);
+	if (activeTab.value) return routeName(activeTab.value);
+	return t("logs.allRoutes");
+});
+
+const scopeWindowLabel = computed(() => {
+	const rangeLogs = filteredChains.value.flatMap((chain) => chain.displayLogs);
+	if (!rangeLogs.length) return "";
+	const sorted = [...rangeLogs].sort((a, b) => getTimestampMs(a) - getTimestampMs(b));
+	const start = formatTime(sorted[0].timestamp);
+	const end = formatTime(sorted[sorted.length - 1].timestamp);
+	if (!start) return end;
+	if (!end || start === end) return start;
+	return `${start} - ${end}`;
+});
+
+const scopeDescription = computed(() => {
+	if (activeSessionChain.value) {
+		return t("logs.scopeHintSession", { route: scopeRouteLabel.value });
+	}
+	if (activeTab.value) {
+		return t("logs.scopeHintRoute", { route: scopeRouteLabel.value });
+	}
+	return t("logs.scopeHintAll");
+});
+
+const scopeStateClass = computed(() => ({
+	"logs-content-scoped": Boolean(activeTab.value || activeSession.value),
+	"logs-content-session": Boolean(activeSession.value),
+}));
+
+const scopeTitle = computed(() => {
+	if (activeSessionChain.value) return sessionName(activeSessionChain.value);
 	if (activeTab.value) return activeTab.value;
 	return t("logs.allRequests");
 });
@@ -1948,16 +2044,44 @@ onUnmounted(() => {
 /* Header layout */
 .header-row {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	justify-content: space-between;
-	gap: 12px;
-	margin-bottom: 18px;
+	gap: 16px;
+	margin-bottom: 20px;
+	flex-wrap: wrap;
+}
+
+.page-heading {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-width: 760px;
+}
+
+.header-row .page-title {
+	margin-bottom: 0;
+}
+
+.page-subtitle {
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--c-text-2);
+	max-width: 58ch;
+}
+
+.header-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-left: auto;
 }
 
 .logs-workspace {
 	display: grid;
 	grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-	gap: 18px;
+	gap: 20px;
 	align-items: start;
 }
 
@@ -1965,13 +2089,17 @@ onUnmounted(() => {
 	grid-template-columns: 88px minmax(0, 1fr);
 }
 
+.logs-workspace-no-tree {
+	grid-template-columns: minmax(0, 1fr);
+}
+
 .session-tree-panel {
 	position: sticky;
 	top: 16px;
-	padding: 16px;
+	padding: 14px;
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 12px;
 }
 
 .session-tree-panel.collapsed {
@@ -1979,7 +2107,6 @@ onUnmounted(() => {
 }
 
 .session-tree-header,
-.logs-scope,
 .detail-summary-head,
 .detail-section-head {
 	display: flex;
@@ -1994,8 +2121,16 @@ onUnmounted(() => {
 	gap: 8px;
 }
 
+.session-tree-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
 .session-tree-collapse-btn {
-	min-width: 36px;
+	min-width: 40px;
+	min-height: 40px;
 	padding-inline: 0;
 }
 
@@ -2006,6 +2141,13 @@ onUnmounted(() => {
 	text-transform: uppercase;
 	color: var(--c-text-3);
 	margin-bottom: 4px;
+}
+
+.section-note {
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--c-text-3);
+	max-width: 28ch;
 }
 
 .session-tree-title,
@@ -2049,8 +2191,9 @@ onUnmounted(() => {
 .tree-root-button.active,
 .route-branch-button.active,
 .session-node-button.active {
-	background: var(--c-primary-bg);
+	background: color-mix(in srgb, var(--c-primary-bg) 82%, white);
 	border-color: color-mix(in srgb, var(--c-primary) 24%, var(--c-border));
+	box-shadow: inset 3px 0 0 var(--c-primary);
 }
 
 .tree-root-title,
@@ -2067,6 +2210,15 @@ onUnmounted(() => {
 .logs-scope-meta {
 	font-size: 12px;
 	color: var(--c-text-3);
+}
+
+.tree-root-button {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	background: color-mix(in srgb, var(--c-surface-tint) 58%, white);
+	border-color: var(--c-border-light);
 }
 
 .tree-scroll {
@@ -2099,6 +2251,9 @@ onUnmounted(() => {
 }
 
 .route-branch-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	border: 1px solid var(--c-border);
 	border-radius: var(--radius-sm);
 	background: var(--c-surface);
@@ -2106,6 +2261,8 @@ onUnmounted(() => {
 	cursor: pointer;
 	font-size: 18px;
 	line-height: 1;
+	min-width: 40px;
+	min-height: 40px;
 	transition:
 		background-color 0.15s,
 		border-color 0.15s,
@@ -2151,25 +2308,99 @@ onUnmounted(() => {
 .session-node-main {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 4px;
 }
 
 .logs-content {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 14px;
 	min-width: 0;
 }
 
 .logs-scope {
-	padding: 0 2px;
+	display: flex;
+	align-items: stretch;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 16px 18px;
+	background: linear-gradient(180deg, color-mix(in srgb, var(--c-surface-tint) 76%, white) 0%, var(--c-surface) 100%);
+	border-color: color-mix(in srgb, var(--c-primary) 18%, var(--c-border));
+}
+
+.logs-scope-main {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.logs-scope-description {
+	font-size: 13px;
+	line-height: 1.55;
+	color: var(--c-text-2);
+	max-width: 58ch;
+}
+
+.logs-scope-side {
+	display: flex;
+	align-items: flex-start;
+	justify-content: flex-end;
+}
+
+.logs-scope-pills {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+	max-width: 420px;
+}
+
+.scope-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border-radius: 999px;
+	border: 1px solid var(--c-border);
+	background: var(--c-surface);
+	color: var(--c-text-2);
+	font-size: 12px;
+	line-height: 1.4;
+	white-space: nowrap;
+}
+
+.scope-pill-label {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--c-text-3);
+}
+
+.scope-pill-strong {
+	background: var(--c-primary);
+	border-color: transparent;
+	color: var(--c-text-inverse);
 }
 
 /* Table container */
 .table-wrap {
-	overflow: visible;
+	overflow: hidden;
 	border-radius: var(--radius);
 	background: var(--c-surface);
+}
+
+.logs-content-scoped .table-wrap {
+	border-color: color-mix(in srgb, var(--c-primary) 18%, var(--c-border));
+}
+
+.logs-content-session .row-chain-head {
+	background: color-mix(in srgb, var(--c-primary-bg) 52%, white);
+}
+
+.logs-content-session .row-chain-child {
+	background: color-mix(in srgb, var(--c-primary-bg) 22%, var(--c-bg));
 }
 
 .data-table th {
@@ -2671,12 +2902,30 @@ summary:hover {
 	margin-left: 22px;
 }
 .cell-prompt {
-	max-width: 200px;
+	max-width: 260px;
+	font-size: 12px;
+	color: var(--c-text-2);
+}
+
+.cell-prompt-text {
+	display: block;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 12px;
-	color: var(--c-text-2);
+}
+
+.row-route-chip {
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+	margin-bottom: 6px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--c-primary-bg) 72%, white);
+	color: var(--c-accent-text);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.35;
 }
 
 .fp-str {
@@ -2776,9 +3025,18 @@ summary:hover {
 
 @media (max-width: 768px) {
 	.header-row {
-		flex-wrap: wrap;
-		gap: 8px;
+		align-items: flex-start;
+		gap: 12px;
 		justify-content: flex-start;
+	}
+
+	.header-actions {
+		width: 100%;
+		justify-content: stretch;
+	}
+
+	.header-actions .btn {
+		flex: 1 1 140px;
 	}
 
 	.logs-workspace {
@@ -2792,6 +3050,12 @@ summary:hover {
 	.session-tree-panel {
 		position: static;
 		padding: 14px;
+	}
+
+	.session-tree-collapse-btn,
+	.route-branch-toggle {
+		min-width: 44px;
+		min-height: 44px;
 	}
 
 	.tree-scroll {
@@ -2844,6 +3108,24 @@ summary:hover {
 	.detail-section-head,
 	.logs-scope {
 		flex-direction: column;
+	}
+
+	.logs-scope {
+		padding: 14px;
+	}
+
+	.logs-scope-side {
+		width: 100%;
+		justify-content: flex-start;
+	}
+
+	.logs-scope-pills {
+		justify-content: flex-start;
+		max-width: none;
+	}
+
+	.section-note {
+		max-width: none;
 	}
 
 	.detail-meta-grid {
