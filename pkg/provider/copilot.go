@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,8 +53,8 @@ func (p *copilotProvider) getManager(configDir string) *tokenManager {
 	return m
 }
 
-func (p *copilotProvider) GetAccessToken(configDir string) (string, error) {
-	return p.getManager(configDir).getAccessToken()
+func (p *copilotProvider) GetAccessToken(ctx context.Context, configDir string) (string, error) {
+	return p.getManager(configDir).getAccessToken(ctx)
 }
 
 func (p *copilotProvider) InvalidateAuth(configDir string) {
@@ -64,13 +65,13 @@ func (p *copilotProvider) InvalidateAuth(configDir string) {
 	m.token = nil
 }
 
-func (p *copilotProvider) CheckCredsReadable(configDir string) error {
+func (p *copilotProvider) CheckCredsReadable(_ context.Context, configDir string) error {
 	_, err := readGitHubToken(configDir)
 	return err
 }
 
 // getAccessToken returns a valid Copilot API token, refreshing if needed.
-func (m *tokenManager) getAccessToken() (string, error) {
+func (m *tokenManager) getAccessToken(ctx context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -85,7 +86,7 @@ func (m *tokenManager) getAccessToken() (string, error) {
 
 	// refresh if Copilot token is expired or not yet obtained
 	if m.isCopilotTokenExpired() {
-		if err := m.refreshCopilotToken(); err != nil {
+		if err := m.refreshCopilotToken(ctx); err != nil {
 			return "", fmt.Errorf("refresh copilot token: %w", err)
 		}
 	}
@@ -100,8 +101,12 @@ func (m *tokenManager) isCopilotTokenExpired() bool {
 	return time.Now().Add(tokenExpiryBuffer).Unix() >= m.token.ExpiresAt
 }
 
-func (m *tokenManager) refreshCopilotToken() error {
-	req, err := http.NewRequest(http.MethodGet, copilotTokenEndpoint, nil)
+func (m *tokenManager) refreshCopilotToken(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, copilotTokenEndpoint, nil)
 	if err != nil {
 		return fmt.Errorf("create token request: %w", err)
 	}

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -157,7 +158,7 @@ func TestCopilotGetAccessToken(t *testing.T) {
 		}
 		mgr.mu.Unlock()
 
-		token, err := p.GetAccessToken(dir)
+		token, err := p.GetAccessToken(context.Background(), dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -27,7 +27,7 @@ func (h *Handler) HandleProviderHealth(w http.ResponseWriter, r *http.Request, _
 	}
 
 	start := time.Now()
-	_, rawModels, err := sel.FetchModels(provCfg)
+	_, rawModels, err := sel.FetchModels(r.Context(), provCfg)
 	latency := time.Since(start)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -66,7 +66,7 @@ func (h *Handler) HandleProviderProtocolDetect(w http.ResponseWriter, r *http.Re
 
 	displayProtocols := config.SupportedRouteProtocols(provCfg)
 	probe := sel.ProtocolProbe{}
-	displayProtocols, probe = detectProviderDisplayProtocols(provCfg)
+	displayProtocols, probe = detectProviderDisplayProtocols(r.Context(), provCfg)
 	if len(displayProtocols) == 0 {
 		displayProtocols = config.SupportedRouteProtocols(provCfg)
 	}
@@ -108,7 +108,7 @@ func (h *Handler) HandleProviderModelProtocolProbe(w http.ResponseWriter, r *htt
 		CheckedAt: time.Now(),
 		Status:    "unsupported",
 	}
-	probe = probeProviderModelProtocol(provCfg, probe.Model, probe.Protocol)
+	probe = probeProviderModelProtocol(r.Context(), provCfg, probe.Model, probe.Protocol)
 	probe.Model = strings.TrimSpace(body.Model)
 	probe.Protocol = strings.TrimSpace(body.Protocol)
 	h.selector.UpsertModelProtocolProbe(body.Name, probe)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	_ "embed"
 	"log/slog"
 	"net/http"
@@ -95,12 +96,15 @@ type ProviderConfig struct {
 
 // GetAPIKey returns the effective API key for authentication.
 // For qwen protocol, reads from local OAuth credentials file if api_key is not set.
-func (b *ProviderConfig) GetAPIKey() string {
+func (b *ProviderConfig) GetAPIKey(ctx context.Context) string {
 	if b.APIKey.Value() != "" {
 		return b.APIKey.Value()
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if p := provider.Get(b.Protocol); p != nil {
-		token, _ := p.GetAccessToken(b.ConfigDir)
+		token, _ := p.GetAccessToken(ctx, b.ConfigDir)
 		return token
 	}
 	return ""

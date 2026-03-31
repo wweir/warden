@@ -52,7 +52,7 @@ func SendRequest(ctx context.Context, clientReq *http.Request, provCfg *config.P
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	sel.SetAuthHeaders(httpReq.Header, provCfg)
+	sel.SetAuthHeaders(ctx, httpReq.Header, provCfg)
 
 	client := provCfg.HTTPClient(0)
 	if isStreaming {
@@ -100,7 +100,7 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	sel.SetAuthHeaders(httpReq.Header, provCfg)
+	sel.SetAuthHeaders(ctx, httpReq.Header, provCfg)
 
 	client := provCfg.HTTPClient(firstTokenTimeout)
 	upstreamStart := time.Now()

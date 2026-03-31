@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,8 +51,8 @@ func (p *qwenProvider) getManager(configDir string) *oauthManager {
 	return m
 }
 
-func (p *qwenProvider) GetAccessToken(configDir string) (string, error) {
-	return p.getManager(configDir).getAccessToken()
+func (p *qwenProvider) GetAccessToken(ctx context.Context, configDir string) (string, error) {
+	return p.getManager(configDir).getAccessToken(ctx)
 }
 
 func (p *qwenProvider) InvalidateAuth(configDir string) {
@@ -61,13 +62,13 @@ func (p *qwenProvider) InvalidateAuth(configDir string) {
 	m.creds = nil
 }
 
-func (p *qwenProvider) CheckCredsReadable(configDir string) error {
+func (p *qwenProvider) CheckCredsReadable(_ context.Context, configDir string) error {
 	_, err := readOAuthCreds(configDir)
 	return err
 }
 
 // getAccessToken returns a valid access token, refreshing if needed.
-func (m *oauthManager) getAccessToken() (string, error) {
+func (m *oauthManager) getAccessToken(ctx context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -80,7 +81,7 @@ func (m *oauthManager) getAccessToken() (string, error) {
 	}
 
 	if m.isQwenTokenExpired() {
-		if err := m.refreshQwenToken(); err != nil {
+		if err := m.refreshQwenToken(ctx); err != nil {
 			return "", fmt.Errorf("refresh oauth token: %w", err)
 		}
 	}
@@ -95,9 +96,12 @@ func (m *oauthManager) isQwenTokenExpired() bool {
 	return time.Now().Add(tokenExpiryBuffer).UnixMilli() >= m.creds.ExpiryDate
 }
 
-func (m *oauthManager) refreshQwenToken() error {
+func (m *oauthManager) refreshQwenToken(ctx context.Context) error {
 	if m.creds.RefreshToken == "" {
 		return fmt.Errorf("no refresh_token available, re-authenticate with qwen CLI")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	form := url.Values{
@@ -106,7 +110,14 @@ func (m *oauthManager) refreshQwenToken() error {
 		"client_id":     {qwenOAuthClientID},
 	}
 
-	resp, err := http.Post(qwenOAuthTokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qwenOAuthTokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("create token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("post token request: %w", err)
 	}

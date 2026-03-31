@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -18,6 +19,8 @@ var supportedProxySchemes = map[string]bool{
 	"socks5":  true,
 	"socks5h": true,
 }
+
+const providerCredCheckTimeout = 5 * time.Second
 
 // Validate checks configuration validity.
 func (c *ConfigStruct) Validate() error {
@@ -130,7 +133,10 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		case ProviderProtocolQwen, ProviderProtocolCopilot:
 			if prov.APIKey.Value() == "" {
 				if p := provider.Get(prov.Protocol); p != nil {
-					if err := p.CheckCredsReadable(prov.ConfigDir); err != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), providerCredCheckTimeout)
+					err := p.CheckCredsReadable(ctx, prov.ConfigDir)
+					cancel()
+					if err != nil {
 						return NewValidationError("provider %s: %v", name, err)
 					}
 				}

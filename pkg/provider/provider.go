@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"time"
 )
 
@@ -11,9 +12,9 @@ const (
 
 // TokenProvider manages OAuth token lifecycle for a specific protocol.
 type TokenProvider interface {
-	GetAccessToken(configDir string) (string, error)
+	GetAccessToken(ctx context.Context, configDir string) (string, error)
 	InvalidateAuth(configDir string)
-	CheckCredsReadable(configDir string) error
+	CheckCredsReadable(ctx context.Context, configDir string) error
 }
 
 var providers = map[string]TokenProvider{

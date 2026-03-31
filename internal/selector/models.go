@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,7 +21,7 @@ const modelsEndpointPath = "/models"
 // RefreshModels queries GET /models for all providers in parallel.
 // When a provider has static models configured, they are set immediately as a
 // baseline, and a remote fetch is still attempted to discover additional models.
-func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
+func (s *Selector) RefreshModels(ctx context.Context, cfg *config.ConfigStruct) {
 	var wg sync.WaitGroup
 	for name, provCfg := range cfg.Provider {
 		s.seedConfiguredModels(name, provCfg)
@@ -29,7 +30,7 @@ func (s *Selector) RefreshModels(cfg *config.ConfigStruct) {
 		go func(name string, provCfg *config.ProviderConfig) {
 			defer wg.Done()
 
-			fetched, fetchedRaw, err := FetchModels(provCfg)
+			fetched, fetchedRaw, err := FetchModels(ctx, provCfg)
 			if err != nil {
 				if len(provCfg.Models) == 0 {
 					slog.Warn("Models discovery failed, model filter disabled for this provider; set 'models' in config to suppress",
@@ -166,9 +167,9 @@ func mustMarshal(v any) json.RawMessage {
 }
 
 // SetAuthHeaders injects authentication headers based on protocol type.
-func SetAuthHeaders(h http.Header, provCfg *config.ProviderConfig) {
+func SetAuthHeaders(ctx context.Context, h http.Header, provCfg *config.ProviderConfig) {
 	h.Set("Content-Type", "application/json")
-	apiKey := provCfg.GetAPIKey()
+	apiKey := provCfg.GetAPIKey(ctx)
 	if apiKey != "" {
 		switch provCfg.Protocol {
 		case "anthropic":
@@ -189,11 +190,15 @@ type modelsResponse struct {
 }
 
 // FetchModels queries GET <base_url>/models to discover available model IDs.
-func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMessage, error) {
+func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[string]bool, []json.RawMessage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client := provCfg.HTTPClient(30 * time.Second)
 	models := make(map[string]bool)
 	var rawModels []json.RawMessage
 	afterID := ""
+	seenCursors := map[string]bool{}
 
 	for {
 		url := provCfg.URL + modelsEndpointPath
@@ -201,11 +206,11 @@ func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMes
 			url += "?after_id=" + afterID
 		}
 
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("create models request: %w", err)
 		}
-		SetAuthHeaders(req.Header, provCfg)
+		SetAuthHeaders(ctx, req.Header, provCfg)
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -239,11 +244,35 @@ func FetchModels(provCfg *config.ProviderConfig) (map[string]bool, []json.RawMes
 			}
 			rawModels = append(rawModels, raw)
 		}
-		if !result.HasMore {
+		nextAfterID, err := nextModelsCursor(afterID, result, seenCursors)
+		if err != nil {
+			return nil, nil, err
+		}
+		if nextAfterID == "" {
 			break
 		}
-		afterID = result.LastID
+		afterID = nextAfterID
 	}
 
 	return models, rawModels, nil
+}
+
+func nextModelsCursor(current string, result modelsResponse, seen map[string]bool) (string, error) {
+	if !result.HasMore {
+		return "", nil
+	}
+
+	next := strings.TrimSpace(result.LastID)
+	if next == "" {
+		return "", fmt.Errorf("fetch models: upstream pagination returned has_more=true with empty last_id")
+	}
+	if next == current {
+		return "", fmt.Errorf("fetch models: upstream pagination did not advance cursor %q", next)
+	}
+	if seen[next] {
+		return "", fmt.Errorf("fetch models: upstream pagination repeated cursor %q", next)
+	}
+
+	seen[next] = true
+	return next, nil
 }

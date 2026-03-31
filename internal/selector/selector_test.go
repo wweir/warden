@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -401,7 +402,7 @@ func TestFetchModels_SanitizesInternalHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := FetchModels(&config.ProviderConfig{
+	_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
 		URL:      srv.URL,
 		Protocol: "openai",
 	})
@@ -413,5 +414,73 @@ func TestFetchModels_SanitizesInternalHTTPError(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "panic") {
 		t.Fatalf("FetchModels() error leaked panic detail: %q", err)
+	}
+}
+
+func TestFetchModels_RejectsNonAdvancingPagination(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "empty last id",
+			body: `{"data":[],"has_more":true,"last_id":""}`,
+			want: "empty last_id",
+		},
+		{
+			name: "repeated cursor",
+			body: `{"data":[],"has_more":true,"last_id":"cursor-1"}`,
+			want: "did not advance cursor",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
+				URL:      srv.URL,
+				Protocol: "openai",
+			})
+			if err == nil {
+				t.Fatal("FetchModels() error = nil, want pagination guard error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("FetchModels() error = %q, want substring %q", err, tt.want)
+			}
+			if requests > 2 {
+				t.Fatalf("FetchModels() requests = %d, want bounded retry-free pagination", requests)
+			}
+		})
+	}
+}
+
+func TestFetchModels_RespectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		t.Fatal("FetchModels should not hit upstream when context is already canceled")
+	}))
+	defer srv.Close()
+
+	_, _, err := FetchModels(ctx, &config.ProviderConfig{
+		URL:      srv.URL,
+		Protocol: "openai",
+	})
+	if err == nil {
+		t.Fatal("FetchModels() error = nil, want canceled error")
+	}
+	if requests != 0 {
+		t.Fatalf("FetchModels() requests = %d, want 0", requests)
 	}
 }

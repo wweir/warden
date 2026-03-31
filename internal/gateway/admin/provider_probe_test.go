@@ -24,7 +24,7 @@ func TestProbeProviderModelProtocolSupportsAnthropicToChatProvider(t *testing.T)
 	}))
 	defer server.Close()
 
-	probe := probeProviderModelProtocol(&config.ProviderConfig{
+	probe := probeProviderModelProtocol(nil, &config.ProviderConfig{
 		URL:             server.URL,
 		Protocol:        "openai",
 		APIKey:          config.SecretString("token"),

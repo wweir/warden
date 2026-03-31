@@ -44,7 +44,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 	}
 	g.admin = g.adminHandler()
 
-	go g.selector.RefreshModels(cfg)
+	go g.selector.RefreshModels(ctx, cfg)
 	g.dashboardStore.Start(ctx, func() telemetrypkg.DashboardCounterSample {
 		return snapshotpkg.CollectDashboardCounters(g.outputRates)
 	})

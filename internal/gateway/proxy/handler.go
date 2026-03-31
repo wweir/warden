@@ -133,7 +133,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			return
 		}
 		proxyReq.Header = upstreampkg.BuildProxyRequestHeaders(r, allowFailover)
-		sel.SetAuthHeaders(proxyReq.Header, provCfg)
+		sel.SetAuthHeaders(r.Context(), proxyReq.Header, provCfg)
 
 		upstreamStart := time.Now()
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
@@ -141,6 +141,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		if err != nil {
 			if allowFailover {
 				h.deps.Selector.RecordOutcome(provCfg.Name, err, latency)
+			}
+			if r.Context().Err() != nil {
+				return
 			}
 			if manager == nil && inferencepkg.TryAuthRetry(err, provCfg, authRetried) {
 				continue
@@ -182,6 +185,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		if upErr != nil {
 			if allowFailover {
 				h.deps.Selector.RecordOutcome(provCfg.Name, upErr, latency)
+			}
+			if r.Context().Err() != nil {
+				return
 			}
 			if manager == nil && inferencepkg.TryAuthRetry(upErr, provCfg, authRetried) {
 				continue
