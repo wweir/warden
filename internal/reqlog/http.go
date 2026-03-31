@@ -118,22 +118,14 @@ func (h *HTTPLogger) worker(ctx context.Context) {
 	for {
 		select {
 		case r := <-h.queue:
-			h.send(r)
+			h.send(ctx, r)
 		case <-ctx.Done():
-			// drain remaining records
-			for {
-				select {
-				case r := <-h.queue:
-					h.send(r)
-				default:
-					return
-				}
-			}
+			return
 		}
 	}
 }
 
-func (h *HTTPLogger) send(r Record) {
+func (h *HTTPLogger) send(ctx context.Context, r Record) {
 	body, err := h.renderBody(r)
 	if err != nil {
 		slog.Warn("HTTP log render failed", "request_id", r.RequestID, "error", err)
@@ -141,7 +133,7 @@ func (h *HTTPLogger) send(r Record) {
 	}
 
 	resp, err := h.client.R().
-		SetContext(context.Background()).
+		SetContext(ctx).
 		SetBody(body).
 		Execute(h.method, "")
 	if err != nil {
