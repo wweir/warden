@@ -158,7 +158,7 @@ type HTTPLoggerConfig struct {
 - 后台单 goroutine worker，通过 256 容量 channel 接收记录
 - 队列满时静默丢弃（打 warn 日志）
 - `BodyTemplate` 支持 [sprig](https://masterminds.github.io/sprig/) 函数
-- `Close()` 取消 worker 并等待 in-flight 记录发送完成后返回
+- `Close()` 取消 worker、终止 in-flight HTTP 请求，并丢弃未发送队列，避免 shutdown 被日志重试拖住
 
 ### multiLogger（内部）
 

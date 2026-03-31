@@ -7,9 +7,11 @@
 - Selects the current provider/route target for one public route model.
 - Tracks suppression windows, failover counters, stream-phase error counters, and provider status snapshots.
 - Releases automatic suppression for remaining route candidates when manual suppression would otherwise leave the route with no selectable provider.
-- Loads provider models from static config and upstream `/models`.
+- Loads provider models from static config and upstream `/models`, with discovery requests bound to caller/gateway context so shutdown or canceled admin checks do not linger.
+- Guards model discovery pagination against empty or repeated cursors so a broken upstream cannot trap startup/background refresh in an endless `/models` loop.
 - Stores admin-facing protocol probe state.
 - Exposes shared provider auth-header injection for gateway upstream calls.
+- Classifies wrapped downstream cancellation/deadline errors as non-retryable so request termination does not masquerade as a network failover signal.
 
 ## File Layout
 

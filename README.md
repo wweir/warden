@@ -58,7 +58,7 @@ Warden 就是为这些问题准备的。
 
 后台入口默认是 `http://localhost:8080/_admin/`，用户名固定为 `admin`。
 
-下面是当前实例的后台截图：
+当前后台截图：
 
 ![Warden Admin Dashboard](docs/assets/admin-dashboard.png)
 

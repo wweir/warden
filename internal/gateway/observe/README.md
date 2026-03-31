@@ -8,6 +8,7 @@
 - Stream log assembly helpers.
 - Tool-call extraction from Chat / Responses payloads.
 - Route-scoped tool-hook execution against observed tool calls.
+- Async `post` hook dispatch that preserves route-scoped context values without inheriting downstream request cancellation.
 
 ## Boundary
 

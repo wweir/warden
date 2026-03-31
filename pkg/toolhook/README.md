@@ -28,6 +28,7 @@ Hook 收到的 JSON 为 `CallContext`：
 - Hook 运行错误（超时/崩溃/网络）采用 fail-open（放行）
 - 仅当 hook 明确返回 `{"allow": false, "reason": "..."}` 时才视为拒绝
 - `pre` 拒绝会返回错误；`post` 拒绝仅记录日志（审计语义）
+- `post` hook 作为异步审计逻辑，会保留 route-scoped context value，但不会跟随下游 request cancellation 一起提前终止；真正的执行上限仍由每个 hook 自己的 timeout 控制
 - `ai` hook 使用 `hook.timeout` 作为请求超时；`http` hook 使用 `webhook.timeout`，未配置时默认 `5s`
 
 ## 返回格式

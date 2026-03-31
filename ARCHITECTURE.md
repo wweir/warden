@@ -86,7 +86,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `provider.*.family` 必填；`provider.*.protocol` 仅作为兼容别名保留，不能与 `family` 冲突
 - `provider.*.enabled_protocols` / `provider.*.disabled_protocols` 只负责在 family 候选协议面内做静态收缩，不改变 `route.protocol` 才是运行时真相
 - `admin_password` / `api_keys` / `provider.*.api_key` 读取时兼容明文和 base64，写回配置时统一存为 base64；该兼容模式默认依赖当前支持的 secret 格式不会与规范化 base64 明文冲突
-- `qwen` / `copilot` 若未显式设置 `api_key`，则从本地 `config_dir` 读取 OAuth 凭证
+- `qwen` / `copilot` 若未显式设置 `api_key`，则从本地 `config_dir` 读取 OAuth 凭证；配置阶段的可读性校验带显式短超时，避免未来慢 I/O 把 startup/reload 卡成无界阻塞
 - `route.protocol` 是必填且唯一的 route 协议声明
 - `route.exact_models.<name>` 直接声明 `upstreams`；`route.wildcard_models.<pattern>` 直接声明 `providers`
 - `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
@@ -114,6 +114,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `gateway` 根包保留 HTTP surface、middleware 装配，以及少量必须从运行时状态读取的 admin callback 组装
 - 根包启动期会先把 `route` 编译成按前缀长度降序的绑定表，HTTP 路由注册和透明代理 fallback 共用同一份有序视图，避免重叠前缀依赖 Go map 遍历顺序
 - `internal/gateway/admin` 子包承载管理面路由、嵌入式前端分发，以及 provider 协议探测和 tool-hook suggestion 聚合等 admin-only 逻辑；只对 selector/broadcaster 和少量运行时快照回调做依赖注入，避免反向依赖根包
+- admin provider health/probe 请求继承当前 HTTP request context，并在其上叠加显式超时，避免用户关闭页面后检测任务仍在后台跑满固定 timeout
 - `internal/gateway/admin` 包内再按 `router/auth`、`config`、`status+logs+metrics`、`providers`、`routes`、`apikeys` 分文件组织，避免管理面继续退化成单个超大 handler 文件
 - `internal/gateway/httpmw` 子包承载 Recovery/CORS/API key 鉴权等通用 HTTP 中间件，避免根包继续混放基础 HTTP 基建
 - `internal/gateway/logging` 子包承载请求日志后端构建与轻量 request attempt 日志，避免根包继续持有日志输出装配细节
@@ -125,6 +126,8 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - `internal/gateway/inference` 子包承载 route-model 匹配、auth retry、failover trail 与当前 upstream target 状态，避免在 chat / responses / messages handler 内重复维护生命周期控制流
 - 当某个 route model 只剩 1 个未被手动抑制的候选 provider 时，请求级重试会绕过自动抑制窗口，不再把该 provider 排除出本次请求，避免单 provider 路由被自动抑制直接打死
 - `gateway` 根包内部再通过共享 inference session helper 统一 metric label 刷新、pending log 发布和 failover 后当前 target 切换，减少各协议入口重复脚手架代码
+- 请求级重试路径会先检查下游 request context；客户端断开、取消或超时后，不再把包装过的 `context.Canceled` / `context.DeadlineExceeded` 误判为可重试网络错误，避免单请求在 provider retry/failover 分支里热循环
+- route tool `post` hook 仍保留 route-scoped context value，但会脱离下游 request cancellation；否则异步审计 hook 会在 handler 返回后立即失效，行为退化成依赖 goroutine 调度时机
 - `gateway` 根包内部对 `responses_to_chat` / `anthropic_to_chat` 再复用共享 chat-bridge helper，统一流式桥接重试、stream phase 记账和最终日志拼装
 - `gateway` 根包内部对 `chat` / 原生 `responses` 再复用共享 buffered inference helper，统一一次性上游请求的准备、重试和日志写入
 - 上述 buffered / relay helper 在 failover 后不会把请求锁死在旧执行分支；provider 切换到 bridge-capable 实现时，会重新走对应 bridge handler
@@ -149,7 +152,8 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - 自动抑制只参与多 provider 竞争；若手动抑制导致某个 route model 已无可用 provider，selector 会先解除其它候选 provider 的自动抑制，再按原优先级继续选择
 - 聚合 provider 状态供管理端展示
 - 维护 provider 协议展示检测结果与 `provider + model + protocol` 精确探测结果
-- provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节
+- provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节，并对 `/models` 分页 cursor 做前进性保护，避免坏上游把后台刷新拖进无界循环
+- provider 模型发现请求继承 gateway 生命周期；reload/shutdown 后未完成的 `/models` 刷新会跟随 context 终止，而不是悬挂到各自网络超时结束
 - 包内按职责拆成 `select`、`state`、`models`、`errors`、`types` 多文件，避免继续把选择策略、状态机和模型发现堆在单文件中
 
 这里的设计原则是：路由决策与协议适配分离，避免在 handler 内部散落 provider 选择逻辑。
@@ -180,6 +184,7 @@ web/admin/           # Vue 3 管理端源码与构建产物
 - token 管理与 HTTP 转发解耦
 - 不再支持远程凭证读取
 - 刷新后的凭证只回写本地文件
+- token refresh 网络请求受调用方 context 和显式超时约束，避免过期凭证在请求路径上触发无界阻塞
 
 ### 6. Tool Hook Layer
 
@@ -207,6 +212,7 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
 - 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
 - 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
+- HTTP 日志后端在 shutdown 时会取消 in-flight 请求并停止消费剩余队列，避免关闭阶段被日志发送重试拖住
 - 包内按 `types`、`fingerprint`、`record sanitize/id`、`backend`、`broadcast` 分文件组织，避免日志模型、指纹算法和后端实现继续混写
 
 Prometheus 指标与 Dashboard rolling store 由 `internal/gateway/telemetry` 维护，`internal/gateway` 根包负责把这些数据装配成 admin API 输出。Dashboard 读取两类数据：
