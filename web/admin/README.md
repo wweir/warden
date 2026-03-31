@@ -10,7 +10,7 @@
 - Logs：SSE 请求日志流
 - Logs 流按 `request_id` 合并事件；流式请求会先显示 pending，再在同一条记录上补全最终响应
 - Logs 页面整合会话时，优先按 Responses API 的 `previous_response_id -> response.id` 显式续接整合；没有显式续接时，只在同 route 下按 fingerprint 前缀做保守归并，不再使用旧的 prompt 哈希 + 时间窗启发式，避免把独立请求误并成同一 session
-- Logs 页面桌面端采用“左侧 session 树 + 右侧日志表”的主从布局；左侧树支持整栏收起、按 route 分组折叠，并限制在视口内滚动，避免长会话把页面纵向撑长；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段，减少排障时的信息竞争
+- Logs 页面桌面端采用“左侧 session 树 + 右侧日志表”的主从布局；顶部动作区单独成组，右侧在表格上方增加 scope 摘要条，显式展示当前 route / session / 时间范围 / 请求数，让左侧选择和右侧明细始终对齐；左侧树支持整栏收起、按 route 分组折叠，并限制在视口内滚动，避免长会话把页面纵向撑长；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段，减少排障时的信息竞争
 - Chat：根据 `route.protocol` 自动选择 `/chat/completions`、`/responses` 或 `/messages` 发起请求，并按对应 SSE 格式解析文本输出；对 `responses_stateful` 会本地保存上一轮 `response.id` 并续传 `previous_response_id`
 - Config：结构化配置编辑、客户端 API 密钥、验证、应用
 
