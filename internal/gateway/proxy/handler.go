@@ -14,7 +14,9 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
+	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
@@ -29,7 +31,7 @@ type Deps struct {
 	LogRequest         func(r *http.Request, provider, model string)
 	RecordFailover     func(labels telemetrypkg.Labels)
 	RecordTTFT         func(labels telemetrypkg.Labels, ttft time.Duration)
-	RecordTokenMetrics func(labels telemetrypkg.Labels, usage telemetrypkg.TokenUsage, durationMs int64)
+	RecordTokenMetrics func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64)
 	RecordAndBroadcast func(record reqlog.Record)
 }
 
@@ -220,8 +222,16 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			logResp = AssembleResponse(serviceProtocol, provCfg.Protocol, decodedRespBody)
 		}
 
-		if resp.StatusCode == http.StatusOK && inspectableBody && len(logResp) > 0 && h.deps.RecordTokenMetrics != nil {
-			h.deps.RecordTokenMetrics(metricLabels, telemetrypkg.ExtractTokenUsage(logResp), durationMs)
+		observation := tokenusagepkg.Missing(tokenusagepkg.SourceReportedJSON)
+		if resp.StatusCode == http.StatusOK && inspectableBody {
+			if stream {
+				observation = tokenusagepkg.FromStream(serviceProtocol, provCfg.Protocol, decodedRespBody)
+			} else {
+				observation = tokenusagepkg.FromJSON(logResp)
+			}
+			if h.deps.RecordTokenMetrics != nil {
+				h.deps.RecordTokenMetrics(metricLabels, observation, durationMs)
+			}
 		}
 
 		if h.deps.RecordAndBroadcast != nil {
@@ -231,6 +241,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				Route:       route.Prefix,
 				Endpoint:    r.URL.Path,
 				Model:       model,
+				APIKey:      requestctxpkg.APIKeyNameFromContext(r.Context()),
 				Provider:    provCfg.Name,
 				UserAgent:   r.UserAgent(),
 				DurationMs:  durationMs,
@@ -238,6 +249,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				Request:     reqBody,
 				Response:    logResp,
 				Failovers:   currentFailovers(),
+			}
+			if resp.StatusCode == http.StatusOK && inspectableBody {
+				rec.TokenUsage = &reqlog.TokenUsage{
+					PromptTokens:     observation.PromptTokens,
+					CompletionTokens: observation.CompletionTokens,
+					TotalTokens:      observation.TotalTokens,
+					Source:           observation.SourceLabel(),
+					Completeness:     observation.CompletenessLabel(),
+				}
 			}
 			if upErr != nil {
 				rec.Error = upErr.Error()

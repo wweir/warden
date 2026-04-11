@@ -12,6 +12,7 @@ import (
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
@@ -138,4 +139,16 @@ func writeStreamResponse(w http.ResponseWriter, body []byte, warnMsg string) {
 		slog.Warn(warnMsg, "error", err)
 	}
 	w.(http.Flusher).Flush()
+}
+
+func observeJSONTokenUsage(respBody []byte) tokenusagepkg.Observation {
+	return tokenusagepkg.FromJSON(respBody)
+}
+
+func observeBridgeJSONTokenUsage(respBody []byte) tokenusagepkg.Observation {
+	return tokenusagepkg.FromJSON(respBody).WithSource(tokenusagepkg.SourceBridgeNormalized)
+}
+
+func observeStreamTokenUsage(serviceProtocol, providerProtocol string, respBody []byte) tokenusagepkg.Observation {
+	return tokenusagepkg.FromStream(serviceProtocol, providerProtocol, respBody)
 }

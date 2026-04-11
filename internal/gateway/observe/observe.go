@@ -12,6 +12,7 @@ import (
 	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
@@ -28,6 +29,7 @@ type InferenceLogParams struct {
 	Route      string
 	Endpoint   string
 	Model      string
+	APIKey     string
 	Stream     bool
 	Provider   string
 	UserAgent  string
@@ -43,6 +45,7 @@ func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, rout
 		Route:      route,
 		Endpoint:   endpoint,
 		Model:      model,
+		APIKey:     requestctxpkg.APIKeyNameFromContext(r.Context()),
 		Stream:     stream,
 		Provider:   provider,
 		UserAgent:  r.UserAgent(),
@@ -52,13 +55,14 @@ func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, rout
 	}
 }
 
-func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, recordTokens func(labels telemetrypkg.Labels, usage telemetrypkg.TokenUsage, durationMs int64), emit func(reqlog.Record)) {
+func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), emit func(reqlog.Record)) {
 	rec := reqlog.Record{
 		Timestamp:   params.StartTime,
 		RequestID:   params.RequestID,
 		Route:       params.Route,
 		Endpoint:    params.Endpoint,
 		Model:       params.Model,
+		APIKey:      params.APIKey,
 		Stream:      params.Stream,
 		Provider:    params.Provider,
 		UserAgent:   params.UserAgent,
@@ -70,20 +74,29 @@ func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 		Failovers:   params.Failovers,
 	}
 
-	if len(respBody) > 0 && errMsg == "" && recordTokens != nil {
+	if len(respBody) > 0 && errMsg == "" {
+		rec.TokenUsage = &reqlog.TokenUsage{
+			PromptTokens:     observation.PromptTokens,
+			CompletionTokens: observation.CompletionTokens,
+			TotalTokens:      observation.TotalTokens,
+			Source:           observation.SourceLabel(),
+			Completeness:     observation.CompletenessLabel(),
+		}
+
 		if params.Stream && assembleStream != nil {
 			assembled, fallback, err := assembleStream(respBody)
 			if err == nil {
 				rec.Response = assembled
-				recordTokens(params.MetricTags, telemetrypkg.ExtractTokenUsage(assembled), rec.DurationMs)
 			} else {
 				if len(fallback) == 0 {
 					fallback = respBody
 				}
 				rec.Response = proxypkg.MarshalRawStreamForLog(fallback)
 			}
-		} else {
-			recordTokens(params.MetricTags, telemetrypkg.ExtractTokenUsage(respBody), rec.DurationMs)
+		}
+
+		if recordTokens != nil {
+			recordTokens(params.MetricTags, observation, rec.DurationMs)
 		}
 	}
 
@@ -97,6 +110,7 @@ func PublishPendingInferenceLog(params InferenceLogParams, publish func(reqlog.R
 		Route:       params.Route,
 		Endpoint:    params.Endpoint,
 		Model:       params.Model,
+		APIKey:      params.APIKey,
 		Stream:      params.Stream,
 		Pending:     true,
 		Provider:    params.Provider,

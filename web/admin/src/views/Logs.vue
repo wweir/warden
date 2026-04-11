@@ -554,7 +554,7 @@
 								<span class="response-status">{{ selected.error || responseStatusText(selected) }}</span>
 								<div v-if="selected.response" class="response-pane">
 									<div class="pane-label">{{ $t('logs.response') }}</div>
-									<!-- tool_use blocks from Anthropic response -->
+									<!-- tool calls from response (all protocols) -->
 									<div v-if="responseToolCalls.length" class="chain-tools" style="margin-bottom:8px">
 										<div v-for="(tc, j) in responseToolCalls" :key="j" class="tool-chip">
 											<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
@@ -824,7 +824,8 @@ function extractAssembledText(log) {
 // parse SSE text and extract delta content
 function extractTextFromSSE(text) {
 	const lines = text.split("\n");
-	const parts = [];
+	const deltaParts = [];
+	let completedText = "";
 	for (const line of lines) {
 		if (!line.startsWith("data: ")) continue;
 		const data = line.slice(6);
@@ -833,29 +834,35 @@ function extractTextFromSSE(text) {
 			const chunk = JSON.parse(data);
 			// Chat Completions streaming chunk
 			if (chunk.choices?.[0]?.delta?.content) {
-				parts.push(chunk.choices[0].delta.content);
+				deltaParts.push(chunk.choices[0].delta.content);
 			}
-			// Responses API: response.completed event
-			if (chunk.response?.output) {
+			// Responses API: incremental text delta
+			if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
+				deltaParts.push(chunk.delta);
+			}
+			// Responses API: response.completed event (use as fallback if no deltas)
+			if (chunk.response?.output && !completedText) {
+				const cparts = [];
 				for (const item of chunk.response.output) {
 					if (item.type === "message" && Array.isArray(item.content)) {
 						for (const c of item.content) {
 							if ((c.type === "output_text" || c.type === "text") && c.text) {
-								parts.push(c.text);
+								cparts.push(c.text);
 							}
 						}
 					}
 				}
+				if (cparts.length) completedText = cparts.join("\n");
 			}
 			// Anthropic streaming: content_block_delta with text_delta
 			if (chunk.type === "content_block_delta" && chunk.delta?.type === "text_delta" && chunk.delta?.text) {
-				parts.push(chunk.delta.text);
+				deltaParts.push(chunk.delta.text);
 			}
 		} catch {
 			// ignore parse errors
 		}
 	}
-	return parts.join("");
+	return deltaParts.length ? deltaParts.join("") : completedText;
 }
 
 function togglePause() {
@@ -926,15 +933,31 @@ const responseHasText = computed(() => {
 	return assembledText.value !== formatJSON(selected.value.response);
 });
 
-// extract tool_use blocks from Anthropic response for timeline display
+// extract tool calls from response for timeline display (all protocols)
 const responseToolCalls = computed(() => {
 	if (!selected.value?.response) return [];
 	let resp = selected.value.response;
 	if (typeof resp === "string") {
 		try { resp = JSON.parse(resp); } catch { return []; }
 	}
-	if (!resp.content || !Array.isArray(resp.content)) return [];
-	return resp.content.filter((b) => b.type === "tool_use");
+	// Anthropic: content[] with tool_use blocks
+	if (Array.isArray(resp.content)) {
+		const tools = resp.content.filter((b) => b.type === "tool_use");
+		if (tools.length) return tools.map((b) => ({ name: b.name, input: b.input }));
+	}
+	// OpenAI chat: choices[0].message.tool_calls
+	if (resp.choices?.[0]?.message?.tool_calls?.length) {
+		return resp.choices[0].message.tool_calls.map((tc) => ({
+			name: tc.function?.name || tc.name,
+			input: tc.function?.arguments || tc.arguments,
+		}));
+	}
+	// Responses API: output[] with function_call items
+	if (Array.isArray(resp.output)) {
+		const calls = resp.output.filter((item) => item.type === "function_call");
+		if (calls.length) return calls.map((fc) => ({ name: fc.name, input: fc.arguments }));
+	}
+	return [];
 });
 
 // normalize a raw message (any protocol) into a unified node structure

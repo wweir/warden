@@ -8,6 +8,7 @@ import (
 	"github.com/wweir/warden/config"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 )
 
@@ -63,7 +64,7 @@ func (g *Gateway) handleBufferedInference(
 			if session.handleError(err) {
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, err.Error(), nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, err.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, err)
 			return true
 		}
@@ -74,12 +75,20 @@ func (g *Gateway) handleBufferedInference(
 
 		if req.Stream {
 			spec.writeStream(w, session.provider.Protocol, respBody)
-			observepkg.RecordInferenceLog(logParams, respBody, "", spec.streamAssembler(session.provider.Protocol), g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(
+				logParams,
+				respBody,
+				"",
+				spec.streamAssembler(session.provider.Protocol),
+				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
+				g.RecordTokenMetrics,
+				g.recordAndBroadcast,
+			)
 			return true
 		}
 
 		spec.writeNonStream(w, respBody)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
 		return true
 	}
 }

@@ -141,6 +141,52 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 		return rows
 	}
 
+	type tokenObservationStat struct {
+		Route          string  `json:"route,omitempty"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Endpoint       string  `json:"endpoint"`
+		Completeness   string  `json:"completeness"`
+		Source         string  `json:"source"`
+		Value          float64 `json:"value"`
+	}
+	collectTokenObservationStats := func(collector *prometheus.CounterVec) []tokenObservationStat {
+		var rows []tokenObservationStat
+		for _, met := range telemetrypkg.CollectMetrics(collector) {
+			row := tokenObservationStat{Value: met.GetCounter().GetValue()}
+			for _, l := range met.GetLabel() {
+				switch l.GetName() {
+				case "route":
+					row.Route = l.GetValue()
+				case "protocol":
+					row.Protocol = l.GetValue()
+				case "route_model":
+					row.RouteModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "matched_pattern":
+					row.MatchedPattern = l.GetValue()
+				case "provider":
+					row.Provider = l.GetValue()
+				case "provider_model":
+					row.ProviderModel = l.GetValue()
+					row.Model = l.GetValue()
+				case "endpoint":
+					row.Endpoint = l.GetValue()
+				case "completeness":
+					row.Completeness = l.GetValue()
+				case "source":
+					row.Source = l.GetValue()
+				}
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	}
+
 	type tokenRateStat struct {
 		Route          string  `json:"route,omitempty"`
 		Protocol       string  `json:"protocol,omitempty"`
@@ -237,6 +283,8 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	routeDurations := collectDurationStats(telemetrypkg.RouteRequestDuration)
 	providerTokens := collectTokenStats(telemetrypkg.ProviderTokenCounter)
 	routeTokens := collectTokenStats(telemetrypkg.RouteTokenCounter)
+	providerTokenObservations := collectTokenObservationStats(telemetrypkg.ProviderTokenObservationCounter)
+	routeTokenObservations := collectTokenObservationStats(telemetrypkg.RouteTokenObservationCounter)
 	providerTTFT := collectQuantiles(telemetrypkg.ProviderStreamTTFT, 0.95)
 	routeTTFT := collectQuantiles(telemetrypkg.RouteStreamTTFT, 0.95)
 	providerThroughput := collectQuantiles(telemetrypkg.ProviderCompletionThroughput, 0.99)
@@ -248,25 +296,28 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 
 	return map[string]any{
-		"requests_total":                 providerRequests,
-		"request_duration":               providerDurations,
-		"tokens_total":                   providerTokens,
-		"token_rate":                     providerRates,
-		"stream_ttft_p95_ms":             providerTTFT,
-		"throughput_p99_tokens":          providerThroughput,
-		"route_requests_total":           routeRequests,
-		"route_request_duration":         routeDurations,
-		"route_tokens_total":             routeTokens,
-		"route_token_rate":               routeRates,
-		"route_stream_ttft_p95_ms":       routeTTFT,
-		"route_throughput_p99_tokens":    routeThroughput,
-		"provider_requests_total":        providerRequests,
-		"provider_request_duration":      providerDurations,
-		"provider_tokens_total":          providerTokens,
-		"provider_token_rate":            providerRates,
-		"provider_stream_ttft_p95_ms":    providerTTFT,
-		"provider_throughput_p99_tokens": providerThroughput,
-		"realtime":                       realtime,
+		"requests_total":                    providerRequests,
+		"request_duration":                  providerDurations,
+		"tokens_total":                      providerTokens,
+		"token_observations_total":          providerTokenObservations,
+		"token_rate":                        providerRates,
+		"stream_ttft_p95_ms":                providerTTFT,
+		"throughput_p99_tokens":             providerThroughput,
+		"route_requests_total":              routeRequests,
+		"route_request_duration":            routeDurations,
+		"route_tokens_total":                routeTokens,
+		"route_token_observations_total":    routeTokenObservations,
+		"route_token_rate":                  routeRates,
+		"route_stream_ttft_p95_ms":          routeTTFT,
+		"route_throughput_p99_tokens":       routeThroughput,
+		"provider_requests_total":           providerRequests,
+		"provider_request_duration":         providerDurations,
+		"provider_tokens_total":             providerTokens,
+		"provider_token_observations_total": providerTokenObservations,
+		"provider_token_rate":               providerRates,
+		"provider_stream_ttft_p95_ms":       providerTTFT,
+		"provider_throughput_p99_tokens":    providerThroughput,
+		"realtime":                          realtime,
 	}
 }
 
@@ -332,34 +383,41 @@ func CollectDashboardCounters(outputRates *telemetrypkg.OutputRateTracker) telem
 	return sample
 }
 
-func ListAPIKeysPayload(apiKeys map[string]config.SecretString) []map[string]any {
+func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any {
 	type usageStats struct {
-		TotalRequests    int64 `json:"total_requests"`
-		SuccessRequests  int64 `json:"success_requests"`
-		FailureRequests  int64 `json:"failure_requests"`
-		PromptTokens     int64 `json:"prompt_tokens"`
-		CompletionTokens int64 `json:"completion_tokens"`
+		TotalRequests        int64 `json:"total_requests"`
+		SuccessRequests      int64 `json:"success_requests"`
+		FailureRequests      int64 `json:"failure_requests"`
+		PromptTokens         int64 `json:"prompt_tokens"`
+		CompletionTokens     int64 `json:"completion_tokens"`
+		ExactUsageRequests   int64 `json:"exact_usage_requests"`
+		PartialUsageRequests int64 `json:"partial_usage_requests"`
+		MissingUsageRequests int64 `json:"missing_usage_requests"`
 	}
 
 	usageByKey := map[string]*usageStats{}
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyRequestCounter) {
 		var key string
+		var route string
 		var status string
 		for _, label := range met.GetLabel() {
 			switch label.GetName() {
 			case "api_key":
 				key = label.GetValue()
+			case "route":
+				route = label.GetValue()
 			case "status":
 				status = label.GetValue()
 			}
 		}
-		if key == "" {
+		if key == "" || route == "" {
 			continue
 		}
-		row := usageByKey[key]
+		usageKey := route + "\x00" + key
+		row := usageByKey[usageKey]
 		if row == nil {
 			row = &usageStats{}
-			usageByKey[key] = row
+			usageByKey[usageKey] = row
 		}
 		value := int64(met.GetCounter().GetValue())
 		row.TotalRequests += value
@@ -373,22 +431,26 @@ func ListAPIKeysPayload(apiKeys map[string]config.SecretString) []map[string]any
 
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyTokenCounter) {
 		var key string
+		var route string
 		var typ string
 		for _, label := range met.GetLabel() {
 			switch label.GetName() {
 			case "api_key":
 				key = label.GetValue()
+			case "route":
+				route = label.GetValue()
 			case "type":
 				typ = label.GetValue()
 			}
 		}
-		if key == "" {
+		if key == "" || route == "" {
 			continue
 		}
-		row := usageByKey[key]
+		usageKey := route + "\x00" + key
+		row := usageByKey[usageKey]
 		if row == nil {
 			row = &usageStats{}
-			usageByKey[key] = row
+			usageByKey[usageKey] = row
 		}
 		value := int64(met.GetCounter().GetValue())
 		switch typ {
@@ -399,16 +461,57 @@ func ListAPIKeysPayload(apiKeys map[string]config.SecretString) []map[string]any
 		}
 	}
 
-	keys := make([]map[string]any, 0, len(apiKeys))
-	for name := range apiKeys {
-		usage := usageByKey[name]
-		if usage == nil {
-			usage = &usageStats{}
+	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyTokenObservationCounter) {
+		var key string
+		var route string
+		var completeness string
+		for _, label := range met.GetLabel() {
+			switch label.GetName() {
+			case "api_key":
+				key = label.GetValue()
+			case "route":
+				route = label.GetValue()
+			case "completeness":
+				completeness = label.GetValue()
+			}
 		}
-		keys = append(keys, map[string]any{
-			"name":  name,
-			"usage": usage,
-		})
+		if key == "" || route == "" {
+			continue
+		}
+		usageKey := route + "\x00" + key
+		row := usageByKey[usageKey]
+		if row == nil {
+			row = &usageStats{}
+			usageByKey[usageKey] = row
+		}
+		value := int64(met.GetCounter().GetValue())
+		switch completeness {
+		case "exact":
+			row.ExactUsageRequests += value
+		case "partial":
+			row.PartialUsageRequests += value
+		case "missing":
+			row.MissingUsageRequests += value
+		}
+	}
+
+	keyCount := 0
+	for _, route := range routes {
+		keyCount += len(route.APIKeys)
+	}
+	keys := make([]map[string]any, 0, keyCount)
+	for prefix, route := range routes {
+		for name := range route.APIKeys {
+			usage := usageByKey[prefix+"\x00"+name]
+			if usage == nil {
+				usage = &usageStats{}
+			}
+			keys = append(keys, map[string]any{
+				"route": prefix,
+				"name":  name,
+				"usage": usage,
+			})
+		}
 	}
 	return keys
 }

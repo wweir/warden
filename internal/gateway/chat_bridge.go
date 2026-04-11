@@ -14,6 +14,7 @@ import (
 	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -89,7 +90,7 @@ func (g *Gateway) handleChatBridge(
 					chatReq.Model = session.target.UpstreamModel
 					continue
 				}
-				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
 				return
 			}
@@ -113,7 +114,15 @@ func (g *Gateway) handleChatBridge(
 			}
 
 			observepkg.RunRouteToolHooks(r.Context(), g.cfg.Addr, observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true), spec.streamToolHookOp)
-			observepkg.RecordInferenceLog(logParams, clientBody, errMsg, spec.streamLogAssembler, g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(
+				logParams,
+				clientBody,
+				errMsg,
+				spec.streamLogAssembler,
+				observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
+				g.RecordTokenMetrics,
+				g.recordAndBroadcast,
+			)
 			return
 		}
 
@@ -127,7 +136,7 @@ func (g *Gateway) handleChatBridge(
 				chatReq.Model = session.target.UpstreamModel
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, forwardErr.Error(), nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, forwardErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, forwardErr)
 			return
 		}
@@ -141,7 +150,7 @@ func (g *Gateway) handleChatBridge(
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
 		spec.runNonStreamToolHooks(r.Context(), chatResp)
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
 		return
 	}
 }

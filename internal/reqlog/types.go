@@ -12,6 +12,7 @@ type Record struct {
 	Route       string          `json:"route"`
 	Endpoint    string          `json:"endpoint"`
 	Model       string          `json:"model"`
+	APIKey      string          `json:"api_key,omitempty"`
 	Stream      bool            `json:"stream"`
 	Pending     bool            `json:"pending,omitempty"`
 	Provider    string          `json:"provider"`
@@ -21,8 +22,17 @@ type Record struct {
 	Fingerprint string          `json:"fingerprint,omitempty"`
 	Request     json.RawMessage `json:"request"`
 	Response    json.RawMessage `json:"response,omitempty"`
+	TokenUsage  *TokenUsage     `json:"token_usage,omitempty"`
 	Failovers   []Failover      `json:"failovers,omitempty"`
 	Steps       []Step          `json:"steps,omitempty"`
+}
+
+type TokenUsage struct {
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	TotalTokens      int64  `json:"total_tokens,omitempty"`
+	Source           string `json:"source,omitempty"`
+	Completeness     string `json:"completeness,omitempty"`
 }
 
 // Step records one intermediate round-trip during tool call execution.

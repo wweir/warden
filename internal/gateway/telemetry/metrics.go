@@ -1,7 +1,6 @@
 package telemetry
 
 import (
-	"encoding/json"
 	"math"
 	"net/http"
 	"time"
@@ -9,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/tidwall/gjson"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	sel "github.com/wweir/warden/internal/selector"
 )
 
@@ -53,6 +52,18 @@ var (
 	APIKeyTokenCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_apikey_tokens_total", Help: "Total tokens processed by client API key"},
 		[]string{"api_key", "route", "protocol", "route_model", "matched_pattern", "type"},
+	)
+	RouteTokenObservationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "warden_route_token_observations_total", Help: "Token usage observation coverage by route model"},
+		[]string{"route", "protocol", "route_model", "matched_pattern", "endpoint", "completeness", "source"},
+	)
+	ProviderTokenObservationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "warden_provider_token_observations_total", Help: "Token usage observation coverage by provider model"},
+		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "completeness", "source"},
+	)
+	APIKeyTokenObservationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "warden_apikey_token_observations_total", Help: "Token usage observation coverage by client API key"},
+		[]string{"api_key", "route", "protocol", "route_model", "matched_pattern", "endpoint", "completeness", "source"},
 	)
 	RouteTokenRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "warden_route_token_rate", Help: "Tokens per second for the last request by route model"},
@@ -110,6 +121,7 @@ func init() {
 		RouteRequestDuration, ProviderRequestDuration,
 		ProviderHealth, ProviderSuppressed,
 		RouteTokenCounter, ProviderTokenCounter, APIKeyTokenCounter,
+		RouteTokenObservationCounter, ProviderTokenObservationCounter, APIKeyTokenObservationCounter,
 		RouteTokenRate, ProviderTokenRate,
 		RouteStreamTTFT, ProviderStreamTTFT,
 		RouteCompletionThroughput, ProviderCompletionThroughput,
@@ -165,12 +177,42 @@ func RecordStreamErrorMetric(labels Labels, phase string) {
 	ProviderStreamErrors.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, phase).Inc()
 }
 
-type TokenUsage struct {
-	PromptTokens     int64
-	CompletionTokens int64
-}
+func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, durationMs int64, outputRates *OutputRateTracker, now time.Time) {
+	RouteTokenObservationCounter.WithLabelValues(
+		labels.Route,
+		labels.Protocol,
+		labels.RouteModel,
+		labels.MatchedPattern,
+		labels.Endpoint,
+		usage.CompletenessLabel(),
+		usage.SourceLabel(),
+	).Inc()
+	ProviderTokenObservationCounter.WithLabelValues(
+		labels.Provider,
+		labels.ProviderModel,
+		labels.Route,
+		labels.RouteModel,
+		labels.MatchedPattern,
+		labels.Endpoint,
+		usage.CompletenessLabel(),
+		usage.SourceLabel(),
+	).Inc()
+	if labels.APIKey != "" {
+		APIKeyTokenObservationCounter.WithLabelValues(
+			labels.APIKey,
+			labels.Route,
+			labels.Protocol,
+			labels.RouteModel,
+			labels.MatchedPattern,
+			labels.Endpoint,
+			usage.CompletenessLabel(),
+			usage.SourceLabel(),
+		).Inc()
+	}
+	if !usage.IsExact() {
+		return
+	}
 
-func RecordTokenMetrics(labels Labels, usage TokenUsage, durationMs int64, outputRates *OutputRateTracker, now time.Time) {
 	recordTokenType := func(count int64, typ string) {
 		if count <= 0 {
 			return
@@ -260,35 +302,4 @@ func HistogramQuantile(quantile float64, buckets []*dto.Bucket) float64 {
 		prevCount = cum
 	}
 	return prevUpper
-}
-
-func ExtractTokenUsage(respBody json.RawMessage) TokenUsage {
-	if len(respBody) == 0 {
-		return TokenUsage{}
-	}
-
-	jsonStr := string(respBody)
-	usage := gjson.Get(jsonStr, "usage")
-	if usage.Exists() && usage.IsObject() {
-		promptTokens := usage.Get("prompt_tokens")
-		completionTokens := usage.Get("completion_tokens")
-
-		if promptTokens.Exists() || completionTokens.Exists() {
-			return TokenUsage{
-				PromptTokens:     int64(promptTokens.Int()),
-				CompletionTokens: int64(completionTokens.Int()),
-			}
-		}
-	}
-
-	inputTokens := gjson.Get(jsonStr, "usage.input_tokens")
-	outputTokens := gjson.Get(jsonStr, "usage.output_tokens")
-	if inputTokens.Exists() || outputTokens.Exists() {
-		return TokenUsage{
-			PromptTokens:     int64(inputTokens.Int()),
-			CompletionTokens: int64(outputTokens.Int()),
-		}
-	}
-
-	return TokenUsage{}
 }

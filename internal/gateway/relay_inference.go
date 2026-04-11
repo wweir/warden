@@ -11,6 +11,7 @@ import (
 	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 )
 
@@ -68,7 +69,7 @@ func (g *Gateway) handleRelayInference(
 				if session.handleError(sendErr) {
 					continue
 				}
-				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
 				return true
 			}
@@ -92,7 +93,15 @@ func (g *Gateway) handleRelayInference(
 			}
 
 			spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
-			observepkg.RecordInferenceLog(logParams, rawResp, errMsg, spec.streamAssembler, g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(
+				logParams,
+				rawResp,
+				errMsg,
+				spec.streamAssembler,
+				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, rawResp),
+				g.RecordTokenMetrics,
+				g.recordAndBroadcast,
+			)
 			return true
 		}
 
@@ -109,7 +118,7 @@ func (g *Gateway) handleRelayInference(
 			if session.handleError(sendErr) {
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, sendErr)
 			return true
 		}
@@ -117,7 +126,7 @@ func (g *Gateway) handleRelayInference(
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
 		spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
 		spec.writeNonStream(w, respBody)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, g.RecordTokenMetrics, g.recordAndBroadcast)
+		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
 		return true
 	}
 }

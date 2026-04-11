@@ -8,6 +8,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 )
 
 // RecordFailoverMetric records a failover event in Prometheus metrics.
@@ -21,7 +22,7 @@ func (g *Gateway) RecordStreamErrorMetric(labels telemetrypkg.Labels, phase stri
 }
 
 // RecordTokenMetrics records token usage metrics for a request.
-func (g *Gateway) RecordTokenMetrics(labels telemetrypkg.Labels, usage telemetrypkg.TokenUsage, durationMs int64) {
+func (g *Gateway) RecordTokenMetrics(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64) {
 	telemetrypkg.RecordTokenMetrics(labels, usage, durationMs, g.outputRates, time.Now())
 }
 

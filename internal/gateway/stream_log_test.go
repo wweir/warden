@@ -80,6 +80,15 @@ func TestGatewayLogsResponsesStreamAsFinalResponseObject(t *testing.T) {
 	if got := gjson.GetBytes(record.Response, "output.0.content.0.text").String(); got != "ok" {
 		t.Fatalf("logged text = %q, want ok", got)
 	}
+	if record.TokenUsage == nil {
+		t.Fatal("expected token_usage in log record")
+	}
+	if record.TokenUsage.PromptTokens != 3 || record.TokenUsage.CompletionTokens != 5 {
+		t.Fatalf("unexpected token_usage: %+v", record.TokenUsage)
+	}
+	if record.TokenUsage.Completeness != "exact" || record.TokenUsage.Source != "reported_sse" {
+		t.Fatalf("unexpected token_usage metadata: %+v", record.TokenUsage)
+	}
 }
 
 func TestGatewayPublishesPendingStreamLogBeforeUpstreamCompletes(t *testing.T) {
