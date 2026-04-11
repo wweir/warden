@@ -13,7 +13,7 @@ default: test build
 .PHONY: default test web build package run install clean
 .NOTPARALLEL: default
 
-test:
+test: web
 	${GO} vet ./...
 	${GO} test ./...
 
