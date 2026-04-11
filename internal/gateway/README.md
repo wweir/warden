@@ -5,7 +5,7 @@
 `internal/gateway` contains the core HTTP gateway runtime and composes the admin API package:
 
 - Registers route handlers for proxy, chat completions, responses, admin API, and Prometheus metrics.
-- Validates client API keys for route traffic when `config.api_keys` is non-empty, then strips client auth headers before upstream forwarding.
+- Validates client API keys only when the matched route config has `route.api_keys`, then strips client auth headers before upstream forwarding.
 - Selects route-model upstream targets, records outcomes, and runs route-scoped tool-call hooks on returned tool calls.
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
@@ -66,6 +66,7 @@
 - `internal/gateway/admin` now keeps router/auth wiring separate from config/status/provider/route/API-key handlers, so admin-only changes stay localized instead of growing one monolithic entry file.
 - `internal/gateway/requestctx`: owns request-context helpers for original client requests, route hooks, and authenticated API key labels.
 - `internal/gateway/snapshot`: owns admin-facing snapshot assembly for dashboard metrics and API key usage payloads.
+- `internal/gateway/tokenusage`: owns protocol-aware token usage observation for JSON and SSE responses.
 - `internal/gateway/upstream`: owns protocol endpoint mapping, upstream request execution, body conversion, encoding negotiation, and forwarded-header sanitization.
 - `internal/gateway/telemetry`: owns Prometheus collectors, metric helpers, dashboard rolling store, and output-rate freshness tracking.
 - `PromMiddleware`: records request-level Prometheus metrics for business endpoints.
@@ -81,8 +82,10 @@
 - Dashboard and API key snapshots stay in the root package as admin callbacks, but Prometheus collector ownership and rolling time-series state now live in `internal/gateway/telemetry`.
 - Gateway root no longer keeps one-line snapshot wrapper methods that only forwarded to `internal/gateway/snapshot`; callback wiring now points at the snapshot package directly.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
+- Token usage observation is extracted before metrics/logging fan-out, so route/provider/API-key counters, throughput, and request logs all consume the same normalized observation result.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
 - Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion; Responses stream tool hooks also recover function calls from incremental events when `response.completed` never arrives.
+- Exact token counters and throughput only advance when usage observation is `exact`; separate `*_token_observations_total` counters expose `exact|partial|missing` coverage by route/provider/API key.
 - Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
 
 ## Admin Telemetry Flow

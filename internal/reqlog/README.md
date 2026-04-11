@@ -47,8 +47,23 @@ type Record struct {
     Fingerprint string          // 会话指纹，见 BuildFingerprint
     Request     json.RawMessage
     Response    json.RawMessage
+    TokenUsage  *TokenUsage     // 归一化后的 token usage 观测结果
     Failovers   []Failover      // 同一请求内的上游切换轨迹
     Steps       []Step          // 工具调用中间轮次
+}
+```
+
+### TokenUsage
+
+请求级 token usage 观测结果：
+
+```go
+type TokenUsage struct {
+    PromptTokens     int64
+    CompletionTokens int64
+    TotalTokens      int64
+    Source           string // reported_json / reported_sse / bridge_normalized
+    Completeness     string // exact / partial / missing
 }
 ```
 

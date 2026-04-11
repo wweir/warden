@@ -205,8 +205,9 @@ curl http://localhost:8080/openai/chat/completions \
 - `route.protocol` 必须显式声明，每个 route 只能有一种协议
 - `route.exact_models` 适合精确声明模型
 - `route.wildcard_models` 适合做通配规则
-- `api_keys` 为空时，网关不校验客户端 API Key
-- `admin_password`、`api_keys`、`provider.*.api_key` 读取时兼容明文和 base64，写回配置时统一写为 base64
+- `route.<prefix>.api_keys` 为空时，该路由不校验客户端 API Key；设置后只接受该路由自己的 key
+- 顶层 `api_keys` 已废弃，迁移到 `route.<prefix>.api_keys`
+- `admin_password`、`route.<prefix>.api_keys`、`provider.*.api_key` 读取时兼容明文和 base64，写回配置时统一写为 base64
 
 ## 项目结构
 

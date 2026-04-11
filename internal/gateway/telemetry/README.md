@@ -8,5 +8,7 @@
 - metric label shaping and response-header projection
 - dashboard rolling time-series store
 - in-memory output-rate tracker used by dashboard snapshots
+- token observation coverage counters and exact-token throughput accounting
 
 The package is intentionally runtime-agnostic. It does not select providers, run hooks, or own HTTP routing.
+Protocol-specific usage parsing lives in `internal/gateway/tokenusage`.
