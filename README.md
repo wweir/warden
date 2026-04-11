@@ -81,6 +81,11 @@ make build
 - 输出 `bin/warden`
 - 通过 `ldflags` 注入版本和构建日期
 
+GitHub Actions 也复用同一套入口：
+
+- 普通 `push` / `pull_request`：执行 `make test` 和 `make build`
+- 推送 tag：在校验通过后执行 `make package`，并把归档产物发布到 GitHub Release
+
 ### 2. 准备配置
 
 完整示例见 [config/warden.example.yaml](/home/wweir/Mine/warden/config/warden.example.yaml)。

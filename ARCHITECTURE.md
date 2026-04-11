@@ -384,4 +384,6 @@ Admin SSE 接口统一返回 `X-Accel-Buffering: no` 与 `Cache-Control: no-cach
 - `make web` 构建前端静态资源
 - `make build` 使用 `ldflags` 注入版本与构建日期
 - `make test` 运行 `go vet` 与 `go test`
+- `make package` 交叉编译 release 归档，供 GitHub tag 发布流程上传到 GitHub Release
+- `.github/workflows/ci.yml` 对普通 `push` / `pull_request` 只做编译与测试；tag push 在校验通过后发布 release
 - 启动时配置加载仍走 `feconf`，但会覆盖默认 decode hook，避免上游默认值 hook 将显式 `false` 误判为零值并在 `prompt_enabled: false` 这类 `*bool` 字段上触发解码 panic
