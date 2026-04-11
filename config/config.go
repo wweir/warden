@@ -76,6 +76,7 @@ func (c *ConfigStruct) LogValue() slog.Value {
 
 type ProviderConfig struct {
 	Name              string            `json:"-"` // populated from map key
+	Disabled          bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
 	URL               string            `json:"url" usage:"Upstream LLM base URL"`
 	Family            string            `json:"family" usage:"Required provider adapter family: openai, anthropic, ollama, qwen, copilot"`
 	Protocol          string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
@@ -210,7 +211,7 @@ type HookRuleConfig struct {
 // HookConfig defines a single hook execution target.
 type HookConfig struct {
 	Type    string   `json:"type" usage:"Hook type: exec, ai or http"`
-	When    string   `json:"when" usage:"Hook timing: pre (can block) or post (audit only)"`
+	When    string   `json:"when" usage:"Hook timing: block (reject unsafe tool calls in non-stream responses) or async (audit only, log results)"` // "pre"/"post" accepted as backward-compatible aliases
 	Timeout string   `json:"timeout" usage:"Hook execution timeout (default: 5s)"`
 	Command string   `json:"command" usage:"Command to execute (exec type only)"`
 	Args    []string `json:"args" usage:"Command arguments (exec type only)"`

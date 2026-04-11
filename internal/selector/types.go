@@ -109,6 +109,7 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 	states := make(map[string]*providerState, len(cfg.Provider))
 	for name, prov := range cfg.Provider {
 		states[name] = &providerState{
+			manualSuppress:   prov.Disabled,
 			displayProtocols: append([]string(nil), config.SupportedRouteProtocols(prov)...),
 		}
 	}

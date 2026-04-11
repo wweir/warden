@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -128,11 +129,43 @@ func callGateway(ctx context.Context, gatewayAddr string, hook config.HookConfig
 		return "", fmt.Errorf("response has no choices")
 	}
 
-	content, ok := chatResp.Choices[0].Message.Content.(string)
-	if !ok {
-		return "", fmt.Errorf("response content is not a string")
+	content, err := extractAssistantText(chatResp.Choices[0].Message.Content)
+	if err != nil {
+		return "", err
 	}
 	return content, nil
+}
+
+func extractAssistantText(content any) (string, error) {
+	switch v := content.(type) {
+	case string:
+		return v, nil
+	case []any:
+		var parts []string
+		for idx, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("response content[%d] is not an object", idx)
+			}
+			partType, _ := obj["type"].(string)
+			if partType != "" && !slices.Contains([]string{"text", "output_text"}, partType) {
+				continue
+			}
+			text, _ := obj["text"].(string)
+			if text == "" {
+				text, _ = obj["content"].(string)
+			}
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("response content array has no text parts")
+		}
+		return strings.Join(parts, ""), nil
+	default:
+		return "", fmt.Errorf("response content type %T is not supported", content)
+	}
 }
 
 func timeoutOrDefault(d, fallback time.Duration) time.Duration {

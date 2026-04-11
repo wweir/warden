@@ -39,8 +39,11 @@ func runExec(ctx context.Context, idx int, hook config.HookConfig, hctx CallCont
 
 	if err := cmd.Run(); err != nil {
 		// execution error: fail-open
-		slog.Warn("Hook exec: execution error, passing through", "hook_index", idx, "error", err,
-			"stderr", stderr.String())
+		slog.Warn("Hook exec: execution error, passing through",
+			"hook_index", idx,
+			"error", err,
+			"stdout_bytes", stdout.Len(),
+			"stderr_bytes", stderr.Len())
 		r.stdout = stdout.String()
 		r.stderr = stderr.String()
 		return r
@@ -74,7 +77,7 @@ func parseHookResponse(text string, r *hookResult) {
 		}
 	}
 
-	if !resp.Allow {
+	if resp.Allow != nil && !*resp.Allow {
 		r.rejected = true
 		r.reason = resp.Reason
 	}

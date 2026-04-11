@@ -173,7 +173,8 @@ func (h *Handler) HandleProviderSuppress(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if _, exists := h.cfg.Provider[body.Name]; !exists {
+	prov, exists := h.cfg.Provider[body.Name]
+	if !exists {
 		http.Error(w, "unknown provider: "+body.Name, http.StatusNotFound)
 		return
 	}
@@ -182,9 +183,23 @@ func (h *Handler) HandleProviderSuppress(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	// Persist disabled state to config file
+	prov.Disabled = body.Suppress
+	var warning string
+	yamlData, err := h.marshalRuntimeConfigYAML()
+	if err != nil {
+		warning = "runtime state updated but config persist failed: " + err.Error()
+	} else if err := h.writeConfigFile(yamlData); err != nil {
+		warning = "runtime state updated but config persist failed: " + err.Error()
+	}
+
+	resp := map[string]any{
 		"name":              body.Name,
 		"manual_suppressed": body.Suppress,
-	})
+	}
+	if warning != "" {
+		resp["warning"] = warning
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }

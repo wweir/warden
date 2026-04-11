@@ -13,6 +13,7 @@ import (
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 type relayInferenceSpec struct {
@@ -24,7 +25,7 @@ type relayInferenceSpec struct {
 	prepareBody     func(providerProtocol string, rawBody []byte) ([]byte, error)
 	streamRelay     func(src io.Reader, dst http.ResponseWriter) ([]byte, error)
 	streamAssembler observepkg.StreamLogAssembler
-	runToolHooks    func(ctx context.Context, providerProtocol string, respBody []byte, stream bool)
+	runToolHooks    func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn)
 	writeNonStream  func(w http.ResponseWriter, respBody []byte)
 }
 
@@ -69,7 +70,7 @@ func (g *Gateway) handleRelayInference(
 				if session.handleError(sendErr) {
 					continue
 				}
-				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
+				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
 				return true
 			}
@@ -92,14 +93,31 @@ func (g *Gateway) handleRelayInference(
 				g.selector.RecordOutcome(session.provider.Name, nil, latency)
 			}
 
-			spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
+			_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
+			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
+				if len(asyncVerdicts) == 0 {
+					return
+				}
+				observepkg.RecordInferenceLog(
+					completedLogParams,
+					rawResp,
+					errMsg,
+					spec.streamAssembler,
+					observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, rawResp),
+					nil,
+					append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
+					g.recordAndBroadcast,
+				)
+			})
 			observepkg.RecordInferenceLog(
-				logParams,
+				completedLogParams,
 				rawResp,
 				errMsg,
 				spec.streamAssembler,
 				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, rawResp),
 				g.RecordTokenMetrics,
+				blockVerdicts,
 				g.recordAndBroadcast,
 			)
 			return true
@@ -118,15 +136,31 @@ func (g *Gateway) handleRelayInference(
 			if session.handleError(sendErr) {
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, sendErr)
 			return true
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
-		spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
+		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
 		spec.writeNonStream(w, respBody)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
+		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
+			if len(asyncVerdicts) == 0 {
+				return
+			}
+			observepkg.RecordInferenceLog(
+				completedLogParams,
+				respBody,
+				"",
+				nil,
+				observeJSONTokenUsage(respBody),
+				nil,
+				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
+				g.recordAndBroadcast,
+			)
+		})
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }

@@ -16,6 +16,7 @@ import (
 	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/pkg/protocol/openai"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // handleResponses handles Responses API requests (POST /*/responses).
@@ -63,8 +64,29 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			prepareBody: func(_ string, rawBody []byte) ([]byte, error) {
 				return rawBody, nil
 			},
-			runToolHooks: func(ctx context.Context, _ string, respBody []byte, stream bool) {
-				observepkg.RunRouteToolHooks(ctx, g.cfg.Addr, observepkg.ParseResponsesToolCalls(respBody, stream), "Responses: failed to run tool hooks")
+			runToolHooks: func(ctx context.Context, _ string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn) {
+				calls := observepkg.ParseResponsesToolCalls(respBody, stream)
+				if stream {
+					return respBody, nil, func(emit func([]toolhook.HookVerdict)) {
+						if emit == nil {
+							return
+						}
+						go func() {
+							emit(observepkg.RunDegradedAsyncToolHooks(ctx, g.cfg.Addr, calls))
+						}()
+					}
+				}
+
+				blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+				respBody = observepkg.InjectResponsesBlockVerdicts(respBody, blockVerdicts)
+				return respBody, blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
+					if emit == nil {
+						return
+					}
+					go func() {
+						emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+					}()
+				}
 			},
 			writeStream: func(w http.ResponseWriter, _ string, respBody []byte) {
 				writeEventStreamHeaders(w)
@@ -94,7 +116,6 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 		serviceProtocol:   config.RouteProtocolResponsesStateless,
 		endpoint:          "responses",
 		streamWarn:        "ResponsesToChat stream terminated early",
-		streamToolHookOp:  "ResponsesToChat stream: failed to run tool hooks",
 		writeResponseWarn: "Failed to write converted response",
 		buildChatRequest: func(rawReqBody []byte) (openai.ChatCompletionRequest, string, error) {
 			var respReq openai.ResponsesRequest
@@ -114,9 +135,19 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			assembled, err := openai.AssembleResponsesStream(respBody)
 			return assembled, respBody, err
 		},
-		runNonStreamToolHooks: func(ctx context.Context, chatResp openai.ChatCompletionResponse) {
-			observepkg.RunFirstChoiceToolHooks(ctx, g.cfg.Addr, chatResp, "ResponsesToChat: failed to run tool hooks")
+		runNonStreamToolHooks: func(ctx context.Context, chatResp openai.ChatCompletionResponse) ([]toolhook.HookVerdict, asyncHookFn) {
+			calls := observepkg.ChatToolCalls(chatResp)
+			blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+			return blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
+				if emit == nil {
+					return
+				}
+				go func() {
+					emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+				}()
+			}
 		},
+		injectBlockVerdicts: observepkg.InjectResponsesBlockVerdicts,
 		convertNonStreamResponse: func(chatResp openai.ChatCompletionResponse, publicModel string) ([]byte, error) {
 			respResp, err := openai.ChatResponseToResponsesResponse(chatResp, publicModel)
 			if err != nil {

@@ -132,6 +132,7 @@ func (h *Handler) RegisterRoutes(router *httprouter.Router) {
 	router.Handle(http.MethodGet, "/_admin/*filepath", adminHandler)
 	router.Handle(http.MethodPut, "/_admin/*filepath", adminHandler)
 	router.Handle(http.MethodPost, "/_admin/*filepath", adminHandler)
+	router.Handle(http.MethodDelete, "/_admin/*filepath", adminHandler)
 }
 
 func (h *Handler) basicAuth(next httprouter.Handle) httprouter.Handle {

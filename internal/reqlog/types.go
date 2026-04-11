@@ -3,28 +3,31 @@ package reqlog
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // Record holds structured data for one request/response round-trip.
 type Record struct {
-	Timestamp   time.Time       `json:"timestamp"`
-	RequestID   string          `json:"request_id"`
-	Route       string          `json:"route"`
-	Endpoint    string          `json:"endpoint"`
-	Model       string          `json:"model"`
-	APIKey      string          `json:"api_key,omitempty"`
-	Stream      bool            `json:"stream"`
-	Pending     bool            `json:"pending,omitempty"`
-	Provider    string          `json:"provider"`
-	UserAgent   string          `json:"user_agent,omitempty"`
-	DurationMs  int64           `json:"duration_ms"`
-	Error       string          `json:"error,omitempty"`
-	Fingerprint string          `json:"fingerprint,omitempty"`
-	Request     json.RawMessage `json:"request"`
-	Response    json.RawMessage `json:"response,omitempty"`
-	TokenUsage  *TokenUsage     `json:"token_usage,omitempty"`
-	Failovers   []Failover      `json:"failovers,omitempty"`
-	Steps       []Step          `json:"steps,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
+	RequestID    string                 `json:"request_id"`
+	Route        string                 `json:"route"`
+	Endpoint     string                 `json:"endpoint"`
+	Model        string                 `json:"model"`
+	APIKey       string                 `json:"api_key,omitempty"`
+	Stream       bool                   `json:"stream"`
+	Pending      bool                   `json:"pending,omitempty"`
+	Provider     string                 `json:"provider"`
+	UserAgent    string                 `json:"user_agent,omitempty"`
+	DurationMs   int64                  `json:"duration_ms"`
+	Error        string                 `json:"error,omitempty"`
+	Fingerprint  string                 `json:"fingerprint,omitempty"`
+	Request      json.RawMessage        `json:"request"`
+	Response     json.RawMessage        `json:"response,omitempty"`
+	TokenUsage   *TokenUsage            `json:"token_usage,omitempty"`
+	Failovers    []Failover             `json:"failovers,omitempty"`
+	Steps        []Step                 `json:"steps,omitempty"`
+	ToolVerdicts []toolhook.HookVerdict `json:"tool_verdicts,omitempty"`
 }
 
 type TokenUsage struct {

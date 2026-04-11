@@ -12,6 +12,7 @@ import (
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/pkg/protocol/openai"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // handleChatCompletion handles Chat Completion requests.
@@ -43,8 +44,29 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		prepareBody: func(providerProtocol string, rawBody []byte) ([]byte, error) {
 			return upstreampkg.MarshalProtocolRaw(providerProtocol, rawBody)
 		},
-		runToolHooks: func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) {
-			observepkg.RunRouteToolHooks(ctx, g.cfg.Addr, observepkg.ParseChatToolCalls(providerProtocol, respBody, stream), "Chat: failed to run tool hooks")
+		runToolHooks: func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn) {
+			calls := observepkg.ParseChatToolCalls(providerProtocol, respBody, stream)
+			if stream {
+				return respBody, nil, func(emit func([]toolhook.HookVerdict)) {
+					if emit == nil {
+						return
+					}
+					go func() {
+						emit(observepkg.RunDegradedAsyncToolHooks(ctx, g.cfg.Addr, calls))
+					}()
+				}
+			}
+
+			blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+			respBody = observepkg.InjectChatBlockVerdicts(respBody, blockVerdicts)
+			return respBody, blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
+				if emit == nil {
+					return
+				}
+				go func() {
+					emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+				}()
+			}
 		},
 		writeStream: func(w http.ResponseWriter, providerProtocol string, respBody []byte) {
 			writeEventStreamHeaders(w)

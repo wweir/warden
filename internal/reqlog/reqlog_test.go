@@ -2,6 +2,8 @@ package reqlog
 
 import (
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -301,6 +303,42 @@ func TestBroadcasterPublishReplacesRecentByRequestID(t *testing.T) {
 	if recent[0].Provider != "openai" {
 		t.Fatalf("recent[0].Provider = %q, want openai", recent[0].Provider)
 	}
+}
+
+func TestBroadcasterUnsubscribeIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	ch := b.Subscribe()
+
+	b.Unsubscribe(ch)
+	b.Unsubscribe(ch)
+}
+
+func TestBroadcasterPublishConcurrentWithSubscribeAndUnsubscribe(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			b.Publish(Record{RequestID: fmt.Sprintf("req_%d", i)})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			ch := b.Subscribe()
+			b.Unsubscribe(ch)
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestAnthropicToolUseText(t *testing.T) {

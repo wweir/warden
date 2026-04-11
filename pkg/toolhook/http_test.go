@@ -38,7 +38,7 @@ func TestRunHTTPReject(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL: "http://example.com/hook",
@@ -77,7 +77,7 @@ func TestRunHTTPRetryAndTemplate(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL:          "http://example.com/hook",
@@ -115,7 +115,7 @@ func TestRunHTTPFailOpenOnInvalidJSONResponse(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL: "http://example.com/hook",
@@ -144,7 +144,7 @@ func TestRunHTTPContextCanceledBeforeRequest(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL:   "http://example.com/hook",
@@ -176,7 +176,7 @@ func TestRunHTTPDefaultContentType(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL: "http://example.com/hook",
@@ -205,7 +205,7 @@ func TestRunHTTPUsesWebhookTimeoutWithoutParentDeadline(t *testing.T) {
 
 	hook := config.HookConfig{
 		Type:    "http",
-		When:    "pre",
+		When:    "block",
 		Webhook: "audit",
 		WebhookCfg: &config.WebhookConfig{
 			URL:     "http://example.com/hook",

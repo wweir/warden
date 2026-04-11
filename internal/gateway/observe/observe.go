@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wweir/warden/config"
 	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
@@ -25,6 +26,7 @@ type StreamLogAssembler func(respBody []byte) (assembled []byte, fallback []byte
 
 type InferenceLogParams struct {
 	StartTime  time.Time
+	DurationMs int64 // < 0 means unset and should be computed from StartTime
 	RequestID  string
 	Route      string
 	Endpoint   string
@@ -41,6 +43,7 @@ type InferenceLogParams struct {
 func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, route, endpoint, model string, stream bool, requestBody []byte, failovers []reqlog.Failover, labels telemetrypkg.Labels, provider string) InferenceLogParams {
 	return InferenceLogParams{
 		StartTime:  startTime,
+		DurationMs: -1,
 		RequestID:  requestID,
 		Route:      route,
 		Endpoint:   endpoint,
@@ -55,23 +58,34 @@ func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, rout
 	}
 }
 
-func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), emit func(reqlog.Record)) {
+func (p InferenceLogParams) WithDuration(durationMs int64) InferenceLogParams {
+	p.DurationMs = durationMs
+	return p
+}
+
+func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), verdicts []toolhook.HookVerdict, emit func(reqlog.Record)) {
+	durationMs := params.DurationMs
+	if durationMs < 0 {
+		durationMs = time.Since(params.StartTime).Milliseconds()
+	}
+
 	rec := reqlog.Record{
-		Timestamp:   params.StartTime,
-		RequestID:   params.RequestID,
-		Route:       params.Route,
-		Endpoint:    params.Endpoint,
-		Model:       params.Model,
-		APIKey:      params.APIKey,
-		Stream:      params.Stream,
-		Provider:    params.Provider,
-		UserAgent:   params.UserAgent,
-		DurationMs:  time.Since(params.StartTime).Milliseconds(),
-		Error:       errMsg,
-		Fingerprint: reqlog.BuildFingerprint(params.Request),
-		Request:     params.Request,
-		Response:    respBody,
-		Failovers:   params.Failovers,
+		Timestamp:    params.StartTime,
+		RequestID:    params.RequestID,
+		Route:        params.Route,
+		Endpoint:     params.Endpoint,
+		Model:        params.Model,
+		APIKey:       params.APIKey,
+		Stream:       params.Stream,
+		Provider:     params.Provider,
+		UserAgent:    params.UserAgent,
+		DurationMs:   durationMs,
+		Error:        errMsg,
+		Fingerprint:  reqlog.BuildFingerprint(params.Request),
+		Request:      params.Request,
+		Response:     respBody,
+		Failovers:    params.Failovers,
+		ToolVerdicts: verdicts,
 	}
 
 	if len(respBody) > 0 && errMsg == "" {
@@ -129,10 +143,16 @@ func AssembleAnthropicStreamLog(respBody []byte) ([]byte, []byte, error) {
 	return assembled, respBody, nil
 }
 
-func RunRouteToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo, op string) {
+// RunBlockToolHooks runs block-mode hooks synchronously for each tool call.
+// Returns verdicts (one per tool call that had block hooks).
+func RunBlockToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	var verdicts []toolhook.HookVerdict
 	for _, call := range calls {
 		mcpName, toolName := splitObservedToolName(call.Name)
 		hooks := toolhook.MatchHooks(call.Name, requestctxpkg.RouteHooksFromContext(ctx))
+		if !hasHookWhen(hooks, "block") {
+			continue
+		}
 		hctx := toolhook.CallContext{
 			ToolName:  toolName,
 			FullName:  call.Name,
@@ -140,19 +160,92 @@ func RunRouteToolHooks(ctx context.Context, gatewayAddr string, calls []protocol
 			CallID:    call.ID,
 			Arguments: json.RawMessage(call.Arguments),
 		}
-		if err := toolhook.RunPre(ctx, gatewayAddr, hooks, hctx); err != nil {
-			slog.Warn(op, "tool", call.Name, "error", err)
-			continue
+		v := toolhook.RunBlock(ctx, gatewayAddr, hooks, hctx)
+		if v.Rejected {
+			slog.Warn("Tool hook blocked", "tool", call.Name, "reason", v.Reason)
 		}
-		go toolhook.RunPost(postHookContext(ctx), gatewayAddr, hooks, hctx)
+		verdicts = append(verdicts, v)
 	}
+	return verdicts
 }
 
-func RunFirstChoiceToolHooks(ctx context.Context, gatewayAddr string, resp openai.ChatCompletionResponse, op string) {
-	if len(resp.Choices) == 0 {
-		return
+// RunAsyncToolHooks runs async-mode hooks for each tool call.
+// Returns verdicts for audit logging when the caller chooses to wait.
+func RunAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	return runAsyncToolHooks(ctx, gatewayAddr, calls, false)
+}
+
+// RunDegradedAsyncToolHooks runs all matched hooks as async-mode audits.
+// This is used for streaming paths where block hooks cannot mutate the live response.
+func RunDegradedAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	return runAsyncToolHooks(ctx, gatewayAddr, calls, true)
+}
+
+func runAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo, degradeAll bool) []toolhook.HookVerdict {
+	var verdicts []toolhook.HookVerdict
+	for _, call := range calls {
+		mcpName, toolName := splitObservedToolName(call.Name)
+		hooks := toolhook.MatchHooks(call.Name, requestctxpkg.RouteHooksFromContext(ctx))
+		if degradeAll {
+			hooks = cloneHooksAsAsync(hooks)
+		}
+		if !hasHookWhen(hooks, "async") {
+			continue
+		}
+		hctx := toolhook.CallContext{
+			ToolName:  toolName,
+			FullName:  call.Name,
+			MCPName:   mcpName,
+			CallID:    call.ID,
+			Arguments: json.RawMessage(call.Arguments),
+		}
+		v := toolhook.RunAsync(postHookContext(ctx), gatewayAddr, hooks, hctx)
+		verdicts = append(verdicts, v)
 	}
-	RunRouteToolHooks(ctx, gatewayAddr, toolCallsToInfos(resp.Choices[0].Message.ToolCalls), op)
+	return verdicts
+}
+
+func hasHookWhen(hooks []config.HookConfig, when string) bool {
+	for _, hook := range hooks {
+		if hook.When == when {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneHooksAsAsync(hooks []config.HookConfig) []config.HookConfig {
+	if len(hooks) == 0 {
+		return nil
+	}
+	cloned := make([]config.HookConfig, len(hooks))
+	copy(cloned, hooks)
+	for i := range cloned {
+		cloned[i].When = "async"
+	}
+	return cloned
+}
+
+// RunRouteToolHooks runs both block and async hooks, returning all verdicts.
+// Block hooks run synchronously; async hooks run in the background.
+// This is a convenience wrapper for callers that need both.
+func RunRouteToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	blockVerdicts := RunBlockToolHooks(ctx, gatewayAddr, calls)
+	asyncVerdicts := RunAsyncToolHooks(ctx, gatewayAddr, calls)
+	return append(blockVerdicts, asyncVerdicts...)
+}
+
+// ChatToolCalls extracts tool call infos from all choices without running hooks.
+func ChatToolCalls(resp openai.ChatCompletionResponse) []protocol.ToolCallInfo {
+	if len(resp.Choices) == 0 {
+		return nil
+	}
+
+	var infos []protocol.ToolCallInfo
+	for _, choice := range resp.Choices {
+		infos = append(infos, toolCallsToInfos(choice.Message.ToolCalls)...)
+	}
+	return infos
 }
 
 func ParseChatToolCalls(protocolType string, body []byte, stream bool) []protocol.ToolCallInfo {
@@ -169,7 +262,7 @@ func ParseChatToolCalls(protocolType string, body []byte, stream bool) []protoco
 	if err != nil || len(resp.Choices) == 0 {
 		return nil
 	}
-	return toolCallsToInfos(resp.Choices[0].Message.ToolCalls)
+	return ChatToolCalls(resp)
 }
 
 func ParseResponsesToolCalls(body []byte, stream bool) []protocol.ToolCallInfo {

@@ -69,3 +69,52 @@ func TestAssembleResponsesStreamSupportsDataOnlyCompletedEvent(t *testing.T) {
 		t.Fatalf("assembled prompt tokens = %d, want 3", got)
 	}
 }
+
+func TestChatStreamParserSupportsIncrementalToolCallsWithoutFinish(t *testing.T) {
+	t.Parallel()
+
+	rawSSE := []byte(
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"\"}}]}}]}\n\n" +
+			"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]}}]}\n\n",
+	)
+
+	infos, err := (&ChatStreamParser{}).Parse(protocol.ParseEvents(rawSSE))
+	if err != nil {
+		t.Fatalf("ChatStreamParser.Parse error = %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(infos))
+	}
+	if infos[0].ID != "call_1" {
+		t.Fatalf("tool call id = %q, want call_1", infos[0].ID)
+	}
+	if infos[0].Name != "lookup" {
+		t.Fatalf("tool call name = %q, want lookup", infos[0].Name)
+	}
+	if infos[0].Arguments != "{\"city\":\"Paris\"}" {
+		t.Fatalf("tool call arguments = %q, want merged JSON", infos[0].Arguments)
+	}
+}
+
+func TestChatStreamParserSupportsMultipleChoices(t *testing.T) {
+	t.Parallel()
+
+	rawSSE := []byte(
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"\"}}]}},{\"index\":1,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"delete_file\",\"arguments\":\"\"}}]}}]}\n\n" +
+			"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]}},{\"index\":1,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"/\\\"}\"}}]}}]}\n\n",
+	)
+
+	infos, err := (&ChatStreamParser{}).Parse(protocol.ParseEvents(rawSSE))
+	if err != nil {
+		t.Fatalf("ChatStreamParser.Parse error = %v", err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(infos))
+	}
+	if infos[0].ID != "call_1" || infos[0].Name != "lookup" || infos[0].Arguments != "{\"city\":\"Paris\"}" {
+		t.Fatalf("infos[0] = %+v", infos[0])
+	}
+	if infos[1].ID != "call_2" || infos[1].Name != "delete_file" || infos[1].Arguments != "{\"path\":\"/\"}" {
+		t.Fatalf("infos[1] = %+v", infos[1])
+	}
+}

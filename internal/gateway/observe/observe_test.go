@@ -29,7 +29,7 @@ func TestRunRouteToolHooks_PostHooksOutliveRequestCancellation(t *testing.T) {
 		Match: "filesystem__write_file",
 		Hook: config.HookConfig{
 			Type: "http",
-			When: "post",
+			When: "async",
 			WebhookCfg: &config.WebhookConfig{
 				URL: server.URL,
 			},
@@ -41,11 +41,33 @@ func TestRunRouteToolHooks_PostHooksOutliveRequestCancellation(t *testing.T) {
 		ID:        "call_1",
 		Name:      "filesystem__write_file",
 		Arguments: `{"path":"/tmp/a"}`,
-	}}, "test")
+	}})
 
 	select {
 	case <-called:
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected post hook to run after request context cancellation")
+	}
+}
+
+func TestRunRouteToolHooksSkipsUnmatchedCallsInVerdicts(t *testing.T) {
+	t.Parallel()
+
+	ctx := requestctxpkg.WithRouteHooks(context.Background(), []*config.HookRuleConfig{{
+		Match: "filesystem__write_file",
+		Hook: config.HookConfig{
+			Type: "exec",
+			When: "block",
+		},
+	}})
+
+	verdicts := RunBlockToolHooks(ctx, "", []protocol.ToolCallInfo{{
+		ID:        "call_1",
+		Name:      "web_search",
+		Arguments: `{"q":"hello"}`,
+	}})
+
+	if len(verdicts) != 0 {
+		t.Fatalf("expected no verdicts for unmatched tool call, got %+v", verdicts)
 	}
 }

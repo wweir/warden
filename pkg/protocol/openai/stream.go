@@ -24,6 +24,7 @@ func (p *ChatStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallIn
 	}
 	type chunk struct {
 		Choices []struct {
+			Index int `json:"index"`
 			Delta struct {
 				ToolCalls []deltaToolCall `json:"tool_calls,omitempty"`
 			} `json:"delta"`
@@ -31,8 +32,13 @@ func (p *ChatStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallIn
 		} `json:"choices"`
 	}
 
-	toolCallMap := make(map[int]*ToolCall)
-	var finishReason string
+	type toolCallKey struct {
+		choice int
+		tool   int
+	}
+
+	toolCallMap := make(map[toolCallKey]*ToolCall)
+	var orderedKeys []toolCallKey
 
 	for _, evt := range events {
 		if evt.Data == "" || evt.Data == "[DONE]" {
@@ -47,37 +53,43 @@ func (p *ChatStreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallIn
 			continue
 		}
 
-		if c.Choices[0].FinishReason != "" {
-			finishReason = c.Choices[0].FinishReason
-		}
-
-		for _, dtc := range c.Choices[0].Delta.ToolCalls {
-			existing, ok := toolCallMap[dtc.Index]
-			if !ok {
-				toolCallMap[dtc.Index] = &ToolCall{
-					ID:   dtc.ID,
-					Type: dtc.Type,
-					Function: FunctionCall{
-						Name:      dtc.Function.Name,
-						Arguments: dtc.Function.Arguments,
-					},
+		for _, choice := range c.Choices {
+			for _, dtc := range choice.Delta.ToolCalls {
+				key := toolCallKey{choice: choice.Index, tool: dtc.Index}
+				existing, ok := toolCallMap[key]
+				if !ok {
+					toolCallMap[key] = &ToolCall{
+						ID:   dtc.ID,
+						Type: dtc.Type,
+						Function: FunctionCall{
+							Name:      dtc.Function.Name,
+							Arguments: dtc.Function.Arguments,
+						},
+					}
+					orderedKeys = append(orderedKeys, key)
+				} else {
+					existing.Function.Arguments += dtc.Function.Arguments
+					if dtc.ID != "" {
+						existing.ID = dtc.ID
+					}
+					if dtc.Type != "" {
+						existing.Type = dtc.Type
+					}
+					if dtc.Function.Name != "" {
+						existing.Function.Name = dtc.Function.Name
+					}
 				}
-			} else {
-				existing.Function.Arguments += dtc.Function.Arguments
 			}
 		}
 	}
 
-	if finishReason != "tool_calls" || len(toolCallMap) == 0 {
+	if len(toolCallMap) == 0 {
 		return nil, nil
 	}
 
 	var infos []protocol.ToolCallInfo
-	for i := range len(toolCallMap) {
-		tc, ok := toolCallMap[i]
-		if !ok {
-			continue
-		}
+	for _, key := range orderedKeys {
+		tc := toolCallMap[key]
 		infos = append(infos, protocol.ToolCallInfo{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,

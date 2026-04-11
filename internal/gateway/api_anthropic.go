@@ -15,6 +15,7 @@ import (
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // handleAnthropicMessages handles Anthropic Messages API requests.
@@ -57,8 +58,28 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 			},
 			streamRelay:     bridgepkg.RelayAnthropicStream,
 			streamAssembler: observepkg.AssembleAnthropicStreamLog,
-			runToolHooks: func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) {
-				observepkg.RunRouteToolHooks(ctx, g.cfg.Addr, observepkg.ParseChatToolCalls(providerProtocol, respBody, stream), "Anthropic: failed to run tool hooks")
+			runToolHooks: func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn) {
+				calls := observepkg.ParseChatToolCalls(providerProtocol, respBody, stream)
+				if stream {
+					return respBody, nil, func(emit func([]toolhook.HookVerdict)) {
+						if emit == nil {
+							return
+						}
+						go func() {
+							emit(observepkg.RunDegradedAsyncToolHooks(ctx, g.cfg.Addr, calls))
+						}()
+					}
+				}
+				blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+				respBody = observepkg.InjectAnthropicBlockVerdicts(respBody, blockVerdicts)
+				return respBody, blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
+					if emit == nil {
+						return
+					}
+					go func() {
+						emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+					}()
+				}
 			},
 			writeNonStream: func(w http.ResponseWriter, respBody []byte) {
 				writeJSONResponse(w, respBody, "Failed to write anthropic response")
@@ -84,7 +105,6 @@ func (g *Gateway) handleAnthropicMessagesViaChat(
 		serviceProtocol:   config.RouteProtocolAnthropic,
 		endpoint:          "messages",
 		streamWarn:        "AnthropicToChat stream terminated early",
-		streamToolHookOp:  "AnthropicToChat stream: failed to run tool hooks",
 		writeResponseWarn: "Failed to write anthropic bridge response",
 		buildChatRequest: func(rawReqBody []byte) (openai.ChatCompletionRequest, string, error) {
 			chatReq, err := anthropic.MessagesRequestToChatRequest(rawReqBody)
@@ -97,9 +117,19 @@ func (g *Gateway) handleAnthropicMessagesViaChat(
 			return bridgepkg.StreamChatAsAnthropic(src, dst)
 		},
 		streamLogAssembler: observepkg.AssembleAnthropicStreamLog,
-		runNonStreamToolHooks: func(ctx context.Context, chatResp openai.ChatCompletionResponse) {
-			observepkg.RunFirstChoiceToolHooks(ctx, g.cfg.Addr, chatResp, "AnthropicToChat: failed to run tool hooks")
+		runNonStreamToolHooks: func(ctx context.Context, chatResp openai.ChatCompletionResponse) ([]toolhook.HookVerdict, asyncHookFn) {
+			calls := observepkg.ChatToolCalls(chatResp)
+			blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+			return blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
+				if emit == nil {
+					return
+				}
+				go func() {
+					emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+				}()
+			}
 		},
+		injectBlockVerdicts: observepkg.InjectAnthropicBlockVerdicts,
 		convertNonStreamResponse: func(chatResp openai.ChatCompletionResponse, _ string) ([]byte, error) {
 			return anthropic.ChatResponseToMessagesResponse(chatResp)
 		},

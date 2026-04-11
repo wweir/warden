@@ -36,6 +36,7 @@ provider:
     url: "https://api.openai.com/v1"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"
+    # disabled: true  # manually suppress this provider from receiving traffic
     # responses_to_chat: true
 
   anthropic:
@@ -148,14 +149,14 @@ route:
 #       - match: "filesystem__write_*"
 #         hook:
 #           type: exec
-#           when: pre
+#           when: block
 #           timeout: "3s"
 #           command: "/usr/local/bin/check-write-permission"
 #           args: []
 #       - match: "web_search"
 #         hook:
 #           type: ai
-#           when: pre
+#           when: block
 #           timeout: "15s"
 #           route: "/openai"
 #           model: "gpt-4o-mini"
@@ -167,6 +168,6 @@ route:
 #       - match: "filesystem__delete_file"
 #         hook:
 #           type: http
-#           when: pre
+#           when: block
 #           timeout: "5s"
 #           webhook: "audit-webhook"

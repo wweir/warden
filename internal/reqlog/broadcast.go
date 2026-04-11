@@ -40,7 +40,8 @@ func (b *Broadcaster) Publish(r Record) {
 		}
 	}
 
-	// fan-out: non-blocking send to all subscribers
+	// Fan-out stays under lock so a concurrent Unsubscribe cannot close a channel
+	// after it has been selected for delivery but before the non-blocking send runs.
 	for ch := range b.subscribers {
 		select {
 		case ch <- r:
@@ -80,9 +81,11 @@ func (b *Broadcaster) Subscribe() chan Record {
 // Unsubscribe removes a subscriber channel and closes it.
 func (b *Broadcaster) Unsubscribe(ch chan Record) {
 	b.mu.Lock()
-	delete(b.subscribers, ch)
+	if _, ok := b.subscribers[ch]; ok {
+		delete(b.subscribers, ch)
+		close(ch)
+	}
 	b.mu.Unlock()
-	close(ch)
 }
 
 // Recent returns the most recent entries in chronological order.

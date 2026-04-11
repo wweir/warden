@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/wweir/warden/pkg/protocol"
@@ -19,7 +20,6 @@ func (p *StreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, 
 	}
 
 	blocks := make(map[int]*toolBlock)
-	var stopReason string
 
 	for _, evt := range events {
 		if evt.Data == "" {
@@ -73,21 +73,11 @@ func (p *StreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, 
 			}
 
 		case "message_delta":
-			var msg struct {
-				Delta struct {
-					StopReason string `json:"stop_reason"`
-				} `json:"delta"`
-			}
-			if err := json.Unmarshal([]byte(evt.Data), &msg); err != nil {
-				continue
-			}
-			if msg.Delta.StopReason != "" {
-				stopReason = msg.Delta.StopReason
-			}
+			continue
 		}
 	}
 
-	if stopReason != "tool_use" || len(blocks) == 0 {
+	if len(blocks) == 0 {
 		return nil, nil
 	}
 
@@ -122,6 +112,7 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			InputTokens  int64 `json:"input_tokens,omitempty"`
 			OutputTokens int64 `json:"output_tokens,omitempty"`
 		}
+		toolCalls = map[int]map[string]any{}
 	)
 
 	for _, evt := range events {
@@ -160,11 +151,54 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			buf = appendOpenAIChunk(buf, msgID, model, created,
 				map[string]any{"role": "assistant"}, nil, nil)
 
+		case "content_block_start":
+			var msg struct {
+				Index        int `json:"index"`
+				ContentBlock struct {
+					Type  string `json:"type"`
+					ID    string `json:"id"`
+					Name  string `json:"name"`
+					Input any    `json:"input"`
+				} `json:"content_block"`
+			}
+			if json.Unmarshal([]byte(evt.Data), &msg) != nil {
+				continue
+			}
+			if msg.ContentBlock.Type != "tool_use" {
+				continue
+			}
+			toolCall := map[string]any{
+				"index": msg.Index,
+				"id":    msg.ContentBlock.ID,
+				"type":  "function",
+				"function": map[string]any{
+					"name":      msg.ContentBlock.Name,
+					"arguments": "",
+				},
+			}
+			if input, ok := normalizeToolUseInput(msg.ContentBlock.Input); ok {
+				toolCall["initial_input"] = input
+			}
+			toolCalls[msg.Index] = toolCall
+			emitToolCall := map[string]any{
+				"index": msg.Index,
+				"id":    msg.ContentBlock.ID,
+				"type":  "function",
+				"function": map[string]any{
+					"name":      msg.ContentBlock.Name,
+					"arguments": "",
+				},
+			}
+			buf = appendOpenAIChunk(buf, msgID, model, created,
+				map[string]any{"tool_calls": []any{emitToolCall}}, nil, nil)
+
 		case "content_block_delta":
 			var msg struct {
+				Index int `json:"index"`
 				Delta struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
+					Type        string `json:"type"`
+					Text        string `json:"text"`
+					PartialJSON string `json:"partial_json"`
 				} `json:"delta"`
 			}
 			if json.Unmarshal([]byte(evt.Data), &msg) != nil {
@@ -173,6 +207,31 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			if msg.Delta.Type == "text_delta" && msg.Delta.Text != "" {
 				buf = appendOpenAIChunk(buf, msgID, model, created,
 					map[string]any{"content": msg.Delta.Text}, nil, nil)
+				continue
+			}
+			if msg.Delta.Type == "input_json_delta" && msg.Delta.PartialJSON != "" {
+				toolCall, ok := toolCalls[msg.Index]
+				if !ok {
+					toolCall = map[string]any{
+						"index": msg.Index,
+						"type":  "function",
+						"function": map[string]any{
+							"arguments": "",
+						},
+					}
+					toolCalls[msg.Index] = toolCall
+				}
+				function := toolCall["function"].(map[string]any)
+				prev, _ := function["arguments"].(string)
+				function["arguments"] = prev + msg.Delta.PartialJSON
+				delete(toolCall, "initial_input")
+				buf = appendOpenAIChunk(buf, msgID, model, created,
+					map[string]any{"tool_calls": []any{map[string]any{
+						"index": msg.Index,
+						"function": map[string]any{
+							"arguments": msg.Delta.PartialJSON,
+						},
+					}}}, nil, nil)
 			}
 
 		case "message_delta":
@@ -186,6 +245,21 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			}
 			if json.Unmarshal([]byte(evt.Data), &msg) != nil {
 				continue
+			}
+			for index, toolCall := range toolCalls {
+				initialInput, ok := toolCall["initial_input"].(string)
+				if !ok || initialInput == "" {
+					continue
+				}
+				toolCall["function"].(map[string]any)["arguments"] = initialInput
+				delete(toolCall, "initial_input")
+				buf = appendOpenAIChunk(buf, msgID, model, created,
+					map[string]any{"tool_calls": []any{map[string]any{
+						"index": index,
+						"function": map[string]any{
+							"arguments": initialInput,
+						},
+					}}}, nil, nil)
 			}
 			finishReason := MapStopReason(msg.Delta.StopReason)
 			if msg.Usage.OutputTokens > 0 {
@@ -206,6 +280,31 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 
 	buf = append(buf, []byte("data: [DONE]\n\n")...)
 	return buf
+}
+
+func normalizeToolUseInput(input any) (string, bool) {
+	if input == nil {
+		return "", false
+	}
+	switch v := input.(type) {
+	case string:
+		return v, v != ""
+	case json.RawMessage:
+		return string(v), len(v) > 0
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), true
+	case bool:
+		if v {
+			return "true", true
+		}
+		return "false", true
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return "", false
+		}
+		return string(raw), true
+	}
 }
 
 func appendOpenAIChunk(buf []byte, id, model string, created int64, delta map[string]any, finishReason *string, extra map[string]any) []byte {

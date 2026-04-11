@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/wweir/warden/pkg/protocol"
 )
 
 func TestConvertStreamToOpenAI(t *testing.T) {
@@ -102,5 +104,69 @@ func TestConvertStreamToOpenAI_Empty(t *testing.T) {
 	result := ConvertStreamToOpenAI([]byte(""))
 	if !strings.Contains(string(result), "data: [DONE]") {
 		t.Error("expected data: [DONE] even for empty input")
+	}
+}
+
+func TestConvertStreamToOpenAI_ToolUse(t *testing.T) {
+	anthropicSSE := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","model":"claude-3-opus-20240229","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	resultStr := string(ConvertStreamToOpenAI([]byte(anthropicSSE)))
+	if !strings.Contains(resultStr, `"tool_calls":[{"function":{"arguments":"","name":"lookup"},"id":"toolu_1","index":0,"type":"function"}]`) {
+		t.Fatalf("expected initial tool_call chunk without duplicated arguments, got %q", resultStr)
+	}
+	if !strings.Contains(resultStr, `"tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}"},"index":0}]`) {
+		t.Fatalf("expected tool_call arguments delta, got %q", resultStr)
+	}
+	if strings.Contains(resultStr, `{}{"city":"Paris"}`) {
+		t.Fatalf("expected tool_call arguments to avoid duplicated initial input, got %q", resultStr)
+	}
+	if !strings.Contains(resultStr, `"finish_reason":"tool_calls"`) {
+		t.Fatalf("expected tool_calls finish reason, got %q", resultStr)
+	}
+}
+
+func TestStreamParserSupportsIncrementalToolUseWithoutStopReason(t *testing.T) {
+	t.Parallel()
+
+	rawSSE := strings.Join([]string{
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`,
+		``,
+	}, "\n")
+
+	infos, err := (&StreamParser{}).Parse(protocol.ParseEvents([]byte(rawSSE)))
+	if err != nil {
+		t.Fatalf("StreamParser.Parse error = %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(infos))
+	}
+	if infos[0].ID != "toolu_1" {
+		t.Fatalf("tool call id = %q, want toolu_1", infos[0].ID)
+	}
+	if infos[0].Name != "lookup" {
+		t.Fatalf("tool call name = %q, want lookup", infos[0].Name)
+	}
+	if infos[0].Arguments != "{\"city\":\"Paris\"}" {
+		t.Fatalf("tool call arguments = %q, want merged JSON", infos[0].Arguments)
 	}
 }

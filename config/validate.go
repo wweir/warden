@@ -195,7 +195,7 @@ func (c *ConfigStruct) validateRouteConfig() error {
 			if rule.Match == "" {
 				return NewValidationError("route %s hooks[%d]: match is required", prefix, i)
 			}
-			if err := validateHookConfig(fmt.Sprintf("route %s hooks[%d]", prefix, i), &rule.Hook, c.Webhook); err != nil {
+			if err := validateHookConfig(fmt.Sprintf("route %s hooks[%d]", prefix, i), &rule.Hook, c.Webhook, c.Route); err != nil {
 				return err
 			}
 		}
@@ -369,7 +369,7 @@ func routeModelPromptEnabled(explicit *bool, prompt string) bool {
 }
 
 // validateHookConfig validates a single HookConfig and parses its timeout.
-func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*WebhookConfig) error {
+func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*WebhookConfig, routes map[string]*RouteConfig) error {
 	switch hook.Type {
 	case "exec":
 		if hook.Command == "" {
@@ -378,6 +378,19 @@ func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*Webho
 	case "ai":
 		if hook.Route == "" {
 			return NewValidationError("%s: route is required for ai type", ctx)
+		}
+		routeCfg, ok := routes[hook.Route]
+		if !ok {
+			return NewValidationError("%s: route %q does not exist", ctx, hook.Route)
+		}
+		if routeCfg.ConfiguredProtocol() != RouteProtocolChat {
+			return NewValidationError("%s: route %q must use protocol %q for ai type", ctx, hook.Route, RouteProtocolChat)
+		}
+		if len(routeCfg.APIKeys) > 0 {
+			return NewValidationError("%s: route %q cannot require api_keys for ai type", ctx, hook.Route)
+		}
+		if len(routeCfg.Hooks) > 0 {
+			return NewValidationError("%s: route %q cannot define hooks for ai type", ctx, hook.Route)
 		}
 		if hook.Model == "" {
 			return NewValidationError("%s: model is required for ai type", ctx)
@@ -396,9 +409,12 @@ func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*Webho
 	}
 
 	switch hook.When {
-	case "pre", "post":
+	case "block", "pre":
+		hook.When = "block"
+	case "async", "post":
+		hook.When = "async"
 	default:
-		return NewValidationError("%s: invalid when %q (must be pre or post)", ctx, hook.When)
+		return NewValidationError("%s: invalid when %q (must be block or async)", ctx, hook.When)
 	}
 
 	timeout := hook.Timeout

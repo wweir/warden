@@ -16,7 +16,7 @@ import (
 var jsonObjectRe = regexp.MustCompile(`\{[\s\S]*\}`)
 
 // CallContext is the JSON payload passed to every hook invocation.
-// For post hooks, Result and IsError are populated with the tool call outcome.
+// For async hooks, Result and IsError are populated with the tool call outcome.
 type CallContext struct {
 	ToolName  string          `json:"tool_name"` // original tool name from model output
 	FullName  string          `json:"full_name"` // normalized full name, e.g. mcp__tool
@@ -33,7 +33,7 @@ type CallContext struct {
 type hookResult struct {
 	index        int
 	htype        string // "exec", "ai" or "http"
-	when         string // "pre" or "post"
+	when         string // "block" or "async"
 	stdout       string // exec only
 	stderr       string // exec only
 	aiResponse   string // ai only: raw model response
@@ -44,8 +44,17 @@ type hookResult struct {
 
 // hookResponse is the shared fixed JSON format for exec/ai/http hook responses.
 type hookResponse struct {
-	Allow  bool   `json:"allow"`
+	Allow  *bool  `json:"allow"`
 	Reason string `json:"reason"`
+}
+
+// HookVerdict carries the aggregated result of hook execution for one tool call.
+type HookVerdict struct {
+	ToolName string `json:"tool_name"`
+	CallID   string `json:"call_id,omitempty"`
+	Rejected bool   `json:"rejected"`
+	Reason   string `json:"reason,omitempty"`
+	Mode     string `json:"mode"` // "block" or "async"
 }
 
 // MatchHooks returns all HookConfig entries whose Match pattern matches toolFullName.
@@ -64,37 +73,46 @@ func MatchHooks(toolFullName string, rules []*config.HookRuleConfig) []config.Ho
 	return hooks
 }
 
-// RunPre runs all pre hooks for a tool concurrently.
-// Returns an error only when a hook explicitly signals rejection (allow: false).
+// RunBlock runs all block-mode hooks for a tool concurrently.
+// Returns a HookVerdict indicating whether any hook rejected the call.
 // Execution errors are logged and treated as pass-through (fail-open).
-func RunPre(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) error {
-	pre := filterHooks(hooks, "pre")
-	if len(pre) == 0 {
-		return nil
+func RunBlock(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) HookVerdict {
+	v := HookVerdict{ToolName: hctx.FullName, CallID: hctx.CallID, Mode: "block"}
+	block := filterHooks(hooks, "block")
+	if len(block) == 0 {
+		return v
 	}
 
-	results := runConcurrent(ctx, pre, hctx, gatewayAddr)
+	results := runConcurrent(ctx, block, hctx, gatewayAddr)
 	for _, r := range results {
 		logResult(hctx.FullName, r)
 		if r.rejected {
-			return rejectionError(r)
+			v.Rejected = true
+			v.Reason = r.reason
+			return v
 		}
 	}
-	return nil
+	return v
 }
 
-// RunPost runs all post hooks for a tool concurrently.
-// Results are logged; rejections have no effect (post hooks are audit-only).
-func RunPost(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) {
-	post := filterHooks(hooks, "post")
-	if len(post) == 0 {
-		return
+// RunAsync runs all async-mode hooks for a tool concurrently.
+// Results are logged; rejections are recorded but do not block the response.
+func RunAsync(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) HookVerdict {
+	v := HookVerdict{ToolName: hctx.FullName, CallID: hctx.CallID, Mode: "async"}
+	async := filterHooks(hooks, "async")
+	if len(async) == 0 {
+		return v
 	}
 
-	results := runConcurrent(ctx, post, hctx, gatewayAddr)
+	results := runConcurrent(ctx, async, hctx, gatewayAddr)
 	for _, r := range results {
 		logResult(hctx.FullName, r)
+		if r.rejected {
+			v.Rejected = true
+			v.Reason = r.reason
+		}
 	}
+	return v
 }
 
 // filterHooks returns hooks matching the given when value.
@@ -155,16 +173,16 @@ func logResult(toolFullName string, r hookResult) {
 		"hook_when", r.when,
 	}
 	if r.stdout != "" {
-		attrs = append(attrs, "stdout", r.stdout)
+		attrs = append(attrs, "stdout_bytes", len(r.stdout))
 	}
 	if r.stderr != "" {
-		attrs = append(attrs, "stderr", r.stderr)
+		attrs = append(attrs, "stderr_bytes", len(r.stderr))
 	}
 	if r.aiResponse != "" {
-		attrs = append(attrs, "ai_response", r.aiResponse)
+		attrs = append(attrs, "ai_response_bytes", len(r.aiResponse))
 	}
 	if r.httpResponse != "" {
-		attrs = append(attrs, "http_response", r.httpResponse)
+		attrs = append(attrs, "http_response_bytes", len(r.httpResponse))
 	}
 	if r.rejected {
 		slog.Warn("Hook rejected tool call", append(attrs, "reason", r.reason)...)

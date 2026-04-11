@@ -213,6 +213,8 @@ func (s *Selector) SetManualSuppress(name string, suppress bool) bool {
 	if suppress {
 		slog.Info("Provider manually suppressed", "name", name)
 	} else {
+		st.consecutiveFailures = 0
+		st.suppressUntil = time.Time{}
 		slog.Info("Provider manual suppression cleared", "name", name)
 	}
 	return true

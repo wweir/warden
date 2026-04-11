@@ -85,7 +85,9 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 
 	upstreamHits := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamHits++
+		if r.Method == http.MethodPost {
+			upstreamHits++
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
@@ -406,6 +408,75 @@ func TestGatewayResponsesToChatRetriesDeveloperRoleAsSystem(t *testing.T) {
 	}
 	if got := gjson.GetBytes(gotBodies[1], "messages.0.role").String(); got != "system" {
 		t.Fatalf("second attempt role = %q, want system", got)
+	}
+}
+
+func TestGatewayAnthropicToChatLogsBridgeConversionFailure(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl_123",
+			"object":"chat.completion",
+			"created":1,
+			"model":"gpt-4o",
+			"choices":[{"index":0,"message":{"role":"assistant","content":{"type":"image"}},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}
+		}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/anthropic": {
+				Protocol: config.RouteProtocolAnthropic,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-compatible": exactModel(config.RouteProtocolAnthropic,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/messages", strings.NewReader(`{"model":"claude-compatible","messages":[{"role":"user","content":"hello"}],"max_tokens":64}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+
+	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())
+	if !strings.Contains(record.Error, "assistant content type") {
+		t.Fatalf("log error = %q, want bridge conversion error", record.Error)
+	}
+	if len(record.Response) == 0 {
+		t.Fatal("expected failed bridge conversion to retain upstream response in log")
+	}
+
+	status := gw.selector.ProviderDetail("openai")
+	if status == nil {
+		t.Fatal("provider status is nil")
+	}
+	if status.SuccessCount != 1 {
+		t.Fatalf("Successes = %d, want 1", status.SuccessCount)
 	}
 }
 

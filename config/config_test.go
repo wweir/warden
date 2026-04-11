@@ -141,6 +141,113 @@ func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 	}
 }
 
+func TestValidateToolHookAIRequiresExistingChatRouteWithoutAPIKeys(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+				Hooks: []*HookRuleConfig{{
+					Match: "*",
+					Hook:  HookConfig{Type: "ai", When: "block", Route: "/missing", Model: "gpt-4o-mini", Prompt: "{{.FullName}}"},
+				}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `route "/missing" does not exist`) {
+		t.Fatalf("expected missing ai route error, got %v", err)
+	}
+}
+
+func TestValidateToolHookAIRejectsNonChatRouteAndProtectedRoute(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				APIKeys:  map[string]SecretString{"hook": "secret"},
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+			"/responses": {
+				Protocol: RouteProtocolResponsesStateless,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o-mini": testExactModel(RouteProtocolResponsesStateless, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o-mini"}),
+				},
+			},
+			"/test": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+				Hooks: []*HookRuleConfig{{
+					Match: "*",
+					Hook:  HookConfig{Type: "ai", When: "block", Route: "/responses", Model: "gpt-4o-mini", Prompt: "{{.FullName}}"},
+				}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `must use protocol "chat"`) {
+		t.Fatalf("expected non-chat ai route error, got %v", err)
+	}
+
+	cfg.Route["/test"].Hooks[0].Hook.Route = "/chat"
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `cannot require api_keys for ai type`) {
+		t.Fatalf("expected protected ai route error, got %v", err)
+	}
+}
+
+func TestValidateToolHookAIRejectsRouteWithHooks(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/review": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o-mini": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o-mini"}),
+				},
+				Hooks: []*HookRuleConfig{{
+					Match: "*",
+					Hook:  HookConfig{Type: "http", When: "async", Webhook: "audit"},
+				}},
+			},
+			"/test": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+				Hooks: []*HookRuleConfig{{
+					Match: "*",
+					Hook:  HookConfig{Type: "ai", When: "block", Route: "/review", Model: "gpt-4o-mini", Prompt: "{{.FullName}}"},
+				}},
+			},
+		},
+		Webhook: map[string]*WebhookConfig{
+			"audit": {URL: "http://127.0.0.1:8080/hook"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `cannot define hooks for ai type`) {
+		t.Fatalf("expected ai route hooks error, got %v", err)
+	}
+}
+
 func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
@@ -480,7 +587,6 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 		})
 	}
 }
-
 
 func TestValidateProviderFamilyAlias(t *testing.T) {
 	cfg := &ConfigStruct{

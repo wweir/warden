@@ -18,18 +18,19 @@ import (
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	sel "github.com/wweir/warden/internal/selector"
 	"github.com/wweir/warden/pkg/protocol/openai"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 type chatBridgeSpec struct {
 	serviceProtocol           string
 	endpoint                  string
 	streamWarn                string
-	streamToolHookOp          string
 	writeResponseWarn         string
 	buildChatRequest          func(rawReqBody []byte) (openai.ChatCompletionRequest, string, error)
 	streamRelay               func(src io.Reader, dst http.ResponseWriter, publicModel string) ([]byte, []byte, error)
 	streamLogAssembler        observepkg.StreamLogAssembler
-	runNonStreamToolHooks     func(ctx context.Context, chatResp openai.ChatCompletionResponse)
+	runNonStreamToolHooks     func(ctx context.Context, chatResp openai.ChatCompletionResponse) ([]toolhook.HookVerdict, asyncHookFn)
+	injectBlockVerdicts       func(respBody []byte, verdicts []toolhook.HookVerdict) []byte // apply block verdicts to the converted response body
 	convertNonStreamResponse  func(chatResp openai.ChatCompletionResponse, publicModel string) ([]byte, error)
 	writeConvertResponseError func(w http.ResponseWriter, err error)
 }
@@ -90,7 +91,7 @@ func (g *Gateway) handleChatBridge(
 					chatReq.Model = session.target.UpstreamModel
 					continue
 				}
-				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
+				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
 				return
 			}
@@ -113,20 +114,39 @@ func (g *Gateway) handleChatBridge(
 				g.selector.RecordOutcome(session.provider.Name, nil, latency)
 			}
 
-			observepkg.RunRouteToolHooks(r.Context(), g.cfg.Addr, observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true), spec.streamToolHookOp)
+			// Stream: all hook checks degrade to async audits because the live response cannot be rewritten.
+			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			go func() {
+				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.cfg.Addr, observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
+				if len(asyncVerdicts) == 0 {
+					return
+				}
+				observepkg.RecordInferenceLog(
+					completedLogParams,
+					clientBody,
+					errMsg,
+					spec.streamLogAssembler,
+					observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
+					nil,
+					asyncVerdicts,
+					g.recordAndBroadcast,
+				)
+			}()
+			var verdicts []toolhook.HookVerdict
 			observepkg.RecordInferenceLog(
-				logParams,
+				completedLogParams,
 				clientBody,
 				errMsg,
 				spec.streamLogAssembler,
 				observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
 				g.RecordTokenMetrics,
+				verdicts,
 				g.recordAndBroadcast,
 			)
 			return
 		}
 
-		chatResp, _, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, chatReq)
+		chatResp, rawRespBody, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, chatReq)
 		if forwardErr != nil {
 			if retryWithSystemRole(forwardErr, session.provider.Name, retriedDeveloperFallback, &chatReq) {
 				continue
@@ -136,21 +156,42 @@ func (g *Gateway) handleChatBridge(
 				chatReq.Model = session.target.UpstreamModel
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, forwardErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, forwardErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, forwardErr)
 			return
 		}
 
 		respBody, convErr := spec.convertNonStreamResponse(chatResp, model)
 		if convErr != nil {
+			g.selector.RecordOutcome(session.provider.Name, nil, latency)
+			observepkg.RecordInferenceLog(logParams, rawRespBody, convErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 			spec.writeConvertResponseError(w, convErr)
 			return
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
-		spec.runNonStreamToolHooks(r.Context(), chatResp)
+		blockVerdicts, runAsync := spec.runNonStreamToolHooks(r.Context(), chatResp)
+		if spec.injectBlockVerdicts != nil {
+			respBody = spec.injectBlockVerdicts(respBody, blockVerdicts)
+		}
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
+		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
+			if len(asyncVerdicts) == 0 {
+				return
+			}
+			observepkg.RecordInferenceLog(
+				completedLogParams,
+				respBody,
+				"",
+				nil,
+				observeBridgeJSONTokenUsage(respBody),
+				nil,
+				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
+				g.recordAndBroadcast,
+			)
+		})
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return
 	}
 }

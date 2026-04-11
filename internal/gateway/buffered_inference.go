@@ -10,7 +10,11 @@ import (
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	"github.com/wweir/warden/pkg/toolhook"
 )
+
+// asyncHookFn runs async hooks after the response is written and reports verdicts.
+type asyncHookFn func(func([]toolhook.HookVerdict))
 
 type bufferedInferenceSpec struct {
 	serviceProtocol string
@@ -18,7 +22,7 @@ type bufferedInferenceSpec struct {
 	canHandle       func(provider *config.ProviderConfig) bool
 	upstreamPath    func(providerProtocol string) string
 	prepareBody     func(providerProtocol string, rawBody []byte) ([]byte, error)
-	runToolHooks    func(ctx context.Context, providerProtocol string, respBody []byte, stream bool)
+	runToolHooks    func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn)
 	writeStream     func(w http.ResponseWriter, providerProtocol string, respBody []byte)
 	writeNonStream  func(w http.ResponseWriter, respBody []byte)
 	streamAssembler func(providerProtocol string) observepkg.StreamLogAssembler
@@ -64,31 +68,64 @@ func (g *Gateway) handleBufferedInference(
 			if session.handleError(err) {
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, err.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, g.recordAndBroadcast)
+			observepkg.RecordInferenceLog(logParams, nil, err.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, err)
 			return true
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
 		session.recordTTFT(latency)
-		spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, req.Stream)
+		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, req.Stream)
 
 		if req.Stream {
 			spec.writeStream(w, session.provider.Protocol, respBody)
+			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
+				if len(asyncVerdicts) == 0 {
+					return
+				}
+				observepkg.RecordInferenceLog(
+					completedLogParams,
+					respBody,
+					"",
+					spec.streamAssembler(session.provider.Protocol),
+					observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
+					nil,
+					append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
+					g.recordAndBroadcast,
+				)
+			})
 			observepkg.RecordInferenceLog(
-				logParams,
+				completedLogParams,
 				respBody,
 				"",
 				spec.streamAssembler(session.provider.Protocol),
 				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
 				g.RecordTokenMetrics,
+				blockVerdicts,
 				g.recordAndBroadcast,
 			)
 			return true
 		}
 
 		spec.writeNonStream(w, respBody)
-		observepkg.RecordInferenceLog(logParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, g.recordAndBroadcast)
+		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
+			if len(asyncVerdicts) == 0 {
+				return
+			}
+			observepkg.RecordInferenceLog(
+				completedLogParams,
+				respBody,
+				"",
+				nil,
+				observeJSONTokenUsage(respBody),
+				nil,
+				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
+				g.recordAndBroadcast,
+			)
+		})
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }

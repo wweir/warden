@@ -25,6 +25,17 @@ func TestParseHookResponse(t *testing.T) {
 		}
 	})
 
+	t.Run("json without allow fails open", func(t *testing.T) {
+		r := hookResult{}
+		parseHookResponse(`{"reason":"missing allow"}`, &r)
+		if r.rejected {
+			t.Fatalf("expected rejected=false")
+		}
+		if r.reason != "" {
+			t.Fatalf("expected empty reason, got %s", r.reason)
+		}
+	})
+
 	t.Run("invalid output fail open", func(t *testing.T) {
 		r := hookResult{}
 		parseHookResponse("not-json", &r)
