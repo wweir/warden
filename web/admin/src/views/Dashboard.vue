@@ -43,7 +43,7 @@
         </div>
 
         <div class="stat-card">
-          <div class="stat-value">{{ fmtNum(tokenStats.promptTotal + tokenStats.completionTotal) }}</div>
+          <div class="stat-value">{{ fmtNum(tokenStats.requestTotal + tokenStats.responseTotal) }}</div>
           <div class="stat-label">{{ $t('dashboard.totalTokens') }}</div>
           <div class="stat-sub">
             <span class="text-success">{{ usageLatest.tok_per_min > 0 ? fmtNum(Math.round(usageLatest.tok_per_min)) : 0 }}/min</span>
@@ -71,6 +71,9 @@
           <div class="metric-stats">
             <div class="stat-row"><span class="trend-dot usage-main"></span>{{ $t('dashboard.requestsPerMin') }}: {{ usageLatest.req_per_min.toFixed(1) }}</div>
             <div class="stat-row"><span class="trend-dot usage-sub"></span>{{ $t('dashboard.tokensPerMin') }}: {{ fmtNum(Math.round(usageLatest.tok_per_min)) }}</div>
+            <div class="stat-row">{{ $t('dashboard.requestTokens') }}: {{ fmtNum(tokenStats.requestTotal) }}</div>
+            <div class="stat-row">{{ $t('dashboard.responseTokens') }}: {{ fmtNum(tokenStats.responseTotal) }}</div>
+            <div class="stat-row">{{ $t('dashboard.cacheTokens') }}: {{ fmtNum(tokenStats.cacheTotal) }}</div>
             <div class="stat-row">{{ $t('routes.requests') }}: {{ fmtNum(requestStatusTotal) }}</div>
             <div class="stat-row">{{ $t('dashboard.completionShare') }}: {{ tokenStats.completionShare.toFixed(1) }}%</div>
           </div>
@@ -93,6 +96,9 @@
           </div>
           <div class="metric-stats">
             <div class="stat-row"><span class="trend-dot output-main"></span>{{ $t('dashboard.currentOutputRate') }}: {{ formatTPS(outputLatest.completion_tps) }}</div>
+            <div class="stat-row">{{ $t('dashboard.requestTokens') }}: {{ formatTPS(outputLatest.prompt_tps) }}</div>
+            <div class="stat-row">{{ $t('dashboard.responseTokens') }}: {{ formatTPS(outputLatest.completion_tps) }}</div>
+            <div class="stat-row">{{ $t('dashboard.cacheTokens') }}: {{ formatTPS(outputLatest.cache_tps) }}</div>
             <div class="stat-row" v-if="peakOutputProvider">{{ $t('dashboard.peakProviderRate') }}: {{ peakOutputProvider.provider }} · {{ formatTPS(peakOutputProvider.rate) }}</div>
             <div class="stat-row" v-else>{{ $t('dashboard.peakProviderRate') }}: -</div>
           </div>
@@ -293,8 +299,50 @@ const realtimeUsageHistory = computed(() => metricsData.value?.realtime?.usage ?
 const realtimeOutputHistory = computed(() => metricsData.value?.realtime?.output ?? [])
 const realtimeErrorHistory = computed(() => metricsData.value?.realtime?.errors ?? [])
 const usageLatest = computed(() => realtimeUsageHistory.value[realtimeUsageHistory.value.length - 1] ?? { req_per_min: 0, tok_per_min: 0 })
-const outputLatest = computed(() => realtimeOutputHistory.value[realtimeOutputHistory.value.length - 1] ?? { completion_tps: 0, providers: {} })
 const errorLatest = computed(() => realtimeErrorHistory.value[realtimeErrorHistory.value.length - 1] ?? { error_rate: 0, stream_err_per_1k: 0, failover_per_1k: 0 })
+
+const providerTokenRateStats = computed(() => {
+  const stats = {
+    prompt_tps: 0,
+    completion_tps: 0,
+    cache_tps: 0,
+    providers: {},
+  }
+  for (const item of metricsData.value?.provider_token_rate ?? metricsData.value?.token_rate ?? []) {
+    const value = Number(item.value || 0)
+    if (item.type === 'prompt') stats.prompt_tps += value
+    if (item.type === 'completion') {
+      stats.completion_tps += value
+      if (item.provider) {
+        stats.providers[item.provider] = Number(stats.providers[item.provider] || 0) + value
+      }
+    }
+    if (item.type === 'cache') stats.cache_tps += value
+  }
+  return stats
+})
+
+const outputLatest = computed(() => {
+  const latest = realtimeOutputHistory.value[realtimeOutputHistory.value.length - 1]
+  if (latest) {
+    return {
+      prompt_tps: providerTokenRateStats.value.prompt_tps,
+      completion_tps: providerTokenRateStats.value.completion_tps || Number(latest.completion_tps || 0),
+      cache_tps: providerTokenRateStats.value.cache_tps,
+      providers: {
+        ...(latest.providers ?? {}),
+        ...providerTokenRateStats.value.providers,
+      },
+    }
+  }
+
+  return {
+    prompt_tps: providerTokenRateStats.value.prompt_tps,
+    completion_tps: providerTokenRateStats.value.completion_tps,
+    cache_tps: providerTokenRateStats.value.cache_tps,
+    providers: providerTokenRateStats.value.providers,
+  }
+})
 
 const chartTimeRange = computed(() => {
   const windowSeconds = Number(metricsData.value?.realtime?.window_seconds || 0)
@@ -323,6 +371,9 @@ const outputProviderNames = computed(() => {
     for (const provider of Object.keys(point.providers ?? {})) {
       historyNames.add(provider)
     }
+  }
+  for (const provider of Object.keys(providerTokenRateStats.value.providers)) {
+    historyNames.add(provider)
   }
 
   const ordered = []
@@ -365,15 +416,22 @@ const requestStatus = computed(() => {
 
 const requestStatusTotal = computed(() => requestStatus.value.success + requestStatus.value.failure)
 
+const providerTokenTotals = computed(() => (
+  metricsData.value?.provider_tokens_total
+  ?? metricsData.value?.tokens_total
+  ?? []
+))
+
 const tokenStats = computed(() => {
-  const stats = { promptTotal: 0, completionTotal: 0, completionShare: 0 }
-  for (const item of metricsData.value?.tokens_total ?? []) {
-    if (item.type === 'prompt') stats.promptTotal += item.value
-    if (item.type === 'completion') stats.completionTotal += item.value
+  const stats = { requestTotal: 0, responseTotal: 0, cacheTotal: 0, completionShare: 0 }
+  for (const item of providerTokenTotals.value) {
+    if (item.type === 'prompt') stats.requestTotal += item.value
+    if (item.type === 'completion') stats.responseTotal += item.value
+    if (item.type === 'cache') stats.cacheTotal += item.value
   }
 
-  const total = stats.promptTotal + stats.completionTotal
-  stats.completionShare = total > 0 ? (stats.completionTotal / total) * 100 : 0
+  const total = stats.requestTotal + stats.responseTotal
+  stats.completionShare = total > 0 ? (stats.responseTotal / total) * 100 : 0
   return stats
 })
 

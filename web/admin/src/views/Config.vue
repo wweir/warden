@@ -81,6 +81,7 @@
 						<th>{{ $t("config.apiKeyFailure") }}</th>
 						<th>{{ $t("config.apiKeyPromptTokens") }}</th>
 						<th>{{ $t("config.apiKeyCompletionTokens") }}</th>
+						<th>{{ $t("config.apiKeyCacheTokens") }}</th>
 						<th>{{ $t("config.apiKeyActions") }}</th>
 					</tr>
 				</thead>
@@ -102,6 +103,7 @@
 						<td>{{ row.usage.failure_requests }}</td>
 						<td>{{ row.usage.prompt_tokens }}</td>
 						<td>{{ row.usage.completion_tokens }}</td>
+						<td>{{ row.usage.cache_tokens }}</td>
 						<td>
 							<button class="btn btn-danger btn-sm" @click="deleteAPIKey(row.route, row.name)">
 								{{ $t("common.delete") }}
@@ -388,6 +390,7 @@ function emptyAPIKeyUsage() {
 		failure_requests: 0,
 		prompt_tokens: 0,
 		completion_tokens: 0,
+		cache_tokens: 0,
 	};
 }
 
