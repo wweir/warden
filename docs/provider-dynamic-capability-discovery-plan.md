@@ -87,8 +87,7 @@ provider 卡片展示三类信息：
 补充说明：
 
 - `provider.family` 是必填字段，`provider.protocol` 只作为兼容别名保留
-- provider family 先给出候选协议面，再由 `enabled_protocols` / `disabled_protocols` 做静态收缩
-- 这些 provider 级收缩规则不会替代 `route.protocol`
+- provider family 直接决定候选协议面
 
 也就是说：
 

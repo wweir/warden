@@ -3,6 +3,7 @@ package admin
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -45,12 +46,6 @@ func (h *Handler) HandleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 	var err error
 	defer func() { deferlog.DebugError(err, "admin config update") }()
 
-	configPath := h.configPathValue()
-	if configPath == "" {
-		http.Error(w, "no config file path configured", http.StatusBadRequest)
-		return
-	}
-
 	var body json.RawMessage
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -82,25 +77,46 @@ func (h *Handler) HandleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 
-	if currentHash := h.configHashValue(); currentHash != "" {
-		current, readErr := os.ReadFile(configPath)
-		if readErr == nil {
-			if got := fmt.Sprintf("%x", sha256.Sum256(current)); got != currentHash {
-				http.Error(w, "config file changed externally, please reload", http.StatusConflict)
-				return
-			}
+	if err = h.writeConfigFile(yamlData); err != nil {
+		if errors.Is(err, errNoConfigPath) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-	}
-
-	if err = os.WriteFile(configPath, yamlData, 0o644); err != nil {
+		if errors.Is(err, errConfigChangedExternally) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, "write config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	h.setConfigHash(fmt.Sprintf("%x", sha256.Sum256(yamlData)))
-
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+var (
+	errNoConfigPath            = errors.New("no config file path configured")
+	errConfigChangedExternally = errors.New("config file changed externally, please reload")
+)
+
+func (h *Handler) writeConfigFile(yamlData []byte) error {
+	configPath := h.configPathValue()
+	if configPath == "" {
+		return errNoConfigPath
+	}
+	if currentHash := h.configHashValue(); currentHash != "" {
+		current, readErr := os.ReadFile(configPath)
+		if readErr == nil {
+			if got := fmt.Sprintf("%x", sha256.Sum256(current)); got != currentHash {
+				return errConfigChangedExternally
+			}
+		}
+	}
+	if err := os.WriteFile(configPath, yamlData, 0o644); err != nil {
+		return err
+	}
+	h.setConfigHash(fmt.Sprintf("%x", sha256.Sum256(yamlData)))
+	return nil
 }
 
 func (h *Handler) HandleConfigValidate(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -119,4 +135,28 @@ func (h *Handler) HandleConfigValidate(w http.ResponseWriter, r *http.Request, _
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"valid": true})
+}
+
+func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
+	currentData, err := json.Marshal(h.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runtime config: %w", err)
+	}
+
+	var cfgMap map[string]any
+	if err := json.Unmarshal(currentData, &cfgMap); err != nil {
+		return nil, fmt.Errorf("decode runtime config: %w", err)
+	}
+
+	InjectSecrets(cfgMap, h.cfg)
+	DropOAuthProviderAPIKey(cfgMap)
+	NormalizeSecretConfigJSON(cfgMap)
+	NormalizeProviderConfigJSON(cfgMap)
+	NormalizePromptConfigJSON(cfgMap)
+
+	yamlData, err := yaml.Marshal(cfgMap)
+	if err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	return yamlData, nil
 }

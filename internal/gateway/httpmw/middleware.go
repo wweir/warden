@@ -72,12 +72,13 @@ type APIKeyAuth struct {
 
 func (m *APIKeyAuth) Process(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m == nil || m.Cfg == nil || len(m.Cfg.APIKeys) == 0 || !requiresAPIKeyAuth(m.Cfg, r.URL.Path) {
+		route := matchedRouteConfig(m, r.URL.Path)
+		if route == nil || len(route.APIKeys) == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		name, ok := authenticateAPIKey(m.Cfg.APIKeys, r.Header)
+		name, ok := authenticateAPIKey(route.APIKeys, r.Header)
 		if !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="Warden"`)
@@ -98,16 +99,24 @@ func (m *APIKeyAuth) Process(next http.Handler) http.Handler {
 	})
 }
 
-func requiresAPIKeyAuth(cfg *config.ConfigStruct, path string) bool {
-	if cfg == nil {
-		return false
+func matchedRouteConfig(m *APIKeyAuth, path string) *config.RouteConfig {
+	if m == nil || m.Cfg == nil {
+		return nil
 	}
-	for prefix := range cfg.Route {
-		if strings.HasPrefix(path, prefix+"/") {
-			return true
+	var (
+		matched    *config.RouteConfig
+		matchedLen int
+	)
+	for prefix, route := range m.Cfg.Route {
+		if !strings.HasPrefix(path, prefix+"/") {
+			continue
+		}
+		if len(prefix) > matchedLen {
+			matched = route
+			matchedLen = len(prefix)
 		}
 	}
-	return false
+	return matched
 }
 
 func authenticateAPIKey(keys map[string]config.SecretString, headers http.Header) (string, bool) {

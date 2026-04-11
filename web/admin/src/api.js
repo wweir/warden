@@ -114,19 +114,19 @@ export function fetchAPIKeys() {
 	return apiJSON("/_admin/api/apikeys");
 }
 
-export function createAPIKey(name) {
+export function createAPIKey(route, name) {
 	return apiJSON("/_admin/api/apikeys", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name }),
+		body: JSON.stringify({ route, name }),
 	});
 }
 
-export function deleteAPIKey(name) {
+export function deleteAPIKey(route, name) {
 	return apiJSON("/_admin/api/apikeys", {
 		method: "DELETE",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name }),
+		body: JSON.stringify({ route, name }),
 	});
 }
 

@@ -176,8 +176,6 @@ func TestConfigRoundTripPreservesExactModelsAfterJSONToYAML(t *testing.T) {
 func TestBuildConfigParserConfigDecodesBase64Secrets(t *testing.T) {
 	const secretConfig = `addr: ":8080"
 admin_password: YWRtaW4=
-api_keys:
-  cli: Y2xpLXNlY3JldA==
 provider:
   openai:
     url: https://api.openai.com/v1
@@ -186,6 +184,8 @@ provider:
 route:
   /v1:
     protocol: chat
+    api_keys:
+      cli: Y2xpLXNlY3JldA==
     wildcard_models:
       "*":
         providers:
@@ -217,8 +217,8 @@ route:
 	if got := cfg.AdminPassword.Value(); got != "admin" {
 		t.Fatalf("AdminPassword.Value() = %q, want %q", got, "admin")
 	}
-	if got := cfg.APIKeys["cli"].Value(); got != "cli-secret" {
-		t.Fatalf("APIKeys[cli].Value() = %q, want %q", got, "cli-secret")
+	if got := cfg.Route["/v1"].APIKeys["cli"].Value(); got != "cli-secret" {
+		t.Fatalf("Route[/v1].APIKeys[cli].Value() = %q, want %q", got, "cli-secret")
 	}
 	if got := cfg.Provider["openai"].APIKey.Value(); got != "provider-secret" {
 		t.Fatalf("Provider[openai].APIKey.Value() = %q, want %q", got, "provider-secret")

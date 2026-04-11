@@ -91,8 +91,12 @@ func TestNormalizePromptConfigJSONKeepsEnabledPromptFlags(t *testing.T) {
 func TestNormalizeSecretConfigJSONEncodesSecretFields(t *testing.T) {
 	cfg := map[string]any{
 		"admin_password": "admin-secret",
-		"api_keys": map[string]any{
-			"cli": "client-secret",
+		"route": map[string]any{
+			"/openai": map[string]any{
+				"api_keys": map[string]any{
+					"cli": "client-secret",
+				},
+			},
 		},
 		"provider": map[string]any{
 			"openai": map[string]any{
@@ -108,7 +112,7 @@ func TestNormalizeSecretConfigJSONEncodesSecretFields(t *testing.T) {
 		t.Fatalf("admin_password = %v, want encoded secret", got)
 	}
 
-	apiKeys := cfg["api_keys"].(map[string]any)
+	apiKeys := cfg["route"].(map[string]any)["/openai"].(map[string]any)["api_keys"].(map[string]any)
 	if got := apiKeys["cli"]; got != config.EncodeSecret("client-secret") {
 		t.Fatalf("api_keys.cli = %v, want encoded secret", got)
 	}
@@ -119,13 +123,44 @@ func TestNormalizeSecretConfigJSONEncodesSecretFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeSecretConfigJSONDoesNotTouchHeaderAPIKeyValues(t *testing.T) {
+	cfg := map[string]any{
+		"provider": map[string]any{
+			"openai": map[string]any{
+				"api_key": "provider-secret",
+				"headers": map[string]any{
+					"api_key": "literal-header-secret",
+				},
+			},
+		},
+		"webhook": map[string]any{
+			"audit": map[string]any{
+				"headers": map[string]any{
+					"api_key": "webhook-header-secret",
+				},
+			},
+		},
+	}
+
+	adminpkg.NormalizeSecretConfigJSON(cfg)
+
+	provider := cfg["provider"].(map[string]any)["openai"].(map[string]any)
+	if got := provider["api_key"]; got != config.EncodeSecret("provider-secret") {
+		t.Fatalf("provider api_key = %v, want encoded secret", got)
+	}
+	if got := provider["headers"].(map[string]any)["api_key"]; got != "literal-header-secret" {
+		t.Fatalf("provider.headers.api_key = %v, want literal-header-secret", got)
+	}
+	webhook := cfg["webhook"].(map[string]any)["audit"].(map[string]any)
+	if got := webhook["headers"].(map[string]any)["api_key"]; got != "webhook-header-secret" {
+		t.Fatalf("webhook.headers.api_key = %v, want webhook-header-secret", got)
+	}
+}
+
 func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Addr:          ":8080",
 		AdminPassword: config.SecretString("admin-secret"),
-		APIKeys: map[string]config.SecretString{
-			"cli": "client-secret",
-		},
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
@@ -136,6 +171,9 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
 				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"cli": "client-secret",
+				},
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
@@ -195,7 +233,7 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 	if got := parsed["admin_password"]; got != config.EncodeSecret("admin-secret") {
 		t.Fatalf("admin_password = %v, want %q", got, config.EncodeSecret("admin-secret"))
 	}
-	apiKeys := parsed["api_keys"].(map[string]any)
+	apiKeys := parsed["route"].(map[string]any)["/openai"].(map[string]any)["api_keys"].(map[string]any)
 	if got := apiKeys["cli"]; got != config.EncodeSecret("client-secret") {
 		t.Fatalf("api_keys.cli = %v, want %q", got, config.EncodeSecret("client-secret"))
 	}
@@ -203,6 +241,142 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 	providerCfg := providers["openai"].(map[string]any)
 	if got := providerCfg["api_key"]; got != config.EncodeSecret("provider-secret") {
 		t.Fatalf("provider api_key = %v, want %q", got, config.EncodeSecret("provider-secret"))
+	}
+}
+
+func TestHandleAPIKeysCreatePersistsRouteAPIKey(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(yamlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(yamlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/_admin/api/apikeys", strings.NewReader(`{"route":"/openai","name":"cli"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleAPIKeysCreate(rec, req, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if resp["route"] != "/openai" || resp["name"] != "cli" || resp["key"] == "" {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	if got := gw.cfg.Route["/openai"].APIKeys["cli"].Value(); got != resp["key"] {
+		t.Fatalf("runtime key = %q, want %q", got, resp["key"])
+	}
+
+	saved, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(saved), "exactmodels:") {
+		t.Fatalf("saved YAML should use json-tag keys, got %q", string(saved))
+	}
+	if strings.Contains(string(saved), "adminpassword:") {
+		t.Fatalf("saved YAML should not contain yaml.v3 default field names, got %q", string(saved))
+	}
+	if !strings.Contains(string(saved), "exact_models:") || !strings.Contains(string(saved), "api_keys:") {
+		t.Fatalf("saved YAML missing expected config keys: %q", string(saved))
+	}
+	var parsed map[string]any
+	if err := yaml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	routeMap, ok := parsed["route"].(map[string]any)
+	if !ok {
+		t.Fatalf("saved route = %#v, want map", parsed["route"])
+	}
+	openaiRoute, ok := routeMap["/openai"].(map[string]any)
+	if !ok {
+		t.Fatalf("saved route /openai = %#v, want map", routeMap["/openai"])
+	}
+	apiKeys, ok := openaiRoute["api_keys"].(map[string]any)
+	if !ok {
+		t.Fatalf("saved api_keys = %#v, want map", openaiRoute["api_keys"])
+	}
+	if got := apiKeys["cli"]; got != config.EncodeSecret(resp["key"]) {
+		t.Fatalf("saved key = %v, want %q", got, config.EncodeSecret(resp["key"]))
+	}
+}
+
+func TestHandleAPIKeysCreateRejectsBlankName(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/_admin/api/apikeys", strings.NewReader(`{"route":" /openai ","name":"   "}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleAPIKeysCreate(rec, req, nil)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "name is required") {
+		t.Fatalf("body = %q, want name validation error", rec.Body.String())
+	}
+	if len(gw.cfg.Route["/openai"].APIKeys) != 0 {
+		t.Fatalf("route api keys = %#v, want empty", gw.cfg.Route["/openai"].APIKeys)
 	}
 }
 

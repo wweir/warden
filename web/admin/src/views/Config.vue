@@ -73,6 +73,7 @@
 			<table v-else class="data-table api-key-table">
 				<thead>
 					<tr>
+						<th>{{ $t("config.apiKeyRoute") }}</th>
 						<th>{{ $t("config.apiKeyName") }}</th>
 						<th>{{ $t("config.apiKeyStatus") }}</th>
 						<th>{{ $t("config.apiKeyRequests") }}</th>
@@ -84,7 +85,8 @@
 					</tr>
 				</thead>
 				<tbody>
-					<tr v-for="row in apiKeyRows" :key="row.name">
+					<tr v-for="row in apiKeyRows" :key="row.route + ':' + row.name">
+						<td><code>{{ row.route }}</code></td>
 						<td><code>{{ row.name }}</code></td>
 						<td>
 							<span :class="['badge', apiKeyConfigured(row.value) ? 'badge-ok' : 'badge-none']">
@@ -101,7 +103,7 @@
 						<td>{{ row.usage.prompt_tokens }}</td>
 						<td>{{ row.usage.completion_tokens }}</td>
 						<td>
-							<button class="btn btn-danger btn-sm" @click="deleteAPIKey(row.name)">
+							<button class="btn btn-danger btn-sm" @click="deleteAPIKey(row.route, row.name)">
 								{{ $t("common.delete") }}
 							</button>
 						</td>
@@ -246,6 +248,13 @@
 			<div class="modal">
 				<h3>{{ $t("config.createApiKeyModalTitle") }}</h3>
 				<div class="form-group">
+					<label>{{ $t("config.apiKeyRoute") }}</label>
+					<select v-model="newAPIKeyRoute" class="form-select">
+						<option value="" disabled>{{ $t("config.apiKeyRoutePlaceholder") }}</option>
+						<option v-for="prefix in routePrefixes" :key="prefix" :value="prefix">{{ prefix }}</option>
+					</select>
+				</div>
+				<div class="form-group">
 					<label>{{ $t("config.apiKeyName") }}</label>
 					<input
 						v-model="newAPIKeyName"
@@ -258,7 +267,7 @@
 					<button class="btn btn-secondary" @click="showAPIKeyCreateModal = false">
 						{{ $t("common.cancel") }}
 					</button>
-					<button class="btn btn-primary" @click="createAPIKey" :disabled="!newAPIKeyName.trim()">
+					<button class="btn btn-primary" @click="createAPIKey" :disabled="!newAPIKeyRoute || !newAPIKeyName.trim()">
 						{{ $t("common.confirm") }}
 					</button>
 				</div>
@@ -327,6 +336,7 @@ const webhookOpen = ref(false);
 const showAdminPw = ref(false);
 const showAPIKeyCreateModal = ref(false);
 const showAPIKeyModal = ref(false);
+const newAPIKeyRoute = ref("");
 const newAPIKeyName = ref("");
 const generatedAPIKey = ref("");
 const apiKeyUsage = ref({});
@@ -336,14 +346,18 @@ const openCards = reactive({});
 
 const webhookCount = computed(() => Object.keys(config.value.webhook || {}).length);
 const webhookNames = computed(() => Object.keys(config.value.webhook || {}));
+const routePrefixes = computed(() => Object.keys(config.value.route || {}).sort());
 const apiKeyRows = computed(() =>
-	Object.keys(config.value.api_keys || {})
-		.sort()
-		.map((name) => ({
-			name,
-			value: config.value.api_keys[name],
-			usage: apiKeyUsage.value[name] || emptyAPIKeyUsage(),
-		})),
+	routePrefixes.value.flatMap((route) =>
+		Object.keys(config.value.route?.[route]?.api_keys || {})
+			.sort()
+			.map((name) => ({
+				route,
+				name,
+				value: config.value.route[route].api_keys[name],
+				usage: apiKeyUsage.value[apiKeyUsageKey(route, name)] || emptyAPIKeyUsage(),
+			})),
+	),
 );
 
 // admin password handling
@@ -377,6 +391,10 @@ function emptyAPIKeyUsage() {
 	};
 }
 
+function apiKeyUsageKey(route, name) {
+	return route + "\0" + name;
+}
+
 function apiKeyConfigured(value) {
 	return value === REDACTED || (typeof value === "string" && value !== "");
 }
@@ -398,38 +416,42 @@ function generateAPIKeyValue() {
 }
 
 function createAPIKey() {
+	const route = newAPIKeyRoute.value;
 	const name = newAPIKeyName.value.trim();
-	if (!name) return;
-	if (!config.value.api_keys) config.value.api_keys = {};
-	if (name in config.value.api_keys) {
-		error.value = t("config.apiKeyExists", { name });
+	if (!route || !name) return;
+	if (!config.value.route?.[route]) return;
+	if (!config.value.route[route].api_keys) config.value.route[route].api_keys = {};
+	if (name in config.value.route[route].api_keys) {
+		error.value = t("config.apiKeyExists", { route, name });
 		return;
 	}
 
-	const key = generateAPIKeyValue()
-	config.value.api_keys = {
-		...config.value.api_keys,
+	const key = generateAPIKeyValue();
+	config.value.route[route].api_keys = {
+		...config.value.route[route].api_keys,
 		[name]: key,
 	};
 	apiKeyUsage.value = {
 		...apiKeyUsage.value,
-		[name]: apiKeyUsage.value[name] || emptyAPIKeyUsage(),
+		[apiKeyUsageKey(route, name)]: apiKeyUsage.value[apiKeyUsageKey(route, name)] || emptyAPIKeyUsage(),
 	};
+	newAPIKeyRoute.value = "";
 	newAPIKeyName.value = "";
 	generatedAPIKey.value = key;
 	showAPIKeyCreateModal.value = false;
 	showAPIKeyModal.value = true;
-	message.value = t("config.apiKeyPendingApply", { name });
+	message.value = t("config.apiKeyPendingApply", { route, name });
 	messageType.value = "success";
 	error.value = "";
 }
 
-function deleteAPIKey(name) {
-	if (!confirm(t("config.confirmDeleteApiKey", { name }))) return;
-	const next = { ...(config.value.api_keys || {}) };
+function deleteAPIKey(route, name) {
+	if (!confirm(t("config.confirmDeleteApiKey", { route, name }))) return;
+	if (!config.value.route?.[route]?.api_keys) return;
+	const next = { ...config.value.route[route].api_keys };
 	delete next[name];
-	config.value.api_keys = next;
-	message.value = t("config.apiKeyDeletePendingApply", { name });
+	config.value.route[route].api_keys = next;
+	message.value = t("config.apiKeyDeletePendingApply", { route, name });
 	messageType.value = "success";
 	error.value = "";
 }
@@ -541,16 +563,19 @@ async function load() {
 		]);
 		config.value = {
 			...cfg,
-			api_keys: { ...(cfg.api_keys || {}) },
 		};
 		configSource.value = source;
 		apiKeyUsage.value = Object.fromEntries(
-			(keyData.keys || []).map((item) => [item.name, item.usage || emptyAPIKeyUsage()]),
+			(keyData.keys || []).map((item) => [
+				apiKeyUsageKey(item.route, item.name),
+				item.usage || emptyAPIKeyUsage(),
+			]),
 		);
 		adminPwEdited.value = false;
 		adminPwValue.value = "";
 		showAPIKeyCreateModal.value = false;
 		showAPIKeyModal.value = false;
+		newAPIKeyRoute.value = "";
 		newAPIKeyName.value = "";
 		generatedAPIKey.value = "";
 		error.value = "";

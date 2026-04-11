@@ -3,11 +3,6 @@ addr: ":8080"
 # Admin password for /_admin/. Empty means disabled.
 # admin_password: "your-secret-password"
 
-# Client API keys. Empty means no client auth.
-# api_keys:
-#   my-app: "generated-api-key"
-#   cli: "another-api-key"
-
 # Optional webhook targets for log push and hook callbacks.
 # webhook:
 #   audit-webhook:
@@ -41,7 +36,6 @@ provider:
     url: "https://api.openai.com/v1"
     api_key: "${OPENAI_API_KEY}"
     timeout: "120s"
-    # enabled_protocols: ["chat", "responses_stateless"]
     # responses_to_chat: true
 
   anthropic:
@@ -77,6 +71,11 @@ provider:
 route:
   /openai:
     protocol: "chat"
+    # Optional client API keys for this route only.
+    # Empty or omitted means the route is public.
+    # api_keys:
+    #   my-app: "generated-api-key"
+    #   cli: "another-api-key"
     exact_models:
       gpt-4o:
         prompt_enabled: true

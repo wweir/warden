@@ -22,7 +22,8 @@
 		<div v-if="message" class="msg success">{{ message }}</div>
 		<div v-if="error" class="msg error">{{ error }}</div>
 
-		<div class="detail-layout">
+		<div v-if="loading" class="msg">{{ $t("common.loading") }}</div>
+		<div v-else class="detail-layout">
 			<section class="info-section">
 				<div class="section-top">
 					<div>
@@ -81,7 +82,7 @@
 					</select>
 
 					<template
-						v-if="!['qwen', 'copilot'].includes(providerFamily(providerConfig) || 'openai')"
+						v-if="providerFamily(providerConfig) && !['qwen', 'copilot'].includes(providerFamily(providerConfig))"
 					>
 						<label>url <span class="req">*</span></label>
 						<div class="url-field">
@@ -102,11 +103,11 @@
 							<input
 								:type="showAPIKey ? 'text' : 'password'"
 								:value="secretDisplay(providerConfig.api_key)"
-								@input="providerConfig.api_key = $event.target.value"
+								@input="apiKeyTouched = true; providerConfig.api_key = $event.target.value"
 								class="form-input"
 								placeholder="(not set)"
 							/>
-							<button class="btn-icon" @click="showAPIKey = !showAPIKey" type="button">
+							<button class="btn-icon" @click="showAPIKey = !showAPIKey" type="button" :aria-label="$t('providerDetail.toggleApiKeyVisibility')">
 								{{ showAPIKey ? "🙈" : "👁" }}
 							</button>
 							<span
@@ -172,7 +173,7 @@
 					</template>
 
 					<template
-						v-if="!['qwen', 'copilot'].includes(providerFamily(providerConfig) || 'openai')"
+						v-if="providerFamily(providerConfig) && !['qwen', 'copilot'].includes(providerFamily(providerConfig))"
 					>
 						<label>headers</label>
 						<KeyValueEditor
@@ -225,19 +226,6 @@
 						</p>
 					</div>
 
-					<label>{{ $t("providerDetail.enabledProtocols") }}</label>
-					<TagListEditor
-						v-model="providerConfig.enabled_protocols"
-						:suggestions="providerProtocolSuggestions(providerConfig)"
-						:placeholder="$t('providerDetail.protocolsPlaceholder')"
-					/>
-
-					<label>{{ $t("providerDetail.disabledProtocols") }}</label>
-					<TagListEditor
-						v-model="providerConfig.disabled_protocols"
-						:suggestions="providerProtocolSuggestions(providerConfig)"
-						:placeholder="$t('providerDetail.protocolsPlaceholder')"
-					/>
 				</div>
 			</section>
 
@@ -374,14 +362,14 @@
 				</section>
 
 				<section class="info-section">
-					<h3>Protocol Detection</h3>
+					<h3>{{ $t("providerDetail.protocolDetection") }}</h3>
 					<div class="runtime-actions">
 						<button
 							@click="runProtocolDetect"
 							class="btn btn-secondary"
 							:disabled="detectingProtocols"
 						>
-							{{ detectingProtocols ? "Detecting..." : "Detect Display Protocols" }}
+							{{ detectingProtocols ? $t("providerDetail.detecting") : $t("providerDetail.detectDisplayProtocols") }}
 						</button>
 						<span v-if="detail.last_protocol_probe" class="hint">
 							{{ detail.last_protocol_probe.status }} · {{ formatTime(detail.last_protocol_probe.checked_at) }}
@@ -391,7 +379,7 @@
 
 					<div class="probe-grid">
 						<select v-model="selectedProbeModel" class="form-input">
-							<option value="">Select model</option>
+							<option value="">{{ $t("providerDetail.selectModel") }}</option>
 							<option v-for="model in probeableModels" :key="model" :value="model">
 								{{ model }}
 							</option>
@@ -407,7 +395,7 @@
 							class="btn btn-primary"
 							:disabled="exactProbing || !selectedProbeModel"
 						>
-							{{ exactProbing ? "Probing..." : "Probe Model Protocol" }}
+							{{ exactProbing ? $t("providerDetail.probing") : $t("providerDetail.probeModelProtocol") }}
 						</button>
 					</div>
 
@@ -416,14 +404,14 @@
 						<span v-if="protocolProbeResult.error"> · {{ protocolProbeResult.error }}</span>
 					</div>
 
-					<table v-if="exactProbeResults.length > 0" class="data-table" style="margin-top: 12px;">
+					<table v-if="exactProbeResults.length > 0" class="data-table probe-results-table">
 						<thead>
 							<tr>
-								<th>model</th>
-								<th>protocol</th>
-								<th>status</th>
-								<th>checked_at</th>
-								<th>error</th>
+								<th>{{ $t("providerDetail.probeColModel") }}</th>
+								<th>{{ $t("providerDetail.probeColProtocol") }}</th>
+								<th>{{ $t("providerDetail.probeColStatus") }}</th>
+								<th>{{ $t("providerDetail.probeColCheckedAt") }}</th>
+								<th>{{ $t("providerDetail.probeColError") }}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -465,11 +453,11 @@
 					>
 						{{
 							healthResult.status === "ok"
-								? t("providerDetail.healthOk", {
+								? $t("providerDetail.healthOk", {
 										latency: healthResult.latency_ms,
 										count: healthResult.model_count,
 									})
-								: t("providerDetail.healthError", { error: healthResult.error })
+								: $t("providerDetail.healthError", { error: healthResult.error })
 						}}
 					</span>
 				</div>
@@ -520,7 +508,9 @@ const healthResult = ref(null);
 const saving = ref(false);
 const loading = ref(false);
 const dirty = ref(false);
+const suppressDirty = ref(false);
 const showAPIKey = ref(false);
+const apiKeyTouched = ref(false);
 const configFileChanged = ref(false);
 const waitingAlive = ref(false);
 const waitingElapsed = ref(0);
@@ -533,7 +523,7 @@ const exactProbing = ref(false);
 watch(
 	[providerName, providerConfig],
 	() => {
-		if (!loading.value) dirty.value = true;
+		if (!suppressDirty.value) dirty.value = true;
 	},
 	{ deep: true },
 );
@@ -600,31 +590,13 @@ function createEmptyProviderConfig() {
 		url: "",
 		family: "",
 		models: [],
-		enabled_protocols: [],
-		disabled_protocols: [],
+		responses_to_chat: false,
 		anthropic_to_chat: false,
 	};
 }
 
 function providerFamily(provider) {
-	return String(provider?.family || provider?.protocol || "").trim().toLowerCase();
-}
-
-function providerProtocolSuggestions(provider) {
-	switch (providerFamily(provider)) {
-		case "anthropic":
-			return ["chat", "anthropic"];
-		case "openai":
-			return provider?.anthropic_to_chat
-				? ["chat", "responses_stateless", "responses_stateful", "anthropic"]
-				: ["chat", "responses_stateless", "responses_stateful"];
-		case "qwen":
-		case "copilot":
-		case "ollama":
-			return ["chat"];
-		default:
-			return ["chat", "responses_stateless", "responses_stateful", "anthropic"];
-	}
+	return String(provider?.family || "").trim().toLowerCase();
 }
 
 function secretDisplay(val) {
@@ -632,7 +604,7 @@ function secretDisplay(val) {
 }
 
 function isSecretConfigured(val) {
-	return !!(val && val !== "");
+	return !!val;
 }
 
 function providerUrlPlaceholder(protocol) {
@@ -723,6 +695,7 @@ function pruneProviderReferences(nextConfig, targetProvider) {
 
 async function load() {
 	loading.value = true;
+	suppressDirty.value = true;
 	error.value = "";
 	healthResult.value = null;
 	configFileChanged.value = false;
@@ -731,6 +704,7 @@ async function load() {
 		configDoc.value = cfg;
 		configSource.value = source;
 		showAPIKey.value = false;
+		apiKeyTouched.value = false;
 
 		if (props.create) {
 			providerName.value = "";
@@ -747,8 +721,6 @@ async function load() {
 				...cloneData(provider),
 				family: provider.family || provider.protocol || "",
 				models: [...(provider.models || [])],
-				enabled_protocols: [...(provider.enabled_protocols || [])],
-				disabled_protocols: [...(provider.disabled_protocols || [])],
 			};
 			detail.value = await fetchProviderDetail(props.name);
 			if (!selectedProbeModel.value && discoveredModelIds.value.length > 0) {
@@ -760,6 +732,7 @@ async function load() {
 	} catch (e) {
 		error.value = e.message;
 	} finally {
+		suppressDirty.value = false;
 		loading.value = false;
 	}
 }
@@ -814,6 +787,11 @@ async function apply() {
 			error.value = t("providerDetail.familyRequired");
 			return;
 		}
+		const family = providerFamily(providerConfig.value);
+		if (!['qwen', 'copilot'].includes(family) && !providerConfig.value.url?.trim()) {
+			error.value = t("providerDetail.urlRequired");
+			return;
+		}
 
 		const nextConfig = cloneData(configDoc.value);
 		nextConfig.provider = nextConfig.provider || {};
@@ -826,6 +804,9 @@ async function apply() {
 		const nextProviderConfig = cloneData(providerConfig.value);
 		nextProviderConfig.family = providerFamily(nextProviderConfig);
 		delete nextProviderConfig.protocol;
+		if (!apiKeyTouched.value) {
+			delete nextProviderConfig.api_key;
+		}
 		nextConfig.provider[name] = nextProviderConfig;
 
 		const cleaned = cleanConfig(nextConfig);
@@ -1020,6 +1001,10 @@ async function unsuppressProvider() {
 	grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
 	gap: 10px;
 	align-items: center;
+	margin-top: 12px;
+}
+
+.probe-results-table {
 	margin-top: 12px;
 }
 

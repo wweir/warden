@@ -22,17 +22,21 @@
 			<table v-else class="data-table">
 				<thead>
 					<tr>
+						<th>{{ $t("apikeys.route") }}</th>
 						<th>{{ $t("apikeys.name") }}</th>
 						<th>{{ $t("apikeys.actions") }}</th>
 					</tr>
 				</thead>
 				<tbody>
-					<tr v-for="key in keys" :key="key.name">
+					<tr v-for="key in keys" :key="key.route + ':' + key.name">
+						<td>
+							<code>{{ key.route }}</code>
+						</td>
 						<td>
 							<code>{{ key.name }}</code>
 						</td>
 						<td>
-							<button class="btn btn-danger btn-sm" @click="deleteKey(key.name)">
+							<button class="btn btn-danger btn-sm" @click="deleteKey(key.route, key.name)">
 								{{ $t("apikeys.delete") }}
 							</button>
 						</td>
@@ -46,6 +50,14 @@
 			<div class="modal">
 				<h3>{{ $t("apikeys.createNewKey") }}</h3>
 				<div class="form-group">
+					<label>{{ $t("apikeys.route") }}</label>
+					<input
+						v-model="newKeyRoute"
+						class="form-input"
+						:placeholder="$t('apikeys.routePlaceholder')"
+					/>
+				</div>
+				<div class="form-group">
 					<label>{{ $t("apikeys.keyName") }}</label>
 					<input
 						v-model="newKeyName"
@@ -58,7 +70,7 @@
 					<button class="btn btn-secondary" @click="showCreateModal = false">
 						{{ $t("common.cancel") }}
 					</button>
-					<button class="btn btn-primary" @click="createKey" :disabled="!newKeyName.trim()">
+					<button class="btn btn-primary" @click="createKey" :disabled="!newKeyRoute.trim() || !newKeyName.trim()">
 						{{ $t("apikeys.create") }}
 					</button>
 				</div>
@@ -99,6 +111,7 @@ const error = ref("");
 
 const showCreateModal = ref(false);
 const showKeyModal = ref(false);
+const newKeyRoute = ref("");
 const newKeyName = ref("");
 const createdKey = ref("");
 
@@ -116,18 +129,20 @@ async function loadKeys() {
 }
 
 async function createKey() {
+	const route = newKeyRoute.value.trim();
 	const name = newKeyName.value.trim();
-	if (!name) return;
+	if (!route || !name) return;
 
 	error.value = "";
 	message.value = "";
 
 	try {
-		const result = await createAPIKey(name);
+		const result = await createAPIKey(route, name);
 		if (result.key) {
 			createdKey.value = result.key;
 			showCreateModal.value = false;
 			showKeyModal.value = true;
+			newKeyRoute.value = "";
 			newKeyName.value = "";
 			await loadKeys();
 		}
@@ -136,15 +151,15 @@ async function createKey() {
 	}
 }
 
-async function deleteKey(name) {
-	if (!confirm(t("apikeys.confirmDelete", { name }))) return;
+async function deleteKey(route, name) {
+	if (!confirm(t("apikeys.confirmDelete", { route, name }))) return;
 
 	error.value = "";
 	message.value = "";
 
 	try {
-		await deleteAPIKey(name);
-		message.value = t("apikeys.deleted", { name });
+		await deleteAPIKey(route, name);
+		message.value = t("apikeys.deleted", { route, name });
 		messageType.value = "success";
 		await loadKeys();
 	} catch (e) {

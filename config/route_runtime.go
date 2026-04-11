@@ -64,35 +64,7 @@ func CandidateRouteProtocols(prov *ProviderConfig) []string {
 }
 
 func SupportedRouteProtocols(prov *ProviderConfig) []string {
-	if prov == nil {
-		return nil
-	}
-
-	candidates := CandidateRouteProtocols(prov)
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	enabled := make(map[string]bool, len(prov.EnabledProtocols))
-	for _, protocol := range prov.EnabledProtocols {
-		enabled[normalizeRouteProtocol(protocol)] = true
-	}
-	disabled := make(map[string]bool, len(prov.DisabledProtocols))
-	for _, protocol := range prov.DisabledProtocols {
-		disabled[normalizeRouteProtocol(protocol)] = true
-	}
-
-	filtered := make([]string, 0, len(candidates))
-	for _, protocol := range candidates {
-		if len(enabled) > 0 && !enabled[protocol] {
-			continue
-		}
-		if disabled[protocol] {
-			continue
-		}
-		filtered = append(filtered, protocol)
-	}
-	return filtered
+	return CandidateRouteProtocols(prov)
 }
 
 func ProviderSupportsConfiguredProtocol(prov *ProviderConfig, routeProtocol string) bool {

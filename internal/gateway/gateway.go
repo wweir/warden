@@ -61,7 +61,7 @@ func (g *Gateway) adminHandler() *adminpkg.Handler {
 			return snapshotpkg.CollectMetricsData(g.selector.ProviderStatuses(), g.outputRates, g.dashboardStore)
 		},
 		ListAPIKeys: func() []map[string]any {
-			return snapshotpkg.ListAPIKeysPayload(g.cfg.APIKeys)
+			return snapshotpkg.ListAPIKeysPayload(g.cfg.Route)
 		},
 	})
 	return g.admin

@@ -481,19 +481,6 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 	}
 }
 
-func TestSupportedRouteProtocolsRespectsEnabledAndDisabledFilters(t *testing.T) {
-	provider := &ProviderConfig{
-		Protocol:          ProviderProtocolOpenAI,
-		EnabledProtocols:  []string{RouteProtocolChat, RouteProtocolResponsesStateful},
-		DisabledProtocols: []string{RouteProtocolResponsesStateful},
-	}
-
-	got := SupportedRouteProtocols(provider)
-	want := []string{RouteProtocolChat}
-	if !slices.Equal(got, want) {
-		t.Fatalf("SupportedRouteProtocols() = %v, want %v", got, want)
-	}
-}
 
 func TestValidateProviderFamilyAlias(t *testing.T) {
 	cfg := &ConfigStruct{
@@ -584,64 +571,6 @@ func TestValidateProviderRequiresExplicitFamilyOrProtocol(t *testing.T) {
 	}
 }
 
-func TestValidateProviderProtocolFiltersRejectUnsupportedProtocol(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"anthropic": {
-				Family:           ProviderProtocolAnthropic,
-				URL:              "https://api.anthropic.com/v1",
-				APIKey:           "test-key",
-				EnabledProtocols: []string{RouteProtocolResponsesStateless},
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"anthropic"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "is not supported by provider family anthropic") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateProviderProtocolFiltersRejectEmptyEffectiveProtocols(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"openai": {
-				Protocol:          ProviderProtocolOpenAI,
-				URL:               "https://api.openai.com/v1",
-				APIKey:            "test-key",
-				DisabledProtocols: []string{RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful},
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"openai"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "remove all compatible route protocols") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
@@ -725,5 +654,59 @@ func TestValidateRouteConfigRejectsInvalidProtocolName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "responses_stateless/responses_stateful") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRejectsTopLevelAPIKeys(t *testing.T) {
+	cfg := &ConfigStruct{
+		APIKeys: map[string]SecretString{
+			"legacy": "secret",
+		},
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
+					},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "top-level api_keys is deprecated") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAcceptsRouteAPIKeys(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: RouteProtocolChat,
+				APIKeys: map[string]SecretString{
+					"client": "secret",
+				},
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
+					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }

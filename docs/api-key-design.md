@@ -1,6 +1,6 @@
 # API Key 管理与敏感信息编码方案
 
-> 更新日期：2026-03-28
+> 更新日期：2026-04-01
 >
 > 状态：current
 
@@ -10,9 +10,9 @@
 
 当前方案覆盖三件事：
 
-1. `api_keys` 作为整份配置的一部分持久化，并由管理端统一编辑
-2. 网关在 `api_keys` 非空时校验客户端 API Key；为空时不做客户端鉴权
-3. `admin_password`、`api_keys`、`provider.*.api_key` 写入配置时统一 base64 编码，读取时兼容 base64 和明文
+1. 客户端 API Key 按 route 单独配置在 `route.<prefix>.api_keys`
+2. 网关只在命中 route 且该 route 配置了 `api_keys` 时校验客户端 API Key；未配置时放行
+3. `admin_password`、`route.<prefix>.api_keys`、`provider.*.api_key` 写入配置时统一 base64 编码，读取时兼容 base64 和明文
 
 ## 2. 当前实现
 
@@ -32,7 +32,7 @@
 敏感字段都已经切到 `SecretString`：
 
 - `config.ConfigStruct.AdminPassword`
-- `config.ConfigStruct.APIKeys`
+- `config.RouteConfig.APIKeys`
 - `config.ProviderConfig.APIKey`
 
 因此：
@@ -47,11 +47,11 @@
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| `GET` | `/_admin/api/apikeys` | 返回当前 API Key 名称与按密钥聚合的用量统计 |
-| `POST` | `/_admin/api/apikeys` | 生成并写入新的客户端 API Key |
-| `DELETE` | `/_admin/api/apikeys` | 删除指定客户端 API Key |
+| `GET` | `/_admin/api/apikeys` | 返回当前 route API Key 列表与按 `route + key` 聚合的用量统计 |
+| `POST` | `/_admin/api/apikeys` | 为指定 route 生成并写入新的客户端 API Key |
+| `DELETE` | `/_admin/api/apikeys` | 删除指定 route 下的客户端 API Key |
 | `GET` | `/_admin/api/config` | 返回脱敏后的整份配置 |
-| `PUT` | `/_admin/api/config` | 保存整份配置，`api_keys` 作为配置的一部分一起提交 |
+| `PUT` | `/_admin/api/config` | 保存整份配置，`route.<prefix>.api_keys` 作为配置的一部分一起提交 |
 
 说明：
 
@@ -60,19 +60,18 @@
 
 ### 2.4 前端入口
 
-`web/admin` 当前没有独立 API Key 页面，入口在 `Config` 页面。
-
 当前支持：
 
-- 本地生成新密钥
-- 删除现有密钥
-- 查看按密钥聚合的请求数与 token 用量
+- 为某个 route 生成新密钥
+- 删除某个 route 下的现有密钥
+- 查看按 `route + key` 聚合的请求数与 token 用量
 
 ## 3. 边界
 
 ### 3.1 客户端 API Key 与 Provider API Key 严格分离
 
 - 客户端 API Key 只用于进入网关时认证
+- 每个 route 只接受自己配置的 `api_keys`
 - 认证成功后，网关会移除客户端传入的 `Authorization`、`Api-Key`、`X-Api-Key`
 - 上游 provider 认证由 `provider.*.api_key` 或本地 OAuth 凭证单独注入
 
@@ -80,10 +79,11 @@
 
 ### 3.2 用量统计是聚合视图，不是逐次审计日志
 
-当前按密钥聚合展示：
+当前按 `route + key` 聚合展示：
 
 - 请求数：总数、成功数、失败数
 - token：输入 token、输出 token
+- 结构化请求日志会记录命中的客户端 key 名，便于定位调用方
 
 管理端会按 key 聚合，但底层指标仍保留 route / route_model / endpoint 等运行时维度。
 
@@ -102,7 +102,6 @@ secret 读取兼容明文和 base64，但这个兼容策略依赖一个前提：
 - 权限分级
 - key 描述、创建时间、最后使用时间
 - 密钥导入导出
-- 单独的 API Key 管理页面
 - 密钥轮换工作流
 - 逐次调用审计与异常告警
 

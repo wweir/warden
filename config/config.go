@@ -18,7 +18,7 @@ var ExampleConfig string
 type ConfigStruct struct {
 	Addr          string                     `json:"addr" usage:"Gateway listening address"`
 	AdminPassword SecretString               `json:"admin_password" usage:"Admin panel password (empty to disable)"`
-	APIKeys       map[string]SecretString    `json:"api_keys" usage:"API keys for programmatic access (name -> key)"`
+	APIKeys       map[string]SecretString    `json:"api_keys" usage:"Deprecated: move client API keys into route.<prefix>.api_keys"`
 	Log           *LogConfig                 `json:"log" usage:"Request/response logging configuration"`
 	Webhook       map[string]*WebhookConfig  `json:"webhook" usage:"Reusable HTTP webhook configurations (referenced by log http targets)"`
 	Provider      map[string]*ProviderConfig `json:"provider" usage:"Upstream LLM provider configurations"`
@@ -85,9 +85,7 @@ type ProviderConfig struct {
 	Proxy             string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers           map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models            []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	EnabledProtocols  []string          `json:"enabled_protocols" usage:"Optional allowlist of externally exposed route protocols for this provider family"`
-	DisabledProtocols []string          `json:"disabled_protocols" usage:"Optional denylist of externally exposed route protocols for this provider family"`
-	ResponsesToChat   bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	ResponsesToChat bool `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
 	AnthropicToChat   bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
@@ -175,6 +173,7 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 type RouteConfig struct {
 	Prefix         string                               `json:"-"` // populated from map key
 	Protocol       string                               `json:"protocol" usage:"The single external protocol exposed by this route: chat, responses_stateless, responses_stateful, or anthropic"`
+	APIKeys        map[string]SecretString              `json:"api_keys" usage:"Client API keys allowed to access this route (name -> key); empty means no client auth"`
 	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings for this route protocol; each entry defines explicit upstream provider/model targets"`
 	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings for this route protocol; each pattern defines ordered upstream providers and forwards the requested model unchanged"`
 	Hooks          []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`

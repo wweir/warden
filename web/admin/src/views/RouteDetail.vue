@@ -513,14 +513,10 @@ function deepClone(value) {
 
 function supportedRouteProtocols(provider) {
   const family = normalizeText(provider?.family || provider?.protocol)
-  let protocols = []
-  if (family === 'anthropic') protocols = ['chat', 'anthropic']
-  else if (family === 'openai') protocols = ['chat', 'responses_stateless', 'responses_stateful']
-  else if (['qwen', 'copilot', 'ollama'].includes(family)) protocols = ['chat']
-
-  const enabled = new Set((provider?.enabled_protocols || []).map((value) => normalizeText(value)))
-  const disabled = new Set((provider?.disabled_protocols || []).map((value) => normalizeText(value)))
-  return protocols.filter((protocol) => (enabled.size === 0 || enabled.has(protocol)) && !disabled.has(protocol))
+  if (family === 'anthropic') return ['chat', 'anthropic']
+  if (family === 'openai') return ['chat', 'responses_stateless', 'responses_stateful']
+  if (['qwen', 'copilot', 'ollama'].includes(family)) return ['chat']
+  return []
 }
 
 function defaultProviderForProtocol(protocol, providerConfigMap = {}) {

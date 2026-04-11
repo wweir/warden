@@ -44,9 +44,6 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := &config.ConfigStruct{
-		APIKeys: map[string]config.SecretString{
-			clientKeyName: clientKeyValue,
-		},
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
@@ -57,6 +54,9 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
 				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					clientKeyName: clientKeyValue,
+				},
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": testExactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
@@ -73,6 +73,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	beforeRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
 	beforePrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
 	beforeCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	beforeExactObservation := testutil.ToFloat64(telemetrypkg.APIKeyTokenObservationCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "exact", "reported_json"))
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer "+clientKeyValue)
@@ -94,6 +95,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	afterRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
 	afterPrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
 	afterCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	afterExactObservation := testutil.ToFloat64(telemetrypkg.APIKeyTokenObservationCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "exact", "reported_json"))
 
 	if afterRequests-beforeRequests != 1 {
 		t.Fatalf("api key request delta = %v, want 1", afterRequests-beforeRequests)
@@ -104,15 +106,33 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	if afterCompletion-beforeCompletion != 5 {
 		t.Fatalf("api key completion token delta = %v, want 5", afterCompletion-beforeCompletion)
 	}
+	if afterExactObservation-beforeExactObservation != 1 {
+		t.Fatalf("api key exact observation delta = %v, want 1", afterExactObservation-beforeExactObservation)
+	}
+
+	records := gw.Broadcaster().Recent()
+	if len(records) == 0 {
+		t.Fatal("expected request log record")
+	}
+	last := records[len(records)-1]
+	if last.APIKey != clientKeyName {
+		t.Fatalf("log api_key = %q, want %q", last.APIKey, clientKeyName)
+	}
+	if last.TokenUsage == nil {
+		t.Fatal("expected token_usage in request log")
+	}
+	if last.TokenUsage.PromptTokens != 3 || last.TokenUsage.CompletionTokens != 5 {
+		t.Fatalf("unexpected token_usage: %+v", last.TokenUsage)
+	}
+	if last.TokenUsage.Completeness != "exact" || last.TokenUsage.Source != "reported_json" {
+		t.Fatalf("unexpected token_usage metadata: %+v", last.TokenUsage)
+	}
 }
 
 func TestGatewayConfiguredAPIKeyRejectsUnauthorizedRequest(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.ConfigStruct{
-		APIKeys: map[string]config.SecretString{
-			"client-reject-test": "valid-token",
-		},
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "http://127.0.0.1:1",
@@ -123,6 +143,9 @@ func TestGatewayConfiguredAPIKeyRejectsUnauthorizedRequest(t *testing.T) {
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
 				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"client-reject-test": "valid-token",
+				},
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": testExactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
@@ -154,9 +177,13 @@ func TestMaskAPIKeysRedactsKeyValues(t *testing.T) {
 
 	cfg := map[string]any{
 		"admin_password": "secret",
-		"api_keys": map[string]any{
-			"client-a": "token-a",
-			"client-b": "token-b",
+		"route": map[string]any{
+			"/openai": map[string]any{
+				"api_keys": map[string]any{
+					"client-a": "token-a",
+					"client-b": "token-b",
+				},
+			},
 		},
 		"provider": map[string]any{
 			"openai": map[string]any{
@@ -170,7 +197,7 @@ func TestMaskAPIKeysRedactsKeyValues(t *testing.T) {
 	if cfg["admin_password"] != adminpkg.RedactedPlaceholder {
 		t.Fatalf("admin_password = %#v", cfg["admin_password"])
 	}
-	apiKeys := cfg["api_keys"].(map[string]any)
+	apiKeys := cfg["route"].(map[string]any)["/openai"].(map[string]any)["api_keys"].(map[string]any)
 	if apiKeys["client-a"] != adminpkg.RedactedPlaceholder || apiKeys["client-b"] != adminpkg.RedactedPlaceholder {
 		t.Fatalf("api_keys not redacted: %#v", apiKeys)
 	}

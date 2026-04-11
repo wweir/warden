@@ -24,6 +24,9 @@ const providerCredCheckTimeout = 5 * time.Second
 
 // Validate checks configuration validity.
 func (c *ConfigStruct) Validate() error {
+	if len(c.APIKeys) > 0 {
+		return NewValidationError("top-level api_keys is deprecated; move client API keys into route.<prefix>.api_keys")
+	}
 	if err := c.validateLogConfig(); err != nil {
 		return err
 	}
@@ -145,10 +148,6 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/ollama/qwen/copilot)", name, prov.Protocol)
 		}
 
-		if err := validateProviderProtocolFilters(name, prov); err != nil {
-			return err
-		}
-
 		if prov.Timeout != "" {
 			if _, err := time.ParseDuration(prov.Timeout); err != nil {
 				return NewValidationError("provider %s: invalid timeout %s: %v", name, prov.Timeout, err)
@@ -187,6 +186,9 @@ func (c *ConfigStruct) validateRouteConfig() error {
 
 		if len(route.ExactModels) == 0 && len(route.WildcardModels) == 0 {
 			return NewValidationError("route %s: exact_models or wildcard_models is required", prefix)
+		}
+		if err := validateRouteAPIKeys(prefix, route.APIKeys); err != nil {
+			return err
 		}
 
 		for i, rule := range route.Hooks {
@@ -230,6 +232,18 @@ func (c *ConfigStruct) validateRouteConfig() error {
 		}
 	}
 
+	return nil
+}
+
+func validateRouteAPIKeys(prefix string, keys map[string]SecretString) error {
+	for name, key := range keys {
+		if strings.TrimSpace(name) == "" {
+			return NewValidationError("route %s api_keys: key name is required", prefix)
+		}
+		if strings.TrimSpace(key.Value()) == "" {
+			return NewValidationError("route %s api_keys[%q]: key value is required", prefix, name)
+		}
+	}
 	return nil
 }
 
@@ -345,63 +359,6 @@ func validateConfiguredProtocolName(prefix, modelName, protocol string) error {
 		}
 		return NewValidationError("route %s model %q: invalid protocol %q (must be chat/responses_stateless/responses_stateful/anthropic)", prefix, modelName, protocol)
 	}
-}
-
-func validateProviderProtocolFilters(name string, prov *ProviderConfig) error {
-	candidates := CandidateRouteProtocols(prov)
-	candidateSet := make(map[string]bool, len(candidates))
-	for _, protocol := range candidates {
-		candidateSet[protocol] = true
-	}
-
-	normalizeList := func(field string, values []string) ([]string, error) {
-		if len(values) == 0 {
-			return nil, nil
-		}
-		normalized := make([]string, 0, len(values))
-		seen := make(map[string]bool, len(values))
-		for idx, value := range values {
-			protocol := normalizeRouteProtocol(value)
-			if err := validateConfiguredProtocolName("", "", protocol); err != nil {
-				return nil, NewValidationError("provider %s %s[%d]: invalid protocol %q (must be chat/responses_stateless/responses_stateful/anthropic)", name, field, idx, value)
-			}
-			if !candidateSet[protocol] {
-				return nil, NewValidationError("provider %s %s[%d]: protocol %q is not supported by provider family %s", name, field, idx, protocol, prov.Protocol)
-			}
-			if seen[protocol] {
-				continue
-			}
-			seen[protocol] = true
-			normalized = append(normalized, protocol)
-		}
-		return normalized, nil
-	}
-
-	var err error
-	prov.EnabledProtocols, err = normalizeList("enabled_protocols", prov.EnabledProtocols)
-	if err != nil {
-		return err
-	}
-	prov.DisabledProtocols, err = normalizeList("disabled_protocols", prov.DisabledProtocols)
-	if err != nil {
-		return err
-	}
-
-	disabled := make(map[string]bool, len(prov.DisabledProtocols))
-	for _, protocol := range prov.DisabledProtocols {
-		disabled[protocol] = true
-	}
-	for _, protocol := range prov.EnabledProtocols {
-		if disabled[protocol] {
-			return NewValidationError("provider %s: protocol %q cannot appear in both enabled_protocols and disabled_protocols", name, protocol)
-		}
-	}
-
-	if len(SupportedRouteProtocols(prov)) == 0 {
-		return NewValidationError("provider %s: enabled_protocols/disabled_protocols remove all compatible route protocols", name)
-	}
-
-	return nil
 }
 
 func routeModelPromptEnabled(explicit *bool, prompt string) bool {

@@ -46,11 +46,13 @@ func TestAPIKeyAuthBypassesWhenNoKeysConfigured(t *testing.T) {
 
 func TestAPIKeyAuthRejectsMissingOrInvalidKey(t *testing.T) {
 	cfg := &config.ConfigStruct{
-		APIKeys: map[string]config.SecretString{
-			"client": "valid-token",
-		},
 		Route: map[string]*config.RouteConfig{
-			"/openai": {Protocol: config.RouteProtocolChat},
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"client": "valid-token",
+				},
+			},
 		},
 	}
 	handler := (&APIKeyAuth{Cfg: cfg}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,5 +85,55 @@ func TestAPIKeyAuthRejectsMissingOrInvalidKey(t *testing.T) {
 				t.Fatalf("error message = %q", body["error"]["message"])
 			}
 		})
+	}
+}
+
+func TestAPIKeyAuthBypassesRouteWithoutKeys(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Route: map[string]*config.RouteConfig{
+			"/public": {Protocol: config.RouteProtocolChat},
+		},
+	}
+	handler := (&APIKeyAuth{Cfg: cfg}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/public/chat/completions", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIKeyAuthUsesLongestMatchedRoute(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"outer": "outer-token",
+				},
+			},
+			"/openai/internal": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"inner": "inner-token",
+				},
+			},
+		},
+	}
+	handler := (&APIKeyAuth{Cfg: cfg}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/openai/internal/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer inner-token")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
 }

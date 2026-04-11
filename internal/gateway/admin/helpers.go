@@ -68,14 +68,6 @@ func InjectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 	if cfg.AdminPassword != "" {
 		cfgMap["admin_password"] = cfg.AdminPassword.Value()
 	}
-	if len(cfg.APIKeys) > 0 {
-		apiKeysMap, _ := cfgMap["api_keys"].(map[string]any)
-		for name, key := range cfg.APIKeys {
-			if key != "" && apiKeysMap != nil {
-				apiKeysMap[name] = key.Value()
-			}
-		}
-	}
 	providerMap, _ := cfgMap["provider"].(map[string]any)
 	for name, prov := range cfg.Provider {
 		if prov.APIKey.Value() == "" {
@@ -83,6 +75,25 @@ func InjectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 		}
 		if pm, ok := providerMap[name].(map[string]any); ok {
 			pm["api_key"] = prov.APIKey.Value()
+		}
+	}
+	routeMap, _ := cfgMap["route"].(map[string]any)
+	for name, route := range cfg.Route {
+		if len(route.APIKeys) == 0 {
+			continue
+		}
+		rm, ok := routeMap[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		apiKeysMap, _ := rm["api_keys"].(map[string]any)
+		if apiKeysMap == nil {
+			continue
+		}
+		for keyName, keyValue := range route.APIKeys {
+			if keyValue != "" {
+				apiKeysMap[keyName] = keyValue.Value()
+			}
 		}
 	}
 }
@@ -120,31 +131,37 @@ func DropOAuthProviderAPIKey(cfgMap map[string]any) {
 }
 
 func NormalizeSecretConfigJSON(cfgMap map[string]any) {
-	if adminPassword, ok := cfgMap["admin_password"].(string); ok && adminPassword != "" {
-		cfgMap["admin_password"] = config.NormalizeSecretStorage(adminPassword)
-	}
-
-	if apiKeysMap, ok := cfgMap["api_keys"].(map[string]any); ok {
-		for name, raw := range apiKeysMap {
-			value, ok := raw.(string)
-			if !ok || value == "" {
-				continue
-			}
-			apiKeysMap[name] = config.NormalizeSecretStorage(value)
-		}
+	if secret, ok := cfgMap["admin_password"].(string); ok && secret != "" {
+		cfgMap["admin_password"] = config.NormalizeSecretStorage(secret)
 	}
 
 	providerMap, _ := cfgMap["provider"].(map[string]any)
 	for _, raw := range providerMap {
-		pm, ok := raw.(map[string]any)
+		providerCfg, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		apiKey, ok := pm["api_key"].(string)
-		if !ok || apiKey == "" {
+		secret, ok := providerCfg["api_key"].(string)
+		if !ok || secret == "" {
 			continue
 		}
-		pm["api_key"] = config.NormalizeSecretStorage(apiKey)
+		providerCfg["api_key"] = config.NormalizeSecretStorage(secret)
+	}
+
+	routeMap, _ := cfgMap["route"].(map[string]any)
+	for _, raw := range routeMap {
+		routeCfg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		apiKeysMap, _ := routeCfg["api_keys"].(map[string]any)
+		for name, keyValue := range apiKeysMap {
+			secret, ok := keyValue.(string)
+			if !ok || secret == "" {
+				continue
+			}
+			apiKeysMap[name] = config.NormalizeSecretStorage(secret)
+		}
 	}
 }
 

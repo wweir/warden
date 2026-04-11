@@ -56,7 +56,7 @@
             <button class="btn btn-secondary btn-sm" @click.stop="ping(p.name)">
               {{ pinging[p.name] ? '...' : $t('providers.ping') }}
             </button>
-            <span v-if="pingResults[p.name]" :class="pingResults[p.name].status === 'ok' ? 'text-success' : 'text-error'" style="font-size:12px">
+            <span v-if="pingResults[p.name]" :class="pingResults[p.name].status === 'ok' ? 'text-success' : 'text-error'" class="ping-result-text">
               {{ pingResults[p.name].status === 'ok'
                 ? pingResults[p.name].latency_ms + 'ms'
                 : pingResults[p.name].error }}
@@ -74,7 +74,7 @@
           </div>
         </StatusCard>
       </div>
-      <p v-if="filtered.length === 0" class="empty" style="margin-top:16px">{{ $t('providers.noMatch', { query: search }) }}</p>
+      <p v-if="filtered.length === 0" class="empty empty-hint">{{ $t('providers.noMatch', { query: search }) }}</p>
     </div>
   </div>
 </template>
@@ -254,13 +254,19 @@ onUnmounted(() => {
   border-radius: 4px;
   font-weight: 500;
 }
+.ping-result-text {
+  font-size: 12px;
+}
+.empty-hint {
+  margin-top: 16px;
+}
 .stat-badge.warn {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--c-warning-bg, #fef3c7);
+  color: var(--c-warning-text, #92400e);
 }
 .stat-badge.error {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--c-danger-bg, #fee2e2);
+  color: var(--c-danger-text, #991b1b);
 }
 
 @media (max-width: 768px) {
