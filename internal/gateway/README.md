@@ -85,7 +85,7 @@
 - Token usage observation is extracted before metrics/logging fan-out, so route/provider/API-key counters, throughput, and request logs all consume the same normalized observation result.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
 - Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion; Responses stream tool hooks also recover function calls from incremental events when `response.completed` never arrives.
-- Exact token counters and throughput only advance when usage observation is `exact`; separate `*_token_observations_total` counters expose `exact|partial|missing` coverage by route/provider/API key.
+- Exact token counters and throughput only advance when usage observation is `exact`; separate `*_token_observations_total` counters expose `exact|partial|missing` coverage by route/provider/API key. Exact token counters keep existing `prompt` / `completion` buckets and additionally expose `cache` when the provider reports cache-specific token details.
 - Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
 
 ## Admin Telemetry Flow

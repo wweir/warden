@@ -33,6 +33,7 @@ type Record struct {
 type TokenUsage struct {
 	PromptTokens     int64  `json:"prompt_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
+	CacheTokens      int64  `json:"cache_tokens,omitempty"`
 	TotalTokens      int64  `json:"total_tokens,omitempty"`
 	Source           string `json:"source,omitempty"`
 	Completeness     string `json:"completeness,omitempty"`

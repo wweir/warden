@@ -354,6 +354,16 @@ func CollectDashboardCounters(outputRates *telemetrypkg.OutputRateTracker) telem
 	}
 
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteTokenCounter) {
+		tokenType := ""
+		for _, label := range met.GetLabel() {
+			if label.GetName() == "type" {
+				tokenType = label.GetValue()
+				break
+			}
+		}
+		if tokenType != "prompt" && tokenType != "completion" {
+			continue
+		}
 		sample.Tokens += met.GetCounter().GetValue()
 	}
 
@@ -390,6 +400,7 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 		FailureRequests      int64 `json:"failure_requests"`
 		PromptTokens         int64 `json:"prompt_tokens"`
 		CompletionTokens     int64 `json:"completion_tokens"`
+		CacheTokens          int64 `json:"cache_tokens"`
 		ExactUsageRequests   int64 `json:"exact_usage_requests"`
 		PartialUsageRequests int64 `json:"partial_usage_requests"`
 		MissingUsageRequests int64 `json:"missing_usage_requests"`
@@ -458,6 +469,8 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 			row.PromptTokens += value
 		case "completion":
 			row.CompletionTokens += value
+		case "cache":
+			row.CacheTokens += value
 		}
 	}
 

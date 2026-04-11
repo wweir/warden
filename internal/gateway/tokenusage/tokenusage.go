@@ -21,6 +21,7 @@ const (
 type Observation struct {
 	PromptTokens     int64  `json:"prompt_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
+	CacheTokens      int64  `json:"cache_tokens,omitempty"`
 	TotalTokens      int64  `json:"total_tokens,omitempty"`
 	Source           string `json:"source,omitempty"`
 	Completeness     string `json:"completeness,omitempty"`
@@ -130,6 +131,7 @@ func FromAnthropicStream(body []byte) Observation {
 		promptTokens       int64
 		completionObserved bool
 		completionTokens   int64
+		cacheTokens        int64
 		totalObserved      bool
 		totalTokens        int64
 	)
@@ -154,6 +156,7 @@ func FromAnthropicStream(body []byte) Observation {
 				promptObserved = true
 				promptTokens = input.Int()
 			}
+			cacheTokens = cacheTokensFromUsage(usage)
 			total := usage.Get("total_tokens")
 			if total.Exists() {
 				totalObserved = true
@@ -176,7 +179,9 @@ func FromAnthropicStream(body []byte) Observation {
 		}
 	}
 
-	return buildObservation(promptObserved, promptTokens, completionObserved, completionTokens, totalObserved, totalTokens, SourceReportedSSE)
+	obs := buildObservation(promptObserved, promptTokens, completionObserved, completionTokens, totalObserved, totalTokens, SourceReportedSSE)
+	obs.CacheTokens = cacheTokens
+	return obs
 }
 
 func fromJSONBody(body []byte, source string) Observation {
@@ -205,12 +210,13 @@ func observationFromUsageResult(usage gjson.Result, source string) (Observation,
 		completion = usage.Get("output_tokens")
 	}
 	total := usage.Get("total_tokens")
+	cache := cacheTokensFromUsage(usage)
 
 	if !prompt.Exists() && !completion.Exists() && !total.Exists() {
 		return Observation{}, false
 	}
 
-	return buildObservation(
+	obs := buildObservation(
 		prompt.Exists(),
 		prompt.Int(),
 		completion.Exists(),
@@ -218,7 +224,9 @@ func observationFromUsageResult(usage gjson.Result, source string) (Observation,
 		total.Exists(),
 		total.Int(),
 		source,
-	), true
+	)
+	obs.CacheTokens = cache
+	return obs, true
 }
 
 func buildObservation(promptObserved bool, promptTokens int64, completionObserved bool, completionTokens int64, totalObserved bool, totalTokens int64, source string) Observation {
@@ -237,4 +245,19 @@ func buildObservation(promptObserved bool, promptTokens int64, completionObserve
 	}
 	obs.Completeness = obs.CompletenessLabel()
 	return obs
+}
+
+func cacheTokensFromUsage(usage gjson.Result) int64 {
+	if !usage.Exists() || !usage.IsObject() {
+		return 0
+	}
+
+	if cached := usage.Get("prompt_tokens_details.cached_tokens"); cached.Exists() {
+		return cached.Int()
+	}
+	if cached := usage.Get("input_tokens_details.cached_tokens"); cached.Exists() {
+		return cached.Int()
+	}
+
+	return usage.Get("cache_creation_input_tokens").Int() + usage.Get("cache_read_input_tokens").Int()
 }

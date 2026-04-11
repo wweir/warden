@@ -6,6 +6,7 @@
 
 - Parse exact token usage from JSON responses and SSE streams.
 - Normalize OpenAI Chat / Responses and Anthropic usage shapes.
+- Extract cache-related token details when the provider reports them.
 - Classify each observation as `exact`, `partial`, or `missing`.
 
 ## Boundary

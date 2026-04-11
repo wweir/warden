@@ -39,7 +39,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 		gotAuthorization = r.Header.Get("Authorization")
 		gotClientAPIKey = r.Header.Get("X-Api-Key")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":5}}`)
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}}}`)
 	}))
 	defer upstream.Close()
 
@@ -73,6 +73,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	beforeRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
 	beforePrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
 	beforeCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	beforeCache := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "cache"))
 	beforeExactObservation := testutil.ToFloat64(telemetrypkg.APIKeyTokenObservationCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "exact", "reported_json"))
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
@@ -95,6 +96,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	afterRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
 	afterPrompt := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "prompt"))
 	afterCompletion := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "completion"))
+	afterCache := testutil.ToFloat64(telemetrypkg.APIKeyTokenCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "cache"))
 	afterExactObservation := testutil.ToFloat64(telemetrypkg.APIKeyTokenObservationCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "exact", "reported_json"))
 
 	if afterRequests-beforeRequests != 1 {
@@ -105,6 +107,9 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	}
 	if afterCompletion-beforeCompletion != 5 {
 		t.Fatalf("api key completion token delta = %v, want 5", afterCompletion-beforeCompletion)
+	}
+	if afterCache-beforeCache != 2 {
+		t.Fatalf("api key cache token delta = %v, want 2", afterCache-beforeCache)
 	}
 	if afterExactObservation-beforeExactObservation != 1 {
 		t.Fatalf("api key exact observation delta = %v, want 1", afterExactObservation-beforeExactObservation)
@@ -121,7 +126,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	if last.TokenUsage == nil {
 		t.Fatal("expected token_usage in request log")
 	}
-	if last.TokenUsage.PromptTokens != 3 || last.TokenUsage.CompletionTokens != 5 {
+	if last.TokenUsage.PromptTokens != 3 || last.TokenUsage.CompletionTokens != 5 || last.TokenUsage.CacheTokens != 2 {
 		t.Fatalf("unexpected token_usage: %+v", last.TokenUsage)
 	}
 	if last.TokenUsage.Completeness != "exact" || last.TokenUsage.Source != "reported_json" {

@@ -233,6 +233,7 @@ func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, duration
 	}
 	recordTokenType(usage.PromptTokens, "prompt")
 	recordTokenType(usage.CompletionTokens, "completion")
+	recordTokenType(usage.CacheTokens, "cache")
 	if usage.CompletionTokens > 0 && durationMs > 0 {
 		value := float64(usage.CompletionTokens) / (float64(durationMs) / 1000.0)
 		RouteCompletionThroughput.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(value)

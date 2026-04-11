@@ -254,6 +254,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				rec.TokenUsage = &reqlog.TokenUsage{
 					PromptTokens:     observation.PromptTokens,
 					CompletionTokens: observation.CompletionTokens,
+					CacheTokens:      observation.CacheTokens,
 					TotalTokens:      observation.TotalTokens,
 					Source:           observation.SourceLabel(),
 					Completeness:     observation.CompletenessLabel(),

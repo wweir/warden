@@ -92,6 +92,7 @@ func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 		rec.TokenUsage = &reqlog.TokenUsage{
 			PromptTokens:     observation.PromptTokens,
 			CompletionTokens: observation.CompletionTokens,
+			CacheTokens:      observation.CacheTokens,
 			TotalTokens:      observation.TotalTokens,
 			Source:           observation.SourceLabel(),
 			Completeness:     observation.CompletenessLabel(),

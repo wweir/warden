@@ -61,6 +61,7 @@ type Record struct {
 type TokenUsage struct {
     PromptTokens     int64
     CompletionTokens int64
+    CacheTokens      int64
     TotalTokens      int64
     Source           string // reported_json / reported_sse / bridge_normalized
     Completeness     string // exact / partial / missing

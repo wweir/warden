@@ -52,3 +52,34 @@ func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
 		t.Fatalf("expected stale route output to be dropped")
 	}
 }
+
+func TestCollectDashboardCountersExcludesCacheTokensFromUsageRate(t *testing.T) {
+	base := snapshotpkg.CollectDashboardCounters(nil)
+
+	telemetrypkg.RouteTokenCounter.WithLabelValues(
+		"/snapshot-cache-test",
+		config.RouteProtocolChat,
+		"gpt-4o",
+		"",
+		"prompt",
+	).Add(11)
+	telemetrypkg.RouteTokenCounter.WithLabelValues(
+		"/snapshot-cache-test",
+		config.RouteProtocolChat,
+		"gpt-4o",
+		"",
+		"completion",
+	).Add(7)
+	telemetrypkg.RouteTokenCounter.WithLabelValues(
+		"/snapshot-cache-test",
+		config.RouteProtocolChat,
+		"gpt-4o",
+		"",
+		"cache",
+	).Add(5)
+
+	sample := snapshotpkg.CollectDashboardCounters(nil)
+	if got := sample.Tokens - base.Tokens; got != 18 {
+		t.Fatalf("token delta = %.0f, want 18", got)
+	}
+}

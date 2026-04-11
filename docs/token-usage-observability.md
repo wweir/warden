@@ -22,6 +22,7 @@
 - 解析 OpenAI Chat SSE chunk usage
 - 解析 Responses SSE 中的 `response.usage`
 - 解析 Anthropic `message_start` / `message_delta` usage
+- 补充提取 provider 返回的 cache token 明细
 - 统一输出 `exact` / `partial` / `missing` 三种完整性
 
 该包只负责协议级 usage 观察，不负责 Prometheus 或日志写入。
@@ -56,9 +57,15 @@ Prometheus token counter 现在只累计 `exact` 观测：
 
 - `prompt_tokens`
 - `completion_tokens`
+- `cache_tokens`
 - `total_tokens`
 - `source`
 - `completeness`
+
+其中 `cache_tokens` 当前表示 provider 报告的 cache 相关输入 token：
+
+- OpenAI Chat / Responses：`prompt_tokens_details.cached_tokens` 或 `input_tokens_details.cached_tokens`
+- Anthropic：`cache_creation_input_tokens + cache_read_input_tokens`
 
 日志里现在可以直接判断某条请求为什么没有进入精确 token counter，而不用再反查原始流内容。
 

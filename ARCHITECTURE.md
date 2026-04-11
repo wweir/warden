@@ -212,7 +212,7 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
 - 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
 - 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
-- 最终请求日志会附带 `token_usage` 观测结果（prompt/completion/source/completeness），便于区分精确 usage、部分 usage 和缺失 usage
+- 最终请求日志会附带 `token_usage` 观测结果（prompt/completion/cache/source/completeness）；其中 `cache` 记录 provider 返回的 cache 相关 token 明细，便于把请求 token、响应 token、cache token 分开看
 - HTTP 日志后端在 shutdown 时会取消 in-flight 请求并停止消费剩余队列，避免关闭阶段被日志发送重试拖住
 - 包内按 `types`、`fingerprint`、`record sanitize/id`、`backend`、`broadcast` 分文件组织，避免日志模型、指纹算法和后端实现继续混写
 

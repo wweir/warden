@@ -19,7 +19,7 @@ func TestGatewayLogsResponsesStreamAsFinalResponseObject(t *testing.T) {
 	const streamBody = "" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_123\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +
 		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"total_tokens\":8}}}\n\n"
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"total_tokens\":8,\"input_tokens_details\":{\"cached_tokens\":2}}}}\n\n"
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
@@ -83,7 +83,7 @@ func TestGatewayLogsResponsesStreamAsFinalResponseObject(t *testing.T) {
 	if record.TokenUsage == nil {
 		t.Fatal("expected token_usage in log record")
 	}
-	if record.TokenUsage.PromptTokens != 3 || record.TokenUsage.CompletionTokens != 5 {
+	if record.TokenUsage.PromptTokens != 3 || record.TokenUsage.CompletionTokens != 5 || record.TokenUsage.CacheTokens != 2 {
 		t.Fatalf("unexpected token_usage: %+v", record.TokenUsage)
 	}
 	if record.TokenUsage.Completeness != "exact" || record.TokenUsage.Source != "reported_sse" {
