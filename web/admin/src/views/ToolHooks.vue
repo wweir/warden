@@ -201,8 +201,8 @@
             <div class="field-row">
               <label class="field-label">{{ $t('hooks.when') }}</label>
               <select v-model="rule.hook.when" class="form-input">
-                <option value="pre">{{ $t('hooks.preBlock') }}</option>
-                <option value="post">{{ $t('hooks.postAudit') }}</option>
+                <option value="block">{{ $t('hooks.preBlock') }}</option>
+                <option value="async">{{ $t('hooks.postAudit') }}</option>
               </select>
               <span class="field-hint">{{ $t('hooks.whenHint') }}</span>
             </div>
@@ -388,7 +388,7 @@ function emptyRule() {
     match: '',
     hook: {
       type: 'exec',
-      when: 'pre',
+      when: 'block',
       timeout: '5s',
       command: '',
       args: [],
@@ -405,7 +405,7 @@ function normalizeRule(rule) {
     match: rule.match || '',
     hook: {
       type: rule.hook?.type || 'exec',
-      when: rule.hook?.when || 'pre',
+      when: rule.hook?.when || 'block',
       timeout: rule.hook?.timeout || '5s',
       command: rule.hook?.command || '',
       args: rule.hook?.args || [],
@@ -608,7 +608,7 @@ function buildSuggestedRule(suggestion, type, routeHint = null) {
       match: suggestion.match,
       hook: {
         type: 'ai',
-        when: 'pre',
+        when: 'block',
         timeout: '5s',
         command: '',
         args: [],
@@ -624,7 +624,7 @@ function buildSuggestedRule(suggestion, type, routeHint = null) {
       match: suggestion.match,
       hook: {
         type: 'http',
-        when: 'pre',
+        when: 'block',
         timeout: '5s',
         command: '',
         args: [],
@@ -639,7 +639,7 @@ function buildSuggestedRule(suggestion, type, routeHint = null) {
     match: suggestion.match,
     hook: {
       type: 'exec',
-      when: 'pre',
+      when: 'block',
       timeout: '5s',
       command: '',
       args: [],
