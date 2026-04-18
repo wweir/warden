@@ -15,7 +15,7 @@ func (h *Handler) HandleAPIKeysList(w http.ResponseWriter, _ *http.Request, _ ht
 		keys = h.listAPIKeys()
 	} else {
 		for prefix, route := range h.cfg.Route {
-			for name := range route.APIKeys {
+			for name := range route.CloneAPIKeys() {
 				keys = append(keys, map[string]any{
 					"route": prefix,
 					"name":  name,
@@ -53,28 +53,28 @@ func (h *Handler) HandleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 
-	key := GenerateAPIKey()
-	if route.APIKeys == nil {
-		route.APIKeys = make(map[string]config.SecretString)
+	key, err := GenerateAPIKey()
+	if err != nil {
+		http.Error(w, "generate api key: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	if _, exists := route.APIKeys[body.Name]; exists {
+	if ok := route.AddAPIKey(body.Name, config.SecretString(key)); !ok {
 		http.Error(w, "key already exists", http.StatusConflict)
 		return
 	}
-	route.APIKeys[body.Name] = config.SecretString(key)
 	if err := h.cfg.Validate(); err != nil {
-		delete(route.APIKeys, body.Name)
+		_, _ = route.DeleteAPIKey(body.Name)
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	yamlData, err := h.marshalRuntimeConfigYAML()
 	if err != nil {
-		delete(route.APIKeys, body.Name)
+		_, _ = route.DeleteAPIKey(body.Name)
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.writeConfigFile(yamlData); err != nil {
-		delete(route.APIKeys, body.Name)
+		_, _ = route.DeleteAPIKey(body.Name)
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest
@@ -118,26 +118,25 @@ func (h *Handler) HandleAPIKeysDelete(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "route not found", http.StatusNotFound)
 		return
 	}
-	if _, exists := route.APIKeys[body.Name]; !exists {
+	previous, exists := route.DeleteAPIKey(body.Name)
+	if !exists {
 		http.Error(w, "key not found", http.StatusNotFound)
 		return
 	}
 
-	previous := route.APIKeys[body.Name]
-	delete(route.APIKeys, body.Name)
 	if err := h.cfg.Validate(); err != nil {
-		route.APIKeys[body.Name] = previous
+		route.SetAPIKey(body.Name, previous)
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	yamlData, err := h.marshalRuntimeConfigYAML()
 	if err != nil {
-		route.APIKeys[body.Name] = previous
+		route.SetAPIKey(body.Name, previous)
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.writeConfigFile(yamlData); err != nil {
-		route.APIKeys[body.Name] = previous
+		route.SetAPIKey(body.Name, previous)
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest

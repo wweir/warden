@@ -510,11 +510,11 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 
 	keyCount := 0
 	for _, route := range routes {
-		keyCount += len(route.APIKeys)
+		keyCount += route.APIKeyCount()
 	}
 	keys := make([]map[string]any, 0, keyCount)
 	for prefix, route := range routes {
-		for name := range route.APIKeys {
+		for name := range route.CloneAPIKeys() {
 			usage := usageByKey[prefix+"\x00"+name]
 			if usage == nil {
 				usage = &usageStats{}

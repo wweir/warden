@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"crypto/subtle"
 	_ "embed"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -75,19 +77,19 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name              string            `json:"-"` // populated from map key
-	Disabled          bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
-	URL               string            `json:"url" usage:"Upstream LLM base URL"`
-	Family            string            `json:"family" usage:"Required provider adapter family: openai, anthropic, ollama, qwen, copilot"`
-	Protocol          string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
-	APIKey            SecretString      `json:"api_key" usage:"API key for authentication"`
-	ConfigDir         string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	Timeout           string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
-	Proxy             string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers           map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models            []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat bool `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
-	AnthropicToChat   bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
+	Name            string            `json:"-"` // populated from map key
+	Disabled        bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
+	URL             string            `json:"url" usage:"Upstream LLM base URL"`
+	Family          string            `json:"family" usage:"Required provider adapter family: openai, anthropic, ollama, qwen, copilot"`
+	Protocol        string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
+	APIKey          SecretString      `json:"api_key" usage:"API key for authentication"`
+	ConfigDir       string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
+	Timeout         string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers         map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models          []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	ResponsesToChat bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	AnthropicToChat bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
@@ -182,6 +184,111 @@ type RouteConfig struct {
 	exactModels      map[string]*CompiledRouteModel
 	wildcards        []*CompiledRouteModel
 	serviceProtocols []string
+	apiKeysMu        sync.RWMutex
+}
+
+func (r *RouteConfig) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(struct {
+		Protocol       string                               `json:"protocol"`
+		APIKeys        map[string]SecretString              `json:"api_keys"`
+		ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models"`
+		WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models"`
+		Hooks          []*HookRuleConfig                    `json:"hooks"`
+	}{
+		Protocol:       r.Protocol,
+		APIKeys:        r.CloneAPIKeys(),
+		ExactModels:    r.ExactModels,
+		WildcardModels: r.WildcardModels,
+		Hooks:          r.Hooks,
+	})
+}
+
+func (r *RouteConfig) APIKeyCount() int {
+	if r == nil {
+		return 0
+	}
+	r.apiKeysMu.RLock()
+	defer r.apiKeysMu.RUnlock()
+	return len(r.APIKeys)
+}
+
+func (r *RouteConfig) SetAPIKey(name string, value SecretString) {
+	if r == nil {
+		return
+	}
+	r.apiKeysMu.Lock()
+	defer r.apiKeysMu.Unlock()
+	if r.APIKeys == nil {
+		r.APIKeys = make(map[string]SecretString)
+	}
+	r.APIKeys[name] = value
+}
+
+func (r *RouteConfig) AddAPIKey(name string, value SecretString) bool {
+	if r == nil {
+		return false
+	}
+	r.apiKeysMu.Lock()
+	defer r.apiKeysMu.Unlock()
+	if r.APIKeys == nil {
+		r.APIKeys = make(map[string]SecretString)
+	}
+	if _, exists := r.APIKeys[name]; exists {
+		return false
+	}
+	r.APIKeys[name] = value
+	return true
+}
+
+func (r *RouteConfig) DeleteAPIKey(name string) (SecretString, bool) {
+	if r == nil {
+		return "", false
+	}
+	r.apiKeysMu.Lock()
+	defer r.apiKeysMu.Unlock()
+	previous, exists := r.APIKeys[name]
+	if !exists {
+		return "", false
+	}
+	delete(r.APIKeys, name)
+	return previous, true
+}
+
+func (r *RouteConfig) CloneAPIKeys() map[string]SecretString {
+	if r == nil {
+		return nil
+	}
+	r.apiKeysMu.RLock()
+	defer r.apiKeysMu.RUnlock()
+	if len(r.APIKeys) == 0 {
+		return nil
+	}
+	cloned := make(map[string]SecretString, len(r.APIKeys))
+	for name, value := range r.APIKeys {
+		cloned[name] = value
+	}
+	return cloned
+}
+
+func (r *RouteConfig) MatchAPIKey(token string) (string, bool) {
+	if r == nil || token == "" {
+		return "", false
+	}
+	r.apiKeysMu.RLock()
+	defer r.apiKeysMu.RUnlock()
+	var matched string
+	for name, key := range r.APIKeys {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(key.Value())) == 1 {
+			matched = name
+		}
+	}
+	if matched == "" {
+		return "", false
+	}
+	return matched, true
 }
 
 type ExactRouteModelConfig struct {

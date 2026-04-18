@@ -79,7 +79,8 @@ func InjectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 	}
 	routeMap, _ := cfgMap["route"].(map[string]any)
 	for name, route := range cfg.Route {
-		if len(route.APIKeys) == 0 {
+		apiKeys := route.CloneAPIKeys()
+		if len(apiKeys) == 0 {
 			continue
 		}
 		rm, ok := routeMap[name].(map[string]any)
@@ -90,7 +91,7 @@ func InjectSecrets(cfgMap map[string]any, cfg *config.ConfigStruct) {
 		if apiKeysMap == nil {
 			continue
 		}
-		for keyName, keyValue := range route.APIKeys {
+		for keyName, keyValue := range apiKeys {
 			if keyValue != "" {
 				apiKeysMap[keyName] = keyValue.Value()
 			}
@@ -207,21 +208,21 @@ func NormalizePromptConfigValue(value any) {
 	}
 }
 
+var apiKeyRandomReader io.Reader = rand.Reader
+
 // GenerateAPIKey creates a random API key with "wk_" prefix.
-func GenerateAPIKey() string {
+func GenerateAPIKey() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const keyLen = 32
 
 	b := make([]byte, keyLen)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		for i := range b {
-			b[i] = charset[i%len(charset)]
-		}
+	if _, err := io.ReadFull(apiKeyRandomReader, b); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 
 	for i := range b {
 		b[i] = charset[int(b[i])%len(charset)]
 	}
 
-	return "wk_" + string(b)
+	return "wk_" + string(b), nil
 }
