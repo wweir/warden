@@ -8,9 +8,9 @@
 
 相关文档：
 
-- 系统级说明：[ARCHITECTURE.md](/home/wweir/Mine/warden/ARCHITECTURE.md)
-- 项目入口：[README.md](/home/wweir/Mine/warden/README.md)
-- 专题索引：[docs/README.md](/home/wweir/Mine/warden/docs/README.md)
+- 系统级说明：[ARCHITECTURE.md](../ARCHITECTURE.md)
+- 项目入口：[README.md](../README.md)
+- 专题索引：[docs/README.md](../docs/README.md)
 
 ## Scope
 
@@ -76,8 +76,8 @@
 
 ## Related Files
 
-- [config/config.go](/home/wweir/Mine/warden/config/config.go)
-- [config/validate.go](/home/wweir/Mine/warden/config/validate.go)
-- [config/route_runtime.go](/home/wweir/Mine/warden/config/route_runtime.go)
-- [config/secret.go](/home/wweir/Mine/warden/config/secret.go)
-- [config/warden.example.yaml](/home/wweir/Mine/warden/config/warden.example.yaml)
+- [config.go](./config.go)
+- [validate.go](./validate.go)
+- [route_runtime.go](./route_runtime.go)
+- [secret.go](./secret.go)
+- [warden.example.yaml](./warden.example.yaml)

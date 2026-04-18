@@ -20,9 +20,9 @@ Warden 是一个 route-centric 的 AI Gateway。
 
 相关文档入口：
 
-- 根使用说明：[README.md](/home/wweir/Mine/warden/README.md)
-- 专题文档索引：[docs/README.md](/home/wweir/Mine/warden/docs/README.md)
-- 配置说明：[config/README.md](/home/wweir/Mine/warden/config/README.md)
+- 根使用说明：[README.md](./README.md)
+- 专题文档索引：[docs/README.md](./docs/README.md)
+- 配置说明：[config/README.md](./config/README.md)
 
 文档分工：
 
@@ -374,10 +374,10 @@ Admin SSE 接口统一返回 `X-Accel-Buffering: no` 与 `Cache-Control: no-cach
 
 当前专题文档：
 
-- [docs/responses-stateful-stateless-support.md](/home/wweir/Mine/warden/docs/responses-stateful-stateless-support.md)：Responses stateless/stateful 与 `responses_to_chat` 的支持边界
-- [docs/provider-dynamic-capability-discovery-plan.md](/home/wweir/Mine/warden/docs/provider-dynamic-capability-discovery-plan.md)：provider 能力展示与单协议 route 设计
-- [docs/anthropic-messages-to-chat-plan.md](/home/wweir/Mine/warden/docs/anthropic-messages-to-chat-plan.md)：`anthropic_to_chat` 的桥接边界
-- [docs/api-key-design.md](/home/wweir/Mine/warden/docs/api-key-design.md)：客户端 API Key 与敏感信息编码方案
+- [docs/responses-stateful-stateless-support.md](./docs/responses-stateful-stateless-support.md)：Responses stateless/stateful 与 `responses_to_chat` 的支持边界
+- [docs/provider-dynamic-capability-discovery-plan.md](./docs/provider-dynamic-capability-discovery-plan.md)：provider 能力展示与单协议 route 设计
+- [docs/anthropic-messages-to-chat-plan.md](./docs/anthropic-messages-to-chat-plan.md)：`anthropic_to_chat` 的桥接边界
+- [docs/api-key-design.md](./docs/api-key-design.md)：客户端 API Key 与敏感信息编码方案
 
 ## Build Notes
 
