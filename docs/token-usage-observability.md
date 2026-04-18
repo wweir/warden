@@ -96,8 +96,8 @@ API key payload 额外暴露：
 
 ## 4. 相关代码
 
-- [internal/gateway/tokenusage/tokenusage.go](/home/wweir/Mine/warden/internal/gateway/tokenusage/tokenusage.go)
-- [internal/gateway/telemetry/metrics.go](/home/wweir/Mine/warden/internal/gateway/telemetry/metrics.go)
-- [internal/gateway/observe/observe.go](/home/wweir/Mine/warden/internal/gateway/observe/observe.go)
-- [internal/gateway/snapshot/snapshot.go](/home/wweir/Mine/warden/internal/gateway/snapshot/snapshot.go)
-- [internal/reqlog/types.go](/home/wweir/Mine/warden/internal/reqlog/types.go)
+- [internal/gateway/tokenusage/tokenusage.go](../internal/gateway/tokenusage/tokenusage.go)
+- [internal/gateway/telemetry/metrics.go](../internal/gateway/telemetry/metrics.go)
+- [internal/gateway/observe/observe.go](../internal/gateway/observe/observe.go)
+- [internal/gateway/snapshot/snapshot.go](../internal/gateway/snapshot/snapshot.go)
+- [internal/reqlog/types.go](../internal/reqlog/types.go)

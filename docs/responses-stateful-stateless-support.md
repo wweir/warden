@@ -1,6 +1,8 @@
 # Responses API 有状态 / 无状态支持现状
 
-> 更新日期：2026-03-19
+> 更新日期：2026-04-18
+>
+> 状态：current
 
 本文只描述当前代码事实。
 
@@ -45,9 +47,10 @@ Responses 相关 route 必须直接锁定唯一协议：
 
 因此真实结论是：
 
-- 单 provider 或显式固定 `X-Provider` 时，`responses_stateful` 可用
-- 多 provider 场景下不会对有状态请求做 failover
-- 管理端 `Chat` 页面如果命中 `responses_stateful` route，会把上一轮 `response.id` 保存在浏览器本地会话中，并在下一轮自动续传 `previous_response_id`
+- `responses_stateful` route 在配置阶段就被限制为“每个 public model 只能落到单个 upstream/provider”
+- 因此有状态连续对话不是靠 failover 或临时 pin provider 保证，而是靠 route 配置本身保证单目标
+- 有状态请求进入请求期后不会做 failover
+- 管理端 `Chat` 页面如果命中 `responses_stateful` route，会把上一轮 `response.id` 保存在浏览器 `localStorage` 的会话记录里，并在下一轮自动续传 `previous_response_id`
 
 ## 4. `responses_to_chat`
 
@@ -82,3 +85,4 @@ Responses 相关 route 必须直接锁定唯一协议：
 
 - `responses_to_chat` 下的 `previous_response_id`
 - 任何需要网关自己维护 Responses 会话状态的能力
+- 依赖多 upstream failover 维持同一条 Responses stateful 会话的能力

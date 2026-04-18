@@ -1,17 +1,24 @@
 # Provider 动态能力与单协议 Route 方案
 
-> 更新日期：2026-03-19
+> 更新日期：2026-04-18
+>
+> 状态：current
+>
+> 文件名保留了历史上的 `plan`，但本文只记录当前实现。
 
 本文只记录当前已经落地的方案，不再保留旧的多协议 route 设计。
 
 ## 1. 外部协议面结论
 
-基于 2026-03-19 查询到的官方资料，warden 当前固定采用以下 provider family 候选协议面：
+当前实现不是“在线查询官方资料后动态决定能力”，而是先按 `provider.family` 做静态能力推导，再叠加管理端展示层 probe。
+
+当前 provider family 候选协议面是：
 
 - `openai`:
   - `chat`
   - `responses_stateless`
   - `responses_stateful`
+  - `anthropic`（仅当该 provider 开启 `anthropic_to_chat`）
 - `anthropic`:
   - `chat`
   - `anthropic`
@@ -26,6 +33,7 @@
 
 - `qwen` 在 warden 中只按 `chat` 处理
 - `copilot` 不再默认支持任何 `responses*`
+- `openai` provider 的 `anthropic` 能力不是原生 `/messages`，而是 `anthropic_to_chat` 的受控桥接能力
 - provider 级轻量探测只用于展示，不作为路由运行时真相
 
 ## 2. 路由结构
@@ -64,17 +72,24 @@ route:
 
 ### 3.1 展示层
 
-provider 卡片展示三类信息：
+provider 详情页当前展示四类信息：
 
 - `candidate_protocols`：按 provider family 推导的候选协议面
+- `configured_protocols`：当前配置下真正允许声明 route 的协议面
 - `display_protocols`：轻量探测后的展示结果
 - `provider + model + protocol` 精确 probe 结果
 
 这些结果：
 
-- 可以不精确
+- 可以不精确，尤其 `display_protocols` 只是 endpoint 可达性提示
 - 会影响 UI 展示和配置提示
 - 不直接决定运行时请求是否路由
+
+补充边界：
+
+- `candidate_protocols` / `configured_protocols` 来自本地静态规则，不依赖启动期网络
+- `display_protocols` 来自轻量 `OPTIONS` 探测，更多是“这个 endpoint 看起来是否可达”的提示
+- 对桥接能力，精确 probe 才会走真实请求路径；例如 `anthropic_to_chat` 的 anthropic probe 会先把 Messages 请求转换成上游 Chat 请求再探测
 
 ### 3.2 路由层
 
@@ -112,9 +127,10 @@ provider 卡片展示三类信息：
 - `Routes` 页面先选 route 唯一协议，再编辑模型
 - route 切换为 `responses_stateful` 时，UI 会把 exact upstream / wildcard provider 收敛到单个
 - `Providers` 页面可触发：
-  - 轻量协议检测
+  - 轻量协议检测（更新 `display_protocols`）
   - 精确 `provider + model + protocol` 探测
 - 从 provider 卡片新建 route 时，只预选单个协议，不再生成 model-level 多协议结构
+- 这个预选值取自该 provider 当前 `configured_protocols` 的首个协议，而不是 `display_protocols`
 
 ## 6. 已完成项
 

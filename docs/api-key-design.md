@@ -1,6 +1,6 @@
 # API Key 管理与敏感信息编码方案
 
-> 更新日期：2026-04-01
+> 更新日期：2026-04-18
 >
 > 状态：current
 
@@ -62,9 +62,13 @@
 
 当前支持：
 
-- 为某个 route 生成新密钥
-- 删除某个 route 下的现有密钥
-- 查看按 `route + key` 聚合的请求数与 token 用量
+- `API Keys` 页面：为某个 route 生成新密钥、删除现有密钥、在创建当次展示明文 key
+- `Config` 页面：查看 route 级 key 是否已配置，以及按 `route + key` 聚合的请求数和 token 用量
+
+不要把这两处入口混为一谈：
+
+- `API Keys` 页面当前是“密钥管理”入口
+- 聚合用量展示当前主要在 `Config` 页面，不在 `API Keys` 页面里展开表格
 
 ## 3. 边界
 
@@ -90,8 +94,13 @@
 当前按 `route + key` 聚合展示：
 
 - 请求数：总数、成功数、失败数
-- token：输入 token、输出 token
+- token：输入 token、输出 token、cache token
 - 结构化请求日志会记录命中的客户端 key 名，便于定位调用方
+
+补充说明：
+
+- `/_admin/api/apikeys` 的 payload 还会带 `exact_usage_requests` / `partial_usage_requests` / `missing_usage_requests`
+- 当前前端主要展示请求数和 token 聚合；coverage 统计已经进入 payload，但不是独立页面能力
 
 管理端会按 key 聚合，但底层指标仍保留 route / route_model / endpoint 等运行时维度。
 
@@ -117,8 +126,8 @@ secret 读取兼容明文和 base64，但这个兼容策略依赖一个前提：
 
 ## 5. 相关代码与文档
 
-- [config/secret.go](/home/wweir/Mine/warden/config/secret.go)
-- [config/config.go](/home/wweir/Mine/warden/config/config.go)
-- [internal/gateway/admin/router.go](/home/wweir/Mine/warden/internal/gateway/admin/router.go)
-- [README.md](/home/wweir/Mine/warden/README.md)
-- [ARCHITECTURE.md](/home/wweir/Mine/warden/ARCHITECTURE.md)
+- [config/secret.go](../config/secret.go)
+- [config/config.go](../config/config.go)
+- [internal/gateway/admin/router.go](../internal/gateway/admin/router.go)
+- [README.md](../README.md)
+- [ARCHITECTURE.md](../ARCHITECTURE.md)
