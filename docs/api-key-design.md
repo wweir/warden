@@ -71,13 +71,21 @@
 ### 3.1 客户端 API Key 与 Provider API Key 严格分离
 
 - 客户端 API Key 只用于进入网关时认证
+- 当前接受三种客户端认证头：`Authorization: Bearer <key>`、`Api-Key: <key>`、`X-Api-Key: <key>`
 - 每个 route 只接受自己配置的 `api_keys`
+- 同一路由下不允许多个 key 名复用同一个明文 token；否则按 key 名的日志/指标归因会变成不稳定行为
 - 认证成功后，网关会移除客户端传入的 `Authorization`、`Api-Key`、`X-Api-Key`
 - 上游 provider 认证由 `provider.*.api_key` 或本地 OAuth 凭证单独注入
 
 这是硬边界。否则客户端密钥会污染上游 provider 鉴权链路。
 
-### 3.2 用量统计是聚合视图，不是逐次审计日志
+### 3.2 AI Hook 的内部回环调用不复用客户端 API Key
+
+- `hook.type=ai` 仍然通过网关自身的 chat route 发起评审请求
+- 当目标 route 配置了 `api_keys` 时，网关使用一次性内部鉴权头完成回环调用，而不是挪用某个客户端 key
+- 这个内部鉴权只用于进程内生成的 hook 回环请求，不会写入配置，也不会出现在管理端 key 列表里
+
+### 3.3 用量统计是聚合视图，不是逐次审计日志
 
 当前按 `route + key` 聚合展示：
 
@@ -87,7 +95,7 @@
 
 管理端会按 key 聚合，但底层指标仍保留 route / route_model / endpoint 等运行时维度。
 
-### 3.3 兼容明文读取有前提
+### 3.4 兼容明文读取有前提
 
 secret 读取兼容明文和 base64，但这个兼容策略依赖一个前提：
 

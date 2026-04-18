@@ -164,7 +164,7 @@ type HTTPLoggerConfig struct {
     Method       string            // 默认 POST
     Headers      map[string]string
     BodyTemplate string            // Go 模板，变量 .Record；为空则直接 JSON 序列化
-    Timeout      string            // 默认 5s
+    Timeout      string            // 默认 5s；如果设置必须 > 0
     Retry        int
 }
 ```
@@ -174,6 +174,7 @@ type HTTPLoggerConfig struct {
 - 后台单 goroutine worker，通过 256 容量 channel 接收记录
 - 队列满时静默丢弃（打 warn 日志）
 - `BodyTemplate` 支持 [sprig](https://masterminds.github.io/sprig/) 函数
+- webhook 模板与 timeout 在配置校验阶段就会被静态验证，避免启动后才发现 target 无法创建
 - `Close()` 取消 worker、终止 in-flight HTTP 请求，并丢弃未发送队列，避免 shutdown 被日志重试拖住
 
 ### multiLogger（内部）

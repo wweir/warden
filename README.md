@@ -170,7 +170,13 @@ curl http://localhost:8080/openai/responses \
 curl http://localhost:8080/openai/models
 ```
 
-如果你配置了客户端 API Key，需要额外带鉴权头：
+如果你配置了客户端 API Key，可以用下面任一请求头：
+
+- `Authorization: Bearer <key>`
+- `Api-Key: <key>`
+- `X-Api-Key: <key>`
+
+例如：
 
 ```bash
 curl http://localhost:8080/openai/chat/completions \
@@ -186,6 +192,7 @@ curl http://localhost:8080/openai/chat/completions \
 - `Routes`：管理“对外暴露什么模型，实际走哪些上游”
 - `Tool Hooks`：配置模型工具调用后的附加动作
 - `Logs`：实时看请求日志
+- `Chat`：直接按 route 协议发起调试请求
 - `Config`：在线查看和编辑配置
 
 ## 配置时最重要的理解
