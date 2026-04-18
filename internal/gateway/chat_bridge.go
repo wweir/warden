@@ -117,7 +117,7 @@ func (g *Gateway) handleChatBridge(
 			// Stream: all hook checks degrade to async audits because the live response cannot be rewritten.
 			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
 			go func() {
-				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.cfg.Addr, observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
+				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.hookGatewayTarget(), observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
 				if len(asyncVerdicts) == 0 {
 					return
 				}

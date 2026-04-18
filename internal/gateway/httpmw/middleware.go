@@ -10,6 +10,7 @@ import (
 	"github.com/wweir/warden/config"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 type Middleware interface {
@@ -40,7 +41,7 @@ func (c *CORS) Process(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Api-Key, X-Api-Key")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -67,18 +68,27 @@ func (c *ChainMiddleware) Process(next http.Handler) http.Handler {
 }
 
 type APIKeyAuth struct {
-	Cfg *config.ConfigStruct
+	Cfg                   *config.ConfigStruct
+	InternalHookAuthToken string
 }
 
 func (m *APIKeyAuth) Process(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.isInternalHookRequest(r.Header) {
+			sanitized := r.Clone(r.Context())
+			sanitized.Header = r.Header.Clone()
+			sanitized.Header.Del(toolhook.InternalAuthHeader)
+			next.ServeHTTP(w, sanitized)
+			return
+		}
+
 		route := matchedRouteConfig(m, r.URL.Path)
-		if route == nil || len(route.APIKeys) == 0 {
+		if route == nil || route.APIKeyCount() == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		name, ok := authenticateAPIKey(route.APIKeys, r.Header)
+		name, ok := authenticateAPIKey(route, r.Header)
 		if !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="Warden"`)
@@ -97,6 +107,17 @@ func (m *APIKeyAuth) Process(next http.Handler) http.Handler {
 		upstreampkg.RemoveClientCredentialHeaders(sanitized.Header)
 		next.ServeHTTP(w, sanitized)
 	})
+}
+
+func (m *APIKeyAuth) isInternalHookRequest(headers http.Header) bool {
+	if m == nil || m.InternalHookAuthToken == "" || headers == nil {
+		return false
+	}
+	token := strings.TrimSpace(headers.Get(toolhook.InternalAuthHeader))
+	if token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(m.InternalHookAuthToken)) == 1
 }
 
 func matchedRouteConfig(m *APIKeyAuth, path string) *config.RouteConfig {
@@ -119,22 +140,12 @@ func matchedRouteConfig(m *APIKeyAuth, path string) *config.RouteConfig {
 	return matched
 }
 
-func authenticateAPIKey(keys map[string]config.SecretString, headers http.Header) (string, bool) {
+func authenticateAPIKey(route *config.RouteConfig, headers http.Header) (string, bool) {
 	token := extractAPIKey(headers)
 	if token == "" {
 		return "", false
 	}
-
-	var matched string
-	for name, key := range keys {
-		if subtle.ConstantTimeCompare([]byte(token), []byte(key.Value())) == 1 {
-			matched = name
-		}
-	}
-	if matched == "" {
-		return "", false
-	}
-	return matched, true
+	return route.MatchAPIKey(token)
 }
 
 func extractAPIKey(headers http.Header) string {

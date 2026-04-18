@@ -2,6 +2,9 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 // Gateway is the core AI Gateway component.
@@ -23,16 +27,17 @@ type Gateway struct {
 	selector   *sel.Selector
 	routes     []routeBinding
 
-	logger         reqlog.Logger
-	broadcaster    *reqlog.Broadcaster
-	dashboardStore *telemetrypkg.DashboardMetricsStore
-	outputRates    *telemetrypkg.OutputRateTracker
-	admin          *adminpkg.Handler
-	proxy          *proxypkg.Handler
-	handler        http.Handler
-	reloadFn       func() error
-	ctx            context.Context
-	cancel         context.CancelFunc
+	logger                reqlog.Logger
+	broadcaster           *reqlog.Broadcaster
+	dashboardStore        *telemetrypkg.DashboardMetricsStore
+	outputRates           *telemetrypkg.OutputRateTracker
+	internalHookAuthToken string
+	admin                 *adminpkg.Handler
+	proxy                 *proxypkg.Handler
+	handler               http.Handler
+	reloadFn              func() error
+	ctx                   context.Context
+	cancel                context.CancelFunc
 }
 
 const (
@@ -100,6 +105,21 @@ func (g *Gateway) Close() {
 // Broadcaster returns the request log broadcaster for admin subscriptions.
 func (g *Gateway) Broadcaster() *reqlog.Broadcaster {
 	return g.broadcaster
+}
+
+func (g *Gateway) hookGatewayTarget() toolhook.GatewayTarget {
+	return toolhook.GatewayTarget{
+		Addr:              g.cfg.Addr,
+		InternalAuthToken: g.internalHookAuthToken,
+	}
+}
+
+func mustNewInternalHookAuthToken() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(fmt.Sprintf("generate internal hook auth token: %v", err))
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 // recordAndBroadcast logs a record to file (if enabled) and publishes to SSE subscribers.

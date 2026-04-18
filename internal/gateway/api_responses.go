@@ -23,6 +23,7 @@ import (
 func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses", "route", route.Prefix) }()
+	hookGateway := g.hookGatewayTarget()
 
 	var bootstrap inferenceBootstrap
 	bootstrap, err = bootstrapInferenceRequest(r, route)
@@ -72,19 +73,19 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 							return
 						}
 						go func() {
-							emit(observepkg.RunDegradedAsyncToolHooks(ctx, g.cfg.Addr, calls))
+							emit(observepkg.RunDegradedAsyncToolHooks(ctx, hookGateway, calls))
 						}()
 					}
 				}
 
-				blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+				blockVerdicts := observepkg.RunBlockToolHooks(ctx, hookGateway, calls)
 				respBody = observepkg.InjectResponsesBlockVerdicts(respBody, blockVerdicts)
 				return respBody, blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
 					if emit == nil {
 						return
 					}
 					go func() {
-						emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+						emit(observepkg.RunAsyncToolHooks(ctx, hookGateway, calls))
 					}()
 				}
 			},
@@ -112,6 +113,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, manager *inferencepkg.Manager, startTime time.Time, reqID string,
 ) {
+	hookGateway := g.hookGatewayTarget()
 	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID, chatBridgeSpec{
 		serviceProtocol:   config.RouteProtocolResponsesStateless,
 		endpoint:          "responses",
@@ -137,13 +139,13 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 		},
 		runNonStreamToolHooks: func(ctx context.Context, chatResp openai.ChatCompletionResponse) ([]toolhook.HookVerdict, asyncHookFn) {
 			calls := observepkg.ChatToolCalls(chatResp)
-			blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+			blockVerdicts := observepkg.RunBlockToolHooks(ctx, hookGateway, calls)
 			return blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
 				if emit == nil {
 					return
 				}
 				go func() {
-					emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+					emit(observepkg.RunAsyncToolHooks(ctx, hookGateway, calls))
 				}()
 			}
 		},

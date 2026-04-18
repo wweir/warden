@@ -23,7 +23,7 @@ const defaultAIHookTimeout = 5 * time.Second
 // The model must respond with JSON {"allow": bool, "reason": "..."}.
 // Any error during the call is logged and treated as pass-through (fail-open).
 // Only an explicit allow:false in the response triggers rejection.
-func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gatewayAddr string) hookResult {
+func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gateway GatewayTarget) hookResult {
 	r := hookResult{index: idx, htype: "ai", when: hook.When}
 
 	prompt, err := renderPrompt(hook.Prompt, hctx)
@@ -32,7 +32,7 @@ func runAI(ctx context.Context, idx int, hook config.HookConfig, hctx CallContex
 		return r
 	}
 
-	content, err := callGateway(ctx, gatewayAddr, hook, prompt)
+	content, err := callGateway(ctx, gateway, hook, prompt)
 	if err != nil {
 		slog.Warn("Hook AI: request failed, passing through", "hook_index", idx, "error", err)
 		return r
@@ -71,14 +71,14 @@ func renderPrompt(promptTmpl string, hctx CallContext) (string, error) {
 }
 
 // callGateway sends a chat completion request to the gateway and returns the assistant content.
-func callGateway(ctx context.Context, gatewayAddr string, hook config.HookConfig, prompt string) (string, error) {
+func callGateway(ctx context.Context, gateway GatewayTarget, hook config.HookConfig, prompt string) (string, error) {
 	reqCtx, cancel, err := withOptionalTimeout(ctx, timeoutOrDefault(hook.TimeoutDuration, defaultAIHookTimeout))
 	if err != nil {
 		return "", fmt.Errorf("resolve request timeout: %w", err)
 	}
 	defer cancel()
 
-	addr := gatewayAddr
+	addr := gateway.Addr
 	if strings.HasPrefix(addr, ":") {
 		addr = "localhost" + addr
 	}
@@ -99,6 +99,9 @@ func callGateway(ctx context.Context, gatewayAddr string, hook config.HookConfig
 		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if gateway.InternalAuthToken != "" {
+		req.Header.Set(InternalAuthHeader, gateway.InternalAuthToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

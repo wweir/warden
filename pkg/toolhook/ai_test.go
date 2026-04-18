@@ -13,8 +13,10 @@ import (
 
 func TestRunAIUsesHookTimeoutWithoutParentDeadline(t *testing.T) {
 	var deadlineSet bool
+	var gotInternalAuth string
 	withDefaultClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		_, deadlineSet = req.Context().Deadline()
+		gotInternalAuth = req.Header.Get(InternalAuthHeader)
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"{\"allow\":true}"}}]}`)),
@@ -31,12 +33,18 @@ func TestRunAIUsesHookTimeoutWithoutParentDeadline(t *testing.T) {
 		TimeoutDuration: 250 * time.Millisecond,
 	}
 
-	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, ":8080")
+	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, GatewayTarget{
+		Addr:              ":8080",
+		InternalAuthToken: "internal-token",
+	})
 	if r.rejected {
 		t.Fatalf("expected rejected=false")
 	}
 	if !deadlineSet {
 		t.Fatal("expected AI request context to have deadline")
+	}
+	if gotInternalAuth != "internal-token" {
+		t.Fatalf("internal auth header = %q, want %q", gotInternalAuth, "internal-token")
 	}
 }
 
@@ -58,7 +66,7 @@ func TestRunAIParsesStructuredTextContent(t *testing.T) {
 		TimeoutDuration: 250 * time.Millisecond,
 	}
 
-	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, ":8080")
+	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, GatewayTarget{Addr: ":8080"})
 	if !r.rejected || r.reason != "blocked" {
 		t.Fatalf("expected structured text response to reject, got %+v", r)
 	}
@@ -82,7 +90,7 @@ func TestRunAIParsesMixedContentParts(t *testing.T) {
 		TimeoutDuration: 250 * time.Millisecond,
 	}
 
-	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, ":8080")
+	r := runAI(context.Background(), 0, hook, CallContext{FullName: "filesystem__write_file"}, GatewayTarget{Addr: ":8080"})
 	if !r.rejected || r.reason != "blocked" {
 		t.Fatalf("expected mixed content response to reject, got %+v", r)
 	}

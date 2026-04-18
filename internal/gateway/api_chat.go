@@ -19,6 +19,7 @@ import (
 func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle chat completion", "route", route.Prefix) }()
+	hookGateway := g.hookGatewayTarget()
 
 	var bootstrap inferenceBootstrap
 	bootstrap, err = bootstrapInferenceRequest(r, route)
@@ -52,19 +53,19 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 						return
 					}
 					go func() {
-						emit(observepkg.RunDegradedAsyncToolHooks(ctx, g.cfg.Addr, calls))
+						emit(observepkg.RunDegradedAsyncToolHooks(ctx, hookGateway, calls))
 					}()
 				}
 			}
 
-			blockVerdicts := observepkg.RunBlockToolHooks(ctx, g.cfg.Addr, calls)
+			blockVerdicts := observepkg.RunBlockToolHooks(ctx, hookGateway, calls)
 			respBody = observepkg.InjectChatBlockVerdicts(respBody, blockVerdicts)
 			return respBody, blockVerdicts, func(emit func([]toolhook.HookVerdict)) {
 				if emit == nil {
 					return
 				}
 				go func() {
-					emit(observepkg.RunAsyncToolHooks(ctx, g.cfg.Addr, calls))
+					emit(observepkg.RunAsyncToolHooks(ctx, hookGateway, calls))
 				}()
 			}
 		},

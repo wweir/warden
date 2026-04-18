@@ -57,6 +57,13 @@ type HookVerdict struct {
 	Mode     string `json:"mode"` // "block" or "async"
 }
 
+const InternalAuthHeader = "X-Warden-Internal-Hook-Auth"
+
+type GatewayTarget struct {
+	Addr              string
+	InternalAuthToken string
+}
+
 // MatchHooks returns all HookConfig entries whose Match pattern matches toolFullName.
 func MatchHooks(toolFullName string, rules []*config.HookRuleConfig) []config.HookConfig {
 	var hooks []config.HookConfig
@@ -76,14 +83,14 @@ func MatchHooks(toolFullName string, rules []*config.HookRuleConfig) []config.Ho
 // RunBlock runs all block-mode hooks for a tool concurrently.
 // Returns a HookVerdict indicating whether any hook rejected the call.
 // Execution errors are logged and treated as pass-through (fail-open).
-func RunBlock(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) HookVerdict {
+func RunBlock(ctx context.Context, gateway GatewayTarget, hooks []config.HookConfig, hctx CallContext) HookVerdict {
 	v := HookVerdict{ToolName: hctx.FullName, CallID: hctx.CallID, Mode: "block"}
 	block := filterHooks(hooks, "block")
 	if len(block) == 0 {
 		return v
 	}
 
-	results := runConcurrent(ctx, block, hctx, gatewayAddr)
+	results := runConcurrent(ctx, block, hctx, gateway)
 	for _, r := range results {
 		logResult(hctx.FullName, r)
 		if r.rejected {
@@ -97,14 +104,14 @@ func RunBlock(ctx context.Context, gatewayAddr string, hooks []config.HookConfig
 
 // RunAsync runs all async-mode hooks for a tool concurrently.
 // Results are logged; rejections are recorded but do not block the response.
-func RunAsync(ctx context.Context, gatewayAddr string, hooks []config.HookConfig, hctx CallContext) HookVerdict {
+func RunAsync(ctx context.Context, gateway GatewayTarget, hooks []config.HookConfig, hctx CallContext) HookVerdict {
 	v := HookVerdict{ToolName: hctx.FullName, CallID: hctx.CallID, Mode: "async"}
 	async := filterHooks(hooks, "async")
 	if len(async) == 0 {
 		return v
 	}
 
-	results := runConcurrent(ctx, async, hctx, gatewayAddr)
+	results := runConcurrent(ctx, async, hctx, gateway)
 	for _, r := range results {
 		logResult(hctx.FullName, r)
 		if r.rejected {
@@ -127,14 +134,14 @@ func filterHooks(hooks []config.HookConfig, when string) []config.HookConfig {
 }
 
 // runConcurrent executes all hooks concurrently and collects results.
-func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx CallContext, gatewayAddr string) []hookResult {
+func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx CallContext, gateway GatewayTarget) []hookResult {
 	results := make([]hookResult, len(hooks))
 	var wg sync.WaitGroup
 	for i, h := range hooks {
 		wg.Add(1)
 		go func(idx int, hook config.HookConfig) {
 			defer wg.Done()
-			results[idx] = runOne(ctx, idx, hook, hctx, gatewayAddr)
+			results[idx] = runOne(ctx, idx, hook, hctx, gateway)
 		}(i, h)
 	}
 	wg.Wait()
@@ -142,7 +149,7 @@ func runConcurrent(ctx context.Context, hooks []config.HookConfig, hctx CallCont
 }
 
 // runOne dispatches a single hook by type with timeout applied.
-func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gatewayAddr string) hookResult {
+func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx CallContext, gateway GatewayTarget) hookResult {
 	timeout := hook.TimeoutDuration
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -154,7 +161,7 @@ func runOne(ctx context.Context, idx int, hook config.HookConfig, hctx CallConte
 	case "exec":
 		return runExec(ctx, idx, hook, hctx)
 	case "ai":
-		return runAI(ctx, idx, hook, hctx, gatewayAddr)
+		return runAI(ctx, idx, hook, hctx, gateway)
 	case "http":
 		return runHTTP(ctx, idx, hook, hctx)
 	default:

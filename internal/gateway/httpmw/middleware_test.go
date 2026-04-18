@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 func TestRecoveryReturnsJSONError(t *testing.T) {
@@ -27,6 +28,27 @@ func TestRecoveryReturnsJSONError(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, `"error":"Internal server error"`) {
 		t.Fatalf("body = %q, want JSON error payload", body)
+	}
+}
+
+func TestCORSAllowsClientAPIKeyHeaders(t *testing.T) {
+	handler := (&CORS{}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/openai/chat/completions", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	allowed := rec.Header().Get("Access-Control-Allow-Headers")
+	if !strings.Contains(allowed, "Api-Key") {
+		t.Fatalf("allow headers = %q, want Api-Key", allowed)
+	}
+	if !strings.Contains(allowed, "X-Api-Key") {
+		t.Fatalf("allow headers = %q, want X-Api-Key", allowed)
 	}
 }
 
@@ -131,6 +153,34 @@ func TestAPIKeyAuthUsesLongestMatchedRoute(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/openai/internal/chat/completions", nil)
 	req.Header.Set("Authorization", "Bearer inner-token")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIKeyAuthAllowsInternalHookRequests(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"client": "valid-token",
+				},
+			},
+		},
+	}
+	handler := (&APIKeyAuth{Cfg: cfg, InternalHookAuthToken: "internal-secret"}).Process(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(toolhook.InternalAuthHeader); got != "" {
+			t.Fatalf("internal auth header should be stripped before next handler, got %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", nil)
+	req.Header.Set(toolhook.InternalAuthHeader, "internal-secret")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {

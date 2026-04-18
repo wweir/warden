@@ -38,7 +38,11 @@ func NewLogger(cfg *config.LogConfig) reqlog.Logger {
 	for i, t := range cfg.Targets {
 		l, err := buildTarget(i, t)
 		if err != nil {
-			slog.Warn("Failed to create log target", "index", i, "type", t.Type, "error", err)
+			targetType := "<nil>"
+			if t != nil {
+				targetType = t.Type
+			}
+			slog.Warn("Failed to create log target", "index", i, "type", targetType, "error", err)
 			continue
 		}
 		loggers = append(loggers, l)
@@ -55,11 +59,17 @@ func NewLogger(cfg *config.LogConfig) reqlog.Logger {
 }
 
 func buildTarget(i int, t *config.LogTarget) (reqlog.Logger, error) {
+	if t == nil {
+		return nil, fmt.Errorf("log target at index %d is nil", i)
+	}
 	switch t.Type {
 	case "file":
 		return reqlog.NewFileLogger(t.Dir)
 	case "http":
 		wh := t.WebhookCfg
+		if wh == nil {
+			return nil, fmt.Errorf("http log target at index %d has nil webhook config", i)
+		}
 		return reqlog.NewHTTPLogger(reqlog.HTTPLoggerConfig{
 			URL:          wh.URL,
 			Method:       wh.Method,

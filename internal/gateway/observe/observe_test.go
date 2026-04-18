@@ -10,6 +10,7 @@ import (
 	"github.com/wweir/warden/config"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	"github.com/wweir/warden/pkg/protocol"
+	"github.com/wweir/warden/pkg/toolhook"
 )
 
 func TestRunRouteToolHooks_PostHooksOutliveRequestCancellation(t *testing.T) {
@@ -37,7 +38,7 @@ func TestRunRouteToolHooks_PostHooksOutliveRequestCancellation(t *testing.T) {
 	}})
 	cancel()
 
-	RunRouteToolHooks(ctx, "", []protocol.ToolCallInfo{{
+	RunRouteToolHooks(ctx, toolhook.GatewayTarget{}, []protocol.ToolCallInfo{{
 		ID:        "call_1",
 		Name:      "filesystem__write_file",
 		Arguments: `{"path":"/tmp/a"}`,
@@ -61,7 +62,7 @@ func TestRunRouteToolHooksSkipsUnmatchedCallsInVerdicts(t *testing.T) {
 		},
 	}})
 
-	verdicts := RunBlockToolHooks(ctx, "", []protocol.ToolCallInfo{{
+	verdicts := RunBlockToolHooks(ctx, toolhook.GatewayTarget{}, []protocol.ToolCallInfo{{
 		ID:        "call_1",
 		Name:      "web_search",
 		Arguments: `{"q":"hello"}`,

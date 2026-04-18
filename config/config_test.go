@@ -1,10 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func testExactModel(protocol string, upstreams ...*RouteUpstreamConfig) *ExactRouteModelConfig {
@@ -49,6 +52,82 @@ func TestProviderConfig_HTTPClient_Caching(t *testing.T) {
 	client4 := prov.HTTPClient(60 * time.Second)
 	if client3 != client4 {
 		t.Error("HTTPClient should cache instance for custom timeout")
+	}
+}
+
+func TestRouteConfigCloneAPIKeysReturnsIndependentCopy(t *testing.T) {
+	route := &RouteConfig{
+		APIKeys: map[string]SecretString{
+			"cli": "secret",
+		},
+	}
+
+	cloned := route.CloneAPIKeys()
+	cloned["cli"] = "changed"
+	cloned["new"] = "another"
+
+	if got := route.APIKeys["cli"].Value(); got != "secret" {
+		t.Fatalf("route API key = %q, want secret", got)
+	}
+	if _, exists := route.APIKeys["new"]; exists {
+		t.Fatalf("route API keys unexpectedly mutated: %#v", route.APIKeys)
+	}
+}
+
+func TestRouteConfigAddAPIKeyRejectsExistingName(t *testing.T) {
+	route := &RouteConfig{
+		APIKeys: map[string]SecretString{
+			"cli": "secret",
+		},
+	}
+
+	if ok := route.AddAPIKey("cli", "new-secret"); ok {
+		t.Fatal("AddAPIKey() = true, want false for duplicate name")
+	}
+	if got := route.APIKeys["cli"].Value(); got != "secret" {
+		t.Fatalf("route API key = %q, want secret", got)
+	}
+}
+
+func TestValidateRouteAPIKeysRejectsDuplicateValuesPerRoute(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				APIKeys: map[string]SecretString{
+					"cli": "shared-secret",
+					"sdk": "shared-secret",
+				},
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"gpt-4o": testExactModel(RouteProtocolChat, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `duplicate key value already used by "`) {
+		t.Fatalf("expected duplicate route api key error, got %v", err)
+	}
+}
+
+func TestRouteConfigMarshalJSONUsesSafeAPIKeySnapshot(t *testing.T) {
+	route := &RouteConfig{
+		Protocol: RouteProtocolChat,
+		APIKeys: map[string]SecretString{
+			"cli": "secret",
+		},
+	}
+
+	data, err := json.Marshal(route)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(data), `"api_keys":{"cli":"`+EncodeSecret("secret")+`"}`) {
+		t.Fatalf("marshal output = %s", data)
 	}
 }
 
@@ -141,6 +220,62 @@ func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 	}
 }
 
+func TestValidateLogTargetRejectsNilEntry(t *testing.T) {
+	cfg := &ConfigStruct{}
+	if err := yaml.Unmarshal([]byte("log:\n  targets:\n    - null\n"), cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "log.targets[0]: target is required") {
+		t.Fatalf("expected nil target validation error, got %v", err)
+	}
+}
+
+func TestValidateWebhookRejectsInvalidBodyTemplate(t *testing.T) {
+	cfg := &ConfigStruct{
+		Webhook: map[string]*WebhookConfig{
+			"audit": {
+				URL:          "https://example.com/logs",
+				BodyTemplate: "{{ if }}",
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "invalid body_template") {
+		t.Fatalf("expected invalid body_template error, got %v", err)
+	}
+}
+
+func TestValidateWebhookRejectsNonPositiveTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+	}{
+		{name: "zero", timeout: "0s"},
+		{name: "negative", timeout: "-1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ConfigStruct{
+				Webhook: map[string]*WebhookConfig{
+					"audit": {
+						URL:     "https://example.com/logs",
+						Timeout: tt.timeout,
+					},
+				},
+			}
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "timeout must be greater than 0") {
+				t.Fatalf("expected positive timeout validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateToolHookAIRequiresExistingChatRouteWithoutAPIKeys(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
@@ -166,7 +301,7 @@ func TestValidateToolHookAIRequiresExistingChatRouteWithoutAPIKeys(t *testing.T)
 	}
 }
 
-func TestValidateToolHookAIRejectsNonChatRouteAndProtectedRoute(t *testing.T) {
+func TestValidateToolHookAIRejectsNonChatRouteAndAllowsProtectedRoute(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
@@ -205,8 +340,8 @@ func TestValidateToolHookAIRejectsNonChatRouteAndProtectedRoute(t *testing.T) {
 
 	cfg.Route["/test"].Hooks[0].Hook.Route = "/chat"
 	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), `cannot require api_keys for ai type`) {
-		t.Fatalf("expected protected ai route error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected protected ai route to validate, got %v", err)
 	}
 }
 

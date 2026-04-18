@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/wweir/warden/pkg/provider"
 )
 
@@ -51,6 +53,9 @@ func (c *ConfigStruct) validateLogConfig() error {
 	}
 
 	for i, target := range c.Log.Targets {
+		if target == nil {
+			return NewValidationError("log.targets[%d]: target is required", i)
+		}
 		switch target.Type {
 		case "file":
 			if target.Dir == "" {
@@ -72,20 +77,39 @@ func (c *ConfigStruct) validateLogConfig() error {
 
 func (c *ConfigStruct) validateWebhookConfig() error {
 	for name, webhook := range c.Webhook {
+		if webhook == nil {
+			return NewValidationError("webhook %s: config is required", name)
+		}
 		if webhook.URL == "" {
 			return NewValidationError("webhook %s: url is required", name)
 		}
 		if err := validateHTTPURL("webhook "+name, webhook.URL); err != nil {
 			return err
 		}
-		if webhook.Timeout == "" {
-			continue
-		}
-		if _, err := time.ParseDuration(webhook.Timeout); err != nil {
-			return NewValidationError("webhook %s: invalid timeout %s: %v", name, webhook.Timeout, err)
+		if err := validateWebhookRuntimeConfig("webhook "+name, webhook); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func validateWebhookRuntimeConfig(ctx string, webhook *WebhookConfig) error {
+	if webhook.BodyTemplate != "" {
+		if _, err := template.New("body").Funcs(sprig.FuncMap()).Parse(webhook.BodyTemplate); err != nil {
+			return NewValidationError("%s: invalid body_template: %v", ctx, err)
+		}
+	}
+	if webhook.Timeout == "" {
+		return nil
+	}
+	dur, err := time.ParseDuration(webhook.Timeout)
+	if err != nil {
+		return NewValidationError("%s: invalid timeout %s: %v", ctx, webhook.Timeout, err)
+	}
+	if dur <= 0 {
+		return NewValidationError("%s: timeout must be greater than 0", ctx)
+	}
 	return nil
 }
 
@@ -187,7 +211,7 @@ func (c *ConfigStruct) validateRouteConfig() error {
 		if len(route.ExactModels) == 0 && len(route.WildcardModels) == 0 {
 			return NewValidationError("route %s: exact_models or wildcard_models is required", prefix)
 		}
-		if err := validateRouteAPIKeys(prefix, route.APIKeys); err != nil {
+		if err := validateRouteAPIKeys(prefix, route.CloneAPIKeys()); err != nil {
 			return err
 		}
 
@@ -236,13 +260,19 @@ func (c *ConfigStruct) validateRouteConfig() error {
 }
 
 func validateRouteAPIKeys(prefix string, keys map[string]SecretString) error {
+	seenValues := make(map[string]string, len(keys))
 	for name, key := range keys {
 		if strings.TrimSpace(name) == "" {
 			return NewValidationError("route %s api_keys: key name is required", prefix)
 		}
-		if strings.TrimSpace(key.Value()) == "" {
+		value := key.Value()
+		if strings.TrimSpace(value) == "" {
 			return NewValidationError("route %s api_keys[%q]: key value is required", prefix, name)
 		}
+		if previous, exists := seenValues[value]; exists {
+			return NewValidationError("route %s api_keys[%q]: duplicate key value already used by %q", prefix, name, previous)
+		}
+		seenValues[value] = name
 	}
 	return nil
 }
@@ -385,9 +415,6 @@ func validateHookConfig(ctx string, hook *HookConfig, webhooks map[string]*Webho
 		}
 		if routeCfg.ConfiguredProtocol() != RouteProtocolChat {
 			return NewValidationError("%s: route %q must use protocol %q for ai type", ctx, hook.Route, RouteProtocolChat)
-		}
-		if len(routeCfg.APIKeys) > 0 {
-			return NewValidationError("%s: route %q cannot require api_keys for ai type", ctx, hook.Route)
 		}
 		if len(routeCfg.Hooks) > 0 {
 			return NewValidationError("%s: route %q cannot define hooks for ai type", ctx, hook.Route)

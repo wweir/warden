@@ -31,16 +31,17 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &Gateway{
-		cfg:            cfg,
-		configPath:     configPath,
-		configHash:     configHash,
-		selector:       sel.NewSelector(cfg),
-		routes:         compileRouteBindings(cfg.Route),
-		broadcaster:    reqlog.NewBroadcaster(),
-		dashboardStore: telemetrypkg.NewDashboardMetricsStore(dashboardMetricsSampleInterval, dashboardMetricsHistoryLimit),
-		outputRates:    telemetrypkg.NewOutputRateTracker(dashboardMetricsSampleInterval),
-		ctx:            ctx,
-		cancel:         cancel,
+		cfg:                   cfg,
+		configPath:            configPath,
+		configHash:            configHash,
+		selector:              sel.NewSelector(cfg),
+		routes:                compileRouteBindings(cfg.Route),
+		broadcaster:           reqlog.NewBroadcaster(),
+		dashboardStore:        telemetrypkg.NewDashboardMetricsStore(dashboardMetricsSampleInterval, dashboardMetricsHistoryLimit),
+		outputRates:           telemetrypkg.NewOutputRateTracker(dashboardMetricsSampleInterval),
+		internalHookAuthToken: mustNewInternalHookAuthToken(),
+		ctx:                   ctx,
+		cancel:                cancel,
 	}
 	g.admin = g.adminHandler()
 
@@ -63,7 +64,7 @@ func (g *Gateway) buildHTTPHandler() http.Handler {
 	return httpmwpkg.Chain(
 		&httpmwpkg.Recovery{},
 		&httpmwpkg.CORS{},
-		&httpmwpkg.APIKeyAuth{Cfg: g.cfg},
+		&httpmwpkg.APIKeyAuth{Cfg: g.cfg, InternalHookAuthToken: g.internalHookAuthToken},
 		&PromMiddleware{gateway: g},
 	).Process(router)
 }

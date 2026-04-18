@@ -146,7 +146,7 @@ func AssembleAnthropicStreamLog(respBody []byte) ([]byte, []byte, error) {
 
 // RunBlockToolHooks runs block-mode hooks synchronously for each tool call.
 // Returns verdicts (one per tool call that had block hooks).
-func RunBlockToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+func RunBlockToolHooks(ctx context.Context, gateway toolhook.GatewayTarget, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
 	var verdicts []toolhook.HookVerdict
 	for _, call := range calls {
 		mcpName, toolName := splitObservedToolName(call.Name)
@@ -161,7 +161,7 @@ func RunBlockToolHooks(ctx context.Context, gatewayAddr string, calls []protocol
 			CallID:    call.ID,
 			Arguments: json.RawMessage(call.Arguments),
 		}
-		v := toolhook.RunBlock(ctx, gatewayAddr, hooks, hctx)
+		v := toolhook.RunBlock(ctx, gateway, hooks, hctx)
 		if v.Rejected {
 			slog.Warn("Tool hook blocked", "tool", call.Name, "reason", v.Reason)
 		}
@@ -172,17 +172,17 @@ func RunBlockToolHooks(ctx context.Context, gatewayAddr string, calls []protocol
 
 // RunAsyncToolHooks runs async-mode hooks for each tool call.
 // Returns verdicts for audit logging when the caller chooses to wait.
-func RunAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
-	return runAsyncToolHooks(ctx, gatewayAddr, calls, false)
+func RunAsyncToolHooks(ctx context.Context, gateway toolhook.GatewayTarget, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	return runAsyncToolHooks(ctx, gateway, calls, false)
 }
 
 // RunDegradedAsyncToolHooks runs all matched hooks as async-mode audits.
 // This is used for streaming paths where block hooks cannot mutate the live response.
-func RunDegradedAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
-	return runAsyncToolHooks(ctx, gatewayAddr, calls, true)
+func RunDegradedAsyncToolHooks(ctx context.Context, gateway toolhook.GatewayTarget, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	return runAsyncToolHooks(ctx, gateway, calls, true)
 }
 
-func runAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo, degradeAll bool) []toolhook.HookVerdict {
+func runAsyncToolHooks(ctx context.Context, gateway toolhook.GatewayTarget, calls []protocol.ToolCallInfo, degradeAll bool) []toolhook.HookVerdict {
 	var verdicts []toolhook.HookVerdict
 	for _, call := range calls {
 		mcpName, toolName := splitObservedToolName(call.Name)
@@ -200,7 +200,7 @@ func runAsyncToolHooks(ctx context.Context, gatewayAddr string, calls []protocol
 			CallID:    call.ID,
 			Arguments: json.RawMessage(call.Arguments),
 		}
-		v := toolhook.RunAsync(postHookContext(ctx), gatewayAddr, hooks, hctx)
+		v := toolhook.RunAsync(postHookContext(ctx), gateway, hooks, hctx)
 		verdicts = append(verdicts, v)
 	}
 	return verdicts
@@ -230,9 +230,9 @@ func cloneHooksAsAsync(hooks []config.HookConfig) []config.HookConfig {
 // RunRouteToolHooks runs both block and async hooks, returning all verdicts.
 // Block hooks run synchronously; async hooks run in the background.
 // This is a convenience wrapper for callers that need both.
-func RunRouteToolHooks(ctx context.Context, gatewayAddr string, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
-	blockVerdicts := RunBlockToolHooks(ctx, gatewayAddr, calls)
-	asyncVerdicts := RunAsyncToolHooks(ctx, gatewayAddr, calls)
+func RunRouteToolHooks(ctx context.Context, gateway toolhook.GatewayTarget, calls []protocol.ToolCallInfo) []toolhook.HookVerdict {
+	blockVerdicts := RunBlockToolHooks(ctx, gateway, calls)
+	asyncVerdicts := RunAsyncToolHooks(ctx, gateway, calls)
 	return append(blockVerdicts, asyncVerdicts...)
 }
 

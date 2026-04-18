@@ -64,7 +64,7 @@ func TestLogResultRedactsRawHookOutputs(t *testing.T) {
 }
 
 func TestRunBlockReturnsFirstRejectedVerdict(t *testing.T) {
-	v := RunBlock(context.Background(), ":0", nil, CallContext{FullName: "filesystem__write_file"})
+	v := RunBlock(context.Background(), GatewayTarget{Addr: ":0"}, nil, CallContext{FullName: "filesystem__write_file"})
 	if v.Rejected {
 		t.Fatalf("expected rejected=false")
 	}
