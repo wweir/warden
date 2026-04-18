@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"sync"
 
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/reqlog"
@@ -39,6 +40,7 @@ type Handler struct {
 	cfg                *config.ConfigStruct
 	configPath         *string
 	configHash         *string
+	configMu           sync.Mutex
 	selector           Selector
 	broadcaster        Broadcaster
 	reloadFn           func() error

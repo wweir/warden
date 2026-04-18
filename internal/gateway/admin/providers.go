@@ -173,6 +173,10 @@ func (h *Handler) HandleProviderSuppress(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
+
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
 	prov, exists := h.cfg.Provider[body.Name]
 	if !exists {
 		http.Error(w, "unknown provider: "+body.Name, http.StatusNotFound)

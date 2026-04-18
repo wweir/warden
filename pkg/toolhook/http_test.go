@@ -104,6 +104,38 @@ func TestRunHTTPRetryAndTemplate(t *testing.T) {
 	}
 }
 
+func TestRunHTTPSupportsSprigBodyTemplateFuncs(t *testing.T) {
+	var reqBody string
+
+	withDefaultClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		reqBody = string(body)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"allow":true}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+
+	hook := config.HookConfig{
+		Type:    "http",
+		When:    "block",
+		Webhook: "audit",
+		WebhookCfg: &config.WebhookConfig{
+			URL:          "http://example.com/hook",
+			BodyTemplate: `{"tool":"{{ upper .ToolName }}"}`,
+		},
+	}
+
+	r := runHTTP(context.Background(), 0, hook, CallContext{ToolName: "write_file"})
+	if r.rejected {
+		t.Fatalf("expected rejected=false")
+	}
+	if !strings.Contains(reqBody, `"WRITE_FILE"`) {
+		t.Fatalf("expected body to contain transformed tool name, got %s", reqBody)
+	}
+}
+
 func TestRunHTTPFailOpenOnInvalidJSONResponse(t *testing.T) {
 	withDefaultClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{

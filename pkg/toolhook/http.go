@@ -12,6 +12,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/wweir/warden/config"
 )
 
@@ -87,7 +88,7 @@ func renderWebhookBody(bodyTemplate string, hctx CallContext) ([]byte, error) {
 		return json.Marshal(hctx)
 	}
 
-	tmpl, err := template.New("webhook_body").Parse(bodyTemplate)
+	tmpl, err := template.New("webhook_body").Funcs(sprig.FuncMap()).Parse(bodyTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse body template: %w", err)
 	}

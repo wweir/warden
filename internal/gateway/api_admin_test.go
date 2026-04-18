@@ -380,6 +380,203 @@ func TestHandleAPIKeysCreateRejectsBlankName(t *testing.T) {
 	}
 }
 
+func TestHandleAPIKeysCreateDoesNotMutateRuntimeWhenConfigWriteConflicts(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(yamlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(yamlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	if err := os.WriteFile(file.Name(), []byte("changed: true\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/_admin/api/apikeys", strings.NewReader(`{"route":"/openai","name":"cli"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleAPIKeysCreate(rec, req, nil)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if gw.cfg.Route["/openai"].APIKeyCount() != 0 {
+		t.Fatalf("runtime api keys = %#v, want unchanged empty set", gw.cfg.Route["/openai"].CloneAPIKeys())
+	}
+}
+
+func TestHandleAPIKeysDeletePersistsRouteAPIKeyRemoval(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"cli": "client-secret",
+				},
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(yamlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(yamlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodDelete, "/_admin/api/apikeys", strings.NewReader(`{"route":"/openai","name":"cli"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleAPIKeysDelete(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gw.cfg.Route["/openai"].APIKeyCount() != 0 {
+		t.Fatalf("runtime api keys = %#v, want empty", gw.cfg.Route["/openai"].CloneAPIKeys())
+	}
+
+	saved, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	openaiRoute := parsed["route"].(map[string]any)["/openai"].(map[string]any)
+	apiKeys, exists := openaiRoute["api_keys"]
+	if exists && apiKeys != nil {
+		t.Fatalf("saved api_keys = %#v, want omitted or null after delete", apiKeys)
+	}
+}
+
+func TestHandleAPIKeysDeleteDoesNotMutateRuntimeWhenConfigWriteConflicts(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				APIKeys: map[string]config.SecretString{
+					"cli": "client-secret",
+				},
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	yamlData, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(yamlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(yamlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	if err := os.WriteFile(file.Name(), []byte("changed: true\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/_admin/api/apikeys", strings.NewReader(`{"route":"/openai","name":"cli"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleAPIKeysDelete(rec, req, nil)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if got := gw.cfg.Route["/openai"].CloneAPIKeys()["cli"].Value(); got != "client-secret" {
+		t.Fatalf("runtime key = %q, want client-secret", got)
+	}
+}
+
 func TestWriteStatusSSEReturnsConfiguredAndDisplayProtocolsSeparately(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{

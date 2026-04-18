@@ -58,6 +58,9 @@ func (h *Handler) HandleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
 	if newMap, ok := cfgMap.(map[string]any); ok {
 		currentData, _ := json.Marshal(h.cfg)
 		var currentMap map[string]any
@@ -137,8 +140,22 @@ func (h *Handler) HandleConfigValidate(w http.ResponseWriter, r *http.Request, _
 	_ = json.NewEncoder(w).Encode(map[string]any{"valid": true})
 }
 
-func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
-	currentData, err := json.Marshal(h.cfg)
+func cloneConfig(cfg *config.ConfigStruct) (*config.ConfigStruct, error) {
+	currentData, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+
+	var cloned config.ConfigStruct
+	if err := json.Unmarshal(currentData, &cloned); err != nil {
+		return nil, fmt.Errorf("decode config: %w", err)
+	}
+
+	return &cloned, nil
+}
+
+func marshalConfigYAML(cfg *config.ConfigStruct) ([]byte, error) {
+	currentData, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal runtime config: %w", err)
 	}
@@ -148,7 +165,7 @@ func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
 		return nil, fmt.Errorf("decode runtime config: %w", err)
 	}
 
-	InjectSecrets(cfgMap, h.cfg)
+	InjectSecrets(cfgMap, cfg)
 	DropOAuthProviderAPIKey(cfgMap)
 	NormalizeSecretConfigJSON(cfgMap)
 	NormalizeProviderConfigJSON(cfgMap)
@@ -159,4 +176,8 @@ func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
 		return nil, fmt.Errorf("encode config: %w", err)
 	}
 	return yamlData, nil
+}
+
+func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
+	return marshalConfigYAML(h.cfg)
 }

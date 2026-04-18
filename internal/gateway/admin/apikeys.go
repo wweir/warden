@@ -47,34 +47,47 @@ func (h *Handler) HandleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	route, ok := h.cfg.Route[body.Route]
-	if !ok || route == nil {
-		http.Error(w, "route not found", http.StatusNotFound)
-		return
-	}
 
 	key, err := GenerateAPIKey()
 	if err != nil {
 		http.Error(w, "generate api key: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if ok := route.AddAPIKey(body.Name, config.SecretString(key)); !ok {
+
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
+	route, ok := h.cfg.Route[body.Route]
+	if !ok || route == nil {
+		http.Error(w, "route not found", http.StatusNotFound)
+		return
+	}
+
+	candidate, err := cloneConfig(h.cfg)
+	if err != nil {
+		http.Error(w, "clone config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	candidateRoute := candidate.Route[body.Route]
+	if candidateRoute == nil {
+		http.Error(w, "route not found", http.StatusNotFound)
+		return
+	}
+	if ok := candidateRoute.AddAPIKey(body.Name, config.SecretString(key)); !ok {
 		http.Error(w, "key already exists", http.StatusConflict)
 		return
 	}
-	if err := h.cfg.Validate(); err != nil {
-		_, _ = route.DeleteAPIKey(body.Name)
+	if err := candidate.Validate(); err != nil {
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	yamlData, err := h.marshalRuntimeConfigYAML()
+	yamlData, err := marshalConfigYAML(candidate)
 	if err != nil {
-		_, _ = route.DeleteAPIKey(body.Name)
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.writeConfigFile(yamlData); err != nil {
-		_, _ = route.DeleteAPIKey(body.Name)
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest
@@ -85,6 +98,8 @@ func (h *Handler) HandleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, err.Error(), status)
 		return
 	}
+
+	route.SetAPIKey(body.Name, config.SecretString(key))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -113,30 +128,49 @@ func (h *Handler) HandleAPIKeysDelete(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
+
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
 	route, ok := h.cfg.Route[body.Route]
 	if !ok || route == nil {
 		http.Error(w, "route not found", http.StatusNotFound)
 		return
 	}
-	previous, exists := route.DeleteAPIKey(body.Name)
+
+	previousKeys := route.CloneAPIKeys()
+	previous, exists := previousKeys[body.Name]
 	if !exists {
 		http.Error(w, "key not found", http.StatusNotFound)
 		return
 	}
 
-	if err := h.cfg.Validate(); err != nil {
-		route.SetAPIKey(body.Name, previous)
+	candidate, err := cloneConfig(h.cfg)
+	if err != nil {
+		http.Error(w, "clone config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	candidateRoute := candidate.Route[body.Route]
+	if candidateRoute == nil {
+		http.Error(w, "route not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := candidateRoute.DeleteAPIKey(body.Name); !ok {
+		http.Error(w, "key not found", http.StatusNotFound)
+		return
+	}
+
+	if err := candidate.Validate(); err != nil {
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	yamlData, err := h.marshalRuntimeConfigYAML()
+	yamlData, err := marshalConfigYAML(candidate)
 	if err != nil {
-		route.SetAPIKey(body.Name, previous)
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.writeConfigFile(yamlData); err != nil {
-		route.SetAPIKey(body.Name, previous)
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest
@@ -145,6 +179,12 @@ func (h *Handler) HandleAPIKeysDelete(w http.ResponseWriter, r *http.Request, _ 
 			status = http.StatusConflict
 		}
 		http.Error(w, err.Error(), status)
+		return
+	}
+
+	if _, ok := route.DeleteAPIKey(body.Name); !ok {
+		route.SetAPIKey(body.Name, previous)
+		http.Error(w, "key not found", http.StatusConflict)
 		return
 	}
 
