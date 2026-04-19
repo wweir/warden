@@ -7,15 +7,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/go-viper/mapstructure/v2"
@@ -32,13 +30,7 @@ import (
 
 var Version, BuildTime string
 
-// pidFilePath returns a user-specific pid file path.
-func pidFilePath() string {
-	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		return filepath.Join(runtimeDir, "warden.pid")
-	}
-	return fmt.Sprintf("/tmp/warden-%d.pid", os.Getuid())
-}
+const managedRestartExitCode = 75
 
 var pidFile = pidFilePath()
 
@@ -46,6 +38,21 @@ var configCandidates = []string{
 	"warden.yaml", "warden.yml",
 	"config/warden.yaml", "config/warden.yml",
 	"/etc/warden.yaml", "/etc/warden.yml",
+}
+
+type processExitError struct {
+	code int
+}
+
+func (e *processExitError) Error() string {
+	return fmt.Sprintf("process exit requested with code %d", e.code)
+}
+
+type modeFlags struct {
+	install           bool
+	reload            bool
+	nonInteractive    bool
+	startAfterInstall *bool
 }
 
 type app struct {
@@ -78,7 +85,7 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.gateway.ServeHTTP(w, r)
 }
 
-// restart signals the main loop to perform an in-place restart via syscall.Exec.
+// restart signals the main loop to restart the current process.
 func (a *app) restart() error {
 	select {
 	case a.restartCh <- struct{}{}:
@@ -94,7 +101,12 @@ func (a *app) run() (err error) {
 	if err := writePidFile(); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
-	defer removePidFile()
+	pidFileOwned := true
+	defer func() {
+		if pidFileOwned {
+			removePidFile()
+		}
+	}()
 
 	a.gateway.SetReloadFn(a.restart)
 
@@ -117,13 +129,13 @@ func (a *app) run() (err error) {
 	}()
 
 	stopChan := make(chan os.Signal, 1)
-	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	notifyStopSignals(stopChan)
 
 	var doRestart bool
 	select {
 	case sig := <-stopChan:
-		if sig == syscall.SIGHUP {
-			slog.Info("Received SIGHUP, restarting...")
+		if isRestartSignal(sig) {
+			slog.Info("Received restart signal", "signal", sig)
 			doRestart = true
 		} else {
 			slog.Info("Shutting down...", "signal", sig)
@@ -143,14 +155,14 @@ func (a *app) run() (err error) {
 	a.gateway.Close()
 
 	if doRestart {
-		executable, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("get executable: %w", err)
+		if restartNeedsPIDFileRemoval() {
+			removePidFile()
+			pidFileOwned = false
 		}
-		slog.Info("Exec restart", "executable", executable, "args", os.Args)
-		if err := syscall.Exec(executable, os.Args, os.Environ()); err != nil {
-			return fmt.Errorf("exec restart: %w", err)
+		if err := restartCurrentProcess(); err != nil {
+			return fmt.Errorf("restart current process: %w", err)
 		}
+		return nil
 	}
 
 	slog.Info("Warden shutdown complete")
@@ -159,8 +171,36 @@ func (a *app) run() (err error) {
 
 func main() {
 	// parse command-line flags
-	installService := flag.Bool("i", false, "install as systemd service")
-	reload := flag.Bool("r", false, "reload running service (send SIGHUP)")
+	flag.Bool("i", false, "install as managed service")
+	flag.Bool("r", false, "reload running service")
+	flag.Bool("non-interactive", false, "install without interactive prompts")
+	flag.Bool("start", false, "start service after install")
+	flag.Bool("no-start", false, "do not start service after install")
+
+	configureLogging()
+
+	mode := parseModeFlags(os.Args[1:])
+
+	if mode.install {
+		if err := validateExistingManagedConfig(); err != nil {
+			slog.Error("Failed to validate managed config", "error", err)
+			os.Exit(1)
+		}
+		if err := install.InstallService(buildInstallOptions(mode)); err != nil {
+			slog.Error("Install service error", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if mode.reload {
+		if err := sendReloadSignal(); err != nil {
+			slog.Error("Failed to send reload signal", "error", err)
+			os.Exit(1)
+		}
+		fmt.Println("Reload signal sent successfully")
+		return
+	}
 
 	// load configuration
 	cfg, configPath, err := loadConfig()
@@ -173,37 +213,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// configure logging output
-	fi, _ := os.Stdout.Stat()
-	isTerminal := (fi.Mode() & os.ModeCharDevice) != 0
-	deferlog.SetDefault(slog.New(tint.NewHandler(os.Stderr,
-		&tint.Options{Level: slog.LevelDebug, AddSource: true, NoColor: !isTerminal})))
-
 	slog.Info("Starting Warden AI Gateway",
 		"version", Version,
 		"build_time", BuildTime,
 		"config", cfg)
 
-	// mode dispatch
-	if *installService {
-		if err := install.InstallService(stdinConfirm); err != nil {
-			slog.Error("Install service error", "error", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if *reload {
-		if err := sendReloadSignal(); err != nil {
-			slog.Error("Failed to send reload signal", "error", err)
-			os.Exit(1)
-		}
-		fmt.Println("Reload signal sent successfully")
-		return
-	}
-
 	application := newApp(cfg, configPath)
 	if err := application.run(); err != nil {
+		if code, ok := exitCodeFromError(err); ok {
+			os.Exit(code)
+		}
 		slog.Error("Application error", "error", err)
 		os.Exit(1)
 	}
@@ -215,6 +234,108 @@ func loadConfig() (*config.ConfigStruct, string, error) {
 	cfg, err := safeParseConfig(conf)
 	configPath := detectConfigPath()
 	return cfg, configPath, err
+}
+
+func loadConfigFromPath(configPath string) (*config.ConfigStruct, error) {
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	defer func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	}()
+
+	programName := "warden"
+	if len(oldArgs) > 0 && oldArgs[0] != "" {
+		programName = oldArgs[0]
+	}
+	os.Args = []string{programName}
+	flag.CommandLine = flag.NewFlagSet(programName, flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+
+	conf := feconf.New[config.ConfigStruct]("c", configPath)
+	conf.ParserConf = buildConfigParserConfig()
+	return safeParseConfig(conf)
+}
+
+func configureLogging() {
+	fi, _ := os.Stdout.Stat()
+	isTerminal := (fi.Mode() & os.ModeCharDevice) != 0
+	deferlog.SetDefault(slog.New(tint.NewHandler(os.Stderr,
+		&tint.Options{Level: slog.LevelDebug, AddSource: true, NoColor: !isTerminal})))
+}
+
+func parseModeFlags(args []string) modeFlags {
+	var flags modeFlags
+	for _, arg := range args {
+		switch arg {
+		case "-i", "-i=true":
+			flags.install = true
+		case "-r", "-r=true":
+			flags.reload = true
+		case "-i=false":
+			flags.install = false
+		case "-r=false":
+			flags.reload = false
+		case "--non-interactive", "--non-interactive=true":
+			flags.nonInteractive = true
+		case "--non-interactive=false":
+			flags.nonInteractive = false
+		case "--start", "--start=true":
+			flags.startAfterInstall = boolPtr(true)
+		case "--start=false", "--no-start", "--no-start=true":
+			flags.startAfterInstall = boolPtr(false)
+		case "--no-start=false":
+			flags.startAfterInstall = boolPtr(true)
+		}
+	}
+	return flags
+}
+
+func buildInstallOptions(mode modeFlags) install.Options {
+	opts := install.Options{
+		StartAfterInstall: mode.startAfterInstall,
+	}
+	if !mode.nonInteractive {
+		opts.Confirm = stdinConfirm
+	}
+	return opts
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func validateExistingManagedConfig() error {
+	return validateConfigPath(install.ManagedConfigPath())
+}
+
+func validateConfigPath(configPath string) error {
+	if configPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat config %s: %w", configPath, err)
+	}
+
+	cfg, err := loadConfigFromPath(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate config %s: %w", configPath, err)
+	}
+	return nil
+}
+
+func exitCodeFromError(err error) (int, bool) {
+	var exitErr *processExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.code, true
+	}
+	return 0, false
 }
 
 func safeParseConfig(conf *feconf.ConfOpt[config.ConfigStruct]) (cfg *config.ConfigStruct, err error) {
@@ -310,12 +431,8 @@ func writePidFile() error {
 			if oldPid == os.Getpid() {
 				return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", oldPid)), 0644)
 			}
-			// check if the process is still running
-			if process, err := os.FindProcess(oldPid); err == nil {
-				if err := process.Signal(syscall.Signal(0)); err == nil {
-					// process exists, suggest reload
-					return fmt.Errorf("warden is already running (pid %d), use -r to reload", oldPid)
-				}
+			if processAlive(oldPid) {
+				return fmt.Errorf("warden is already running (pid %d), use -r to reload", oldPid)
 			}
 			// process not running, remove stale pid file
 			os.Remove(pidFile)
@@ -342,23 +459,4 @@ func readPidFile() (int, error) {
 		return 0, fmt.Errorf("parse pid: %w", err)
 	}
 	return pid, nil
-}
-
-// sendReloadSignal sends SIGHUP to the process specified in the pid file.
-func sendReloadSignal() error {
-	pid, err := readPidFile()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("warden is not running (no pid file at %s)", pidFile)
-		}
-		return err
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("find process %d: %w", pid, err)
-	}
-	if err := process.Signal(syscall.SIGHUP); err != nil {
-		return fmt.Errorf("send SIGHUP to process %d: %w", pid, err)
-	}
-	return nil
 }

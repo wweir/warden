@@ -261,3 +261,166 @@ func TestWritePidFileAllowsExecRestartSamePID(t *testing.T) {
 		t.Fatalf("pid file = %q, want %d", got, os.Getpid())
 	}
 }
+
+func TestParseModeFlags(t *testing.T) {
+	tests := []struct {
+		name              string
+		args              []string
+		install           bool
+		reload            bool
+		nonInteractive    bool
+		startAfterInstall *bool
+	}{
+		{name: "none", args: nil},
+		{name: "install", args: []string{"-i"}, install: true},
+		{name: "reload", args: []string{"-r"}, reload: true},
+		{name: "explicit false", args: []string{"-i=true", "-r=false"}, install: true, reload: false},
+		{name: "config arg ignored", args: []string{"-c", "warden.yaml", "-r"}, reload: true},
+		{name: "non interactive start", args: []string{"-i", "--non-interactive", "--start"}, install: true, nonInteractive: true, startAfterInstall: boolPtr(true)},
+		{name: "no start wins", args: []string{"-i", "--start", "--no-start"}, install: true, startAfterInstall: boolPtr(false)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseModeFlags(tt.args)
+			if got.install != tt.install || got.reload != tt.reload || got.nonInteractive != tt.nonInteractive {
+				t.Fatalf("parseModeFlags(%v) = %+v, want install=%v reload=%v nonInteractive=%v", tt.args, got, tt.install, tt.reload, tt.nonInteractive)
+			}
+			if !equalBoolPtr(got.startAfterInstall, tt.startAfterInstall) {
+				t.Fatalf("parseModeFlags(%v) startAfterInstall = %v, want %v", tt.args, got.startAfterInstall, tt.startAfterInstall)
+			}
+		})
+	}
+}
+
+func TestBuildInstallOptions(t *testing.T) {
+	start := true
+	opts := buildInstallOptions(modeFlags{
+		nonInteractive:    true,
+		startAfterInstall: &start,
+	})
+	if opts.Confirm != nil {
+		t.Fatal("Confirm should be nil for non-interactive install")
+	}
+	if opts.StartAfterInstall == nil || !*opts.StartAfterInstall {
+		t.Fatalf("StartAfterInstall = %v, want true", opts.StartAfterInstall)
+	}
+
+	opts = buildInstallOptions(modeFlags{})
+	if opts.Confirm == nil {
+		t.Fatal("Confirm should be set for interactive install")
+	}
+}
+
+func equalBoolPtr(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func TestValidateConfigPath(t *testing.T) {
+	validPath := writeTempConfig(t, `addr: ":8080"
+provider:
+  openai:
+    url: https://api.openai.com/v1
+    family: openai
+route:
+  /v1:
+    protocol: chat
+    wildcard_models:
+      "*":
+        providers:
+          - openai
+`)
+	invalidPath := writeTempConfig(t, `addr: ":8080"
+provider:
+  openai:
+    url: "://bad"
+    family: openai
+route:
+  /v1:
+    protocol: chat
+    wildcard_models:
+      "*":
+        providers:
+          - openai
+`)
+
+	tests := []struct {
+		name      string
+		path      string
+		wantError bool
+	}{
+		{name: "empty", path: ""},
+		{name: "missing", path: validPath + ".missing"},
+		{name: "valid", path: validPath},
+		{name: "invalid", path: invalidPath, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldArgs := os.Args
+			os.Args = []string{"test"}
+			t.Cleanup(func() {
+				os.Args = oldArgs
+			})
+
+			oldCommandLine := flag.CommandLine
+			flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+			t.Cleanup(func() {
+				flag.CommandLine = oldCommandLine
+			})
+
+			err := validateConfigPath(tt.path)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("validateConfigPath(%q) error = %v, wantError %v", tt.path, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateConfigPathIgnoresCLIConfigOverride(t *testing.T) {
+	validPath := writeTempConfig(t, `addr: ":8080"
+provider:
+  openai:
+    url: https://api.openai.com/v1
+    family: openai
+route:
+  /v1:
+    protocol: chat
+    wildcard_models:
+      "*":
+        providers:
+          - openai
+`)
+	invalidPath := writeTempConfig(t, `addr: ":8080"
+provider:
+  openai:
+    url: "://bad"
+    family: openai
+route:
+  /v1:
+    protocol: chat
+    wildcard_models:
+      "*":
+        providers:
+          - openai
+`)
+
+	oldArgs := os.Args
+	os.Args = []string{"test", "-c", validPath}
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	oldCommandLine := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+	})
+
+	if err := validateConfigPath(invalidPath); err == nil {
+		t.Fatal("validateConfigPath() error = nil, want invalid target path to win over CLI -c")
+	}
+}
