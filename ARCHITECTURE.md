@@ -47,7 +47,7 @@ internal/
     snapshot/        # admin-facing metrics/api key 运行时快照组装
     telemetry/       # Prometheus collector、dashboard 时序存储、metrics helper
     upstream/        # 协议/传输适配、编码协商、转发头处理
-  install/           # systemd 安装
+  install/           # 托管安装辅助（systemd / launchd / Task Scheduler）
   reqlog/            # 请求日志、指纹生成、JSON 清洗、SSE 广播
   selector/          # provider 选择、探活、抑制、failover 状态、模型发现
 pkg/
@@ -56,6 +56,27 @@ pkg/
   toolhook/          # exec / ai / http hook 执行器
 web/admin/           # Vue 3 管理端源码与构建产物
 ```
+
+## Deployment Boundary
+
+Warden 的运行时核心是跨平台的 HTTP 网关进程，但进程托管不是跨平台同构问题。
+
+当前边界：
+
+- 前台运行：Linux / macOS / Windows 都是同一套二进制心智
+- 内置托管安装：Linux=`systemd`，macOS=`launchd`，Windows=Task Scheduler
+- Windows 终端用户入口是单独的 self-extracting `setup.exe`；运行时 `warden.exe` 保持纯运行时语义
+- 托管安装总是把二进制落到平台约定的标准路径；若目标配置已存在，安装前先校验该配置
+- 管理台触发的重启由进程自身按平台完成；Unix 走原地重启，Windows 前台进程拉起新实例后退出，Task Scheduler 托管进程用受控退出码请求包装脚本立即重拉
+- `warden -r` 的 CLI 入口仍依赖 Unix 信号模型；Windows 不提供等价信号重载
+
+设计原则：
+
+- 网关进程负责配置校验、HTTP 服务、优雅关闭和管理面
+- OS 级启动、拉起、重启、崩溃恢复交给平台 supervisor
+- 不为了表面统一而把不同平台的进程模型硬压成同一个错误抽象
+
+跨平台部署细节见：[docs/cross-platform-deployment.md](./docs/cross-platform-deployment.md)
 
 ## Runtime Components
 

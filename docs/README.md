@@ -13,6 +13,8 @@
 
 ## Topics
 
+- [cross-platform-deployment.md](./cross-platform-deployment.md)
+  Linux / macOS / Windows 的运行、托管与运维边界
 - [responses-stateful-stateless-support.md](./responses-stateful-stateless-support.md)
   Responses API 的有状态/无状态支持边界，以及 `responses_to_chat` 的限制
 - [provider-dynamic-capability-discovery-plan.md](./provider-dynamic-capability-discovery-plan.md)

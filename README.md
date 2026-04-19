@@ -84,7 +84,10 @@ make build
 
 - `make test`：执行前端构建、`go vet`、`go test`
 - `make build`：生成本地可执行文件
-- `make package`：生成发布归档
+- `make package`：生成发布归档；Windows 默认产出可双击安装的 `*_setup.exe`
+- `make install`：调用内置托管安装流程
+  安装器会把二进制落到平台约定的托管路径，并在目标配置文件已存在时先做校验
+  Unix 上通常使用 `sudo make install`；Windows 上请在提升权限的终端执行
 
 #### 2. 准备配置
 
@@ -145,6 +148,28 @@ http://localhost:8080/_admin/
 
 - 用户名固定为 `admin`
 - 密码来自 `admin_password`
+
+### macOS / Windows 部署与运行
+
+先把事实说清楚：
+
+- 当前仓库的前台运行模式是跨平台的，`darwin` / `windows` 二进制可以构建并直接运行
+- 当前仓库内置的 `-i` 安装入口已经按平台接入托管器：Linux=`systemd`，macOS=`launchd`，Windows=Task Scheduler
+- Windows 发布物默认不再直接分发裸 `warden.exe`，而是分发可双击的 `setup.exe`
+- 当前仓库的 `-r` CLI 重载入口仍然依赖 Unix 信号；Windows 上请使用管理台重启或任务计划程序重启
+
+推荐把平台支持分成两层理解：
+
+- 运行层：三端统一，直接执行 `warden` / `warden.exe`，配置模型、HTTP 路由、管理后台行为一致
+- 托管层：按 OS 使用各自的进程管理器，Linux 用 `systemd`，macOS 用 `launchd`，Windows 用任务计划程序
+
+建议做法：
+
+- Linux：使用当前内置 `-i` 安装到 `systemd`
+- macOS：使用当前内置 `-i` 安装到 `launchd`
+- Windows：终端用户双击 `setup.exe` 安装；开发时也可以直接前台运行 `warden.exe`
+
+专题说明见：[docs/cross-platform-deployment.md](./docs/cross-platform-deployment.md)
 
 ### 客户端如何调用
 
