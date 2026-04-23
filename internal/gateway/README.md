@@ -4,7 +4,7 @@
 
 `internal/gateway` contains the core HTTP gateway runtime and composes the admin API package:
 
-- Registers route handlers for proxy, chat completions, responses, admin API, and Prometheus metrics.
+- Registers route handlers for proxy, chat completions, embeddings, responses, admin API, and Prometheus metrics.
 - Validates client API keys only when the matched route config has `route.api_keys`, then strips client auth headers before upstream forwarding.
 - Selects route-model upstream targets, records outcomes, and runs route-scoped tool-call hooks on returned tool calls.
 - Exposes admin SSE streams for live status, request logs, and dashboard telemetry.
@@ -36,21 +36,24 @@
 - Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
 - Wildcard model entries preserve the request model name and only choose which provider serves it.
 - Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
-- The gateway derives endpoint exposure from `route.protocol`; it does not depend on provider-card display protocols.
-- `chat` routes expose only `/chat/completions`.
-- `responses_stateless` routes expose only stateless `/responses`.
+- The gateway derives endpoint exposure from `route.protocol` plus the route's compiled upstream capabilities; it does not depend on provider-card display protocols.
+- `chat` routes expose `/chat/completions`, and expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
+- `responses_stateless` routes expose stateless `/responses`, and expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
 - `responses_stateless` routes reject `previous_response_id`.
 - `responses_to_chat` accepts only a constrained stateless subset; unsupported Responses-only fields, non-`function` tools, and unknown input items fail fast with `400`, while compatible `function` tools keep their `strict` flag, `max_output_tokens` is mapped to `max_completion_tokens`, Responses-style `tool_choice` is normalized before forwarding, and `function_call_output.output` may carry arbitrary JSON before being normalized into chat tool content.
 - Chat -> Responses rewrite normalizes Chat `usage` into Responses `input_tokens` / `output_tokens`, maps Chat `finish_reason` into Responses `status` / `incomplete_details`, and includes final item snapshots in `response.output_item.done` events for better SDK state-machine compatibility.
 - `responses_stateful` routes accept both stateless and stateful `/responses`; stateful requests bypass `responses_to_chat` conversion and disable failover.
+- `responses_stateful` routes also expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
 - Providers with `responses_to_chat` enabled cannot back `responses_stateful` route models, because that bridge does not implement `previous_response_id`.
 - If a `responses_to_chat` upstream rejects `developer` role with a pre-stream `400`, the chat bridge retries the same provider once after downgrading those messages to `system`.
-- Anthropic routes still expose only `/messages`.
+- Anthropic routes expose `/messages`, and expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
+- `embeddings` keeps OpenAI-compatible JSON on every route; native `anthropic` providers are filtered out for that service protocol, so `route.protocol=anthropic` only serves embeddings when the matched model resolves to an OpenAI-family provider.
 - `anthropic_to_chat` accepts only a constrained Messages subset; non-text content blocks, mixed user text + tool_result messages, and unknown Anthropic-only fields fail fast with `400`.
 - The Responses stream bridge emits a richer event sequence (`response.created`, `response.in_progress`, `response.output_text.done`, `response.function_call_arguments.done`, `response.output_item.done`) and attaches stable `output_index` / `item_id` metadata so stricter SDK state machines can track items incrementally.
 - Streaming provider accounting distinguishes `pre_stream` from `in_stream`: pre-stream failures may retry/fail over, in-stream upstream truncation only marks the current provider unhealthy, and downstream disconnects do not suppress the provider.
 - Non-inference subpaths that fall through to transparent proxying keep raw passthrough behavior; route protocol checks only gate recognized inference endpoints.
-- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_*` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `qwen/copilot/ollama => chat`.
+- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_* + embeddings` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `qwen/copilot => chat`.
+- OpenAI-compatible third-party upstreams such as Ollama are configured as `openai` providers and must narrow capabilities explicitly with `service_protocols` when they only support chat.
 - Provider model protocol probes follow the real request path: `anthropic_to_chat` providers probe Anthropic support by converting a Messages request into upstream Chat, instead of hard-rejecting non-native Anthropic providers.
 
 ## Key Interfaces
@@ -68,7 +71,7 @@
 - `internal/gateway/snapshot`: owns admin-facing snapshot assembly for dashboard metrics and API key usage payloads.
 - `internal/gateway/tokenusage`: owns protocol-aware token usage observation for JSON and SSE responses.
 - `internal/gateway/upstream`: owns protocol endpoint mapping, upstream request execution, body conversion, encoding negotiation, and forwarded-header sanitization.
-- `internal/gateway/telemetry`: owns Prometheus collectors, metric helpers, dashboard rolling store, and output-rate freshness tracking.
+- `internal/gateway/telemetry`: owns Prometheus collectors, metric helpers, dashboard rolling store, and last-request output-rate freshness tracking.
 - `PromMiddleware`: records request-level Prometheus metrics for business endpoints.
 - Client API key usage is tracked separately from provider usage, so gateway auth and upstream auth remain decoupled.
 - Shared inference helpers centralize JSON request parsing, metric-header wiring, and common response headers so chat / responses / messages handlers stay behaviorally aligned.
@@ -79,7 +82,7 @@
 - Buffered inference helpers now also centralize the common `chat` / native `responses` request loop: upstream request preparation, retry/failover handling, success-path tool hook dispatch, and final log writing no longer live in two separate copies.
 - Buffered / relay helpers preserve protocol-path switching across failover: if a request starts on a native provider and retries onto a bridge-capable provider, control flow re-enters the correct `responses_to_chat` or `anthropic_to_chat` path instead of staying pinned to the old execution branch.
 - Success-path `post` hooks keep route-scoped context values but detach from downstream request cancellation, so audit-only async hooks run in background after the handler returns; request logs keep only synchronous block verdicts, while streaming paths degrade block hooks to async audits because live responses cannot be rewritten. Each hook remains bounded by its own timeout.
-- Dashboard and API key snapshots stay in the root package as admin callbacks, but Prometheus collector ownership and rolling time-series state now live in `internal/gateway/telemetry`.
+- Dashboard and API key snapshots stay in the root package as admin callbacks, but Prometheus collector ownership, rolling time-series state, and last-request throughput freshness state now live in `internal/gateway/telemetry`.
 - Gateway root no longer keeps one-line snapshot wrapper methods that only forwarded to `internal/gateway/snapshot`; callback wiring now points at the snapshot package directly.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
 - Token usage observation is extracted before metrics/logging fan-out, so route/provider/API-key counters, throughput, and request logs all consume the same normalized observation result.
@@ -91,6 +94,6 @@
 ## Admin Telemetry Flow
 
 1. Business requests update Prometheus collectors owned by `internal/gateway/telemetry`.
-2. `internal/gateway/telemetry` samples cumulative counters every 2 seconds, while output-rate samples come from an in-memory freshness tracker updated by `RecordTokenMetrics`.
-3. The store converts counter deltas into usage/error points, stores total output TPS plus per-provider output TPS samples, and also keeps per-route request-rate, error-rate, and output-rate time series for the routes page. Stale output-rate entries expire after one sample interval, so idle charts fall back to `0` instead of showing the last request forever.
+2. `internal/gateway/telemetry` samples cumulative counters every 2 seconds. Dashboard output-rate samples are derived from prompt/completion/cache token counter deltas over that window, while `RecordTokenMetrics` still updates a separate in-memory freshness tracker for last-request throughput snapshots.
+3. The store converts counter deltas into usage/error/output points, keeps prompt/completion/cache TPS plus per-provider/per-route completion TPS histories, and reuses the same window for the routes page request-rate/error-rate/output-rate charts. Idle windows naturally settle at `0` TPS instead of dropping into missing data because the previous request aged out.
 4. `GET /_admin/api/metrics/stream` returns current aggregated metrics plus the rolling time series for the dashboard and routes charts.

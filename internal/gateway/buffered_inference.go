@@ -74,6 +74,7 @@ func (g *Gateway) handleBufferedInference(
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
+		session.observeMatchedModel()
 		session.recordTTFT(latency)
 		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, req.Stream)
 
@@ -119,13 +120,13 @@ func (g *Gateway) handleBufferedInference(
 				respBody,
 				"",
 				nil,
-				observeJSONTokenUsage(respBody),
+				observeJSONTokenUsage(spec.serviceProtocol, respBody),
 				nil,
 				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
 				g.recordAndBroadcast,
 			)
 		})
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }

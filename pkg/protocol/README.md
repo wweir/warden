@@ -9,6 +9,7 @@ protocol/
 ├── sse.go              # 公共类型（Event、ToolCallInfo、StreamParser）和 SSE 解析/重放
 ├── openai/             # OpenAI 协议实现
 │   ├── types.go        # Chat Completions API 请求/响应类型
+│   ├── embeddings.go   # Embeddings API 请求/响应类型
 │   ├── responses.go    # Responses API 请求/响应类型
 │   ├── convert.go      # Responses -> Chat 请求转换；Chat -> Responses 响应/SSE 转换
 │   ├── stream.go       # SSE 流式解析器（Chat + Responses）
@@ -25,6 +26,7 @@ protocol/
 - 定义 LLM 协议公共类型（`Event`、`ToolCallInfo`）
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
+- 提供 OpenAI-compatible Embeddings API 的请求/响应类型
 - 提供 OpenAI `responses_to_chat` 所需的无状态 `Responses -> Chat` 请求转换，以及 `Chat -> Responses` 响应/SSE 转换
 - 提供 `anthropic_to_chat` 所需的受控 `Messages -> Chat` 请求转换，以及 `Chat -> Messages` 响应/SSE 转换
 - `responses_to_chat` 转换器只接受受控的 stateless 子集；不支持的 Responses 专有字段、未知 input item、非 `function` tools 会直接报错；兼容的 `function` tool 会保留 `strict`，`max_output_tokens` 会映射到 `max_completion_tokens`，Responses 风格 `tool_choice` 会被规范化为 Chat 风格对象，`function_call_output.output` 支持字符串和任意 JSON 值

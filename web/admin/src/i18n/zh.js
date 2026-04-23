@@ -488,6 +488,8 @@ export default {
 		family: "适配器族",
 		selectFamily: "选择适配器族",
 		familyRequired: "适配器族不能为空",
+		backendProviderRequired: "cliproxy backend 必须填写 backend_provider",
+		backendServiceProtocolsRequired: "cliproxy backend 必须显式填写 service_protocols",
 		supportedProtocols: "支持的协议",
 		candidateProtocols: "族候选协议",
 		configuredProtocols: "配置后协议",

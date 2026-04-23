@@ -57,6 +57,54 @@ func TestNormalizePromptConfigJSONDropsDisabledFalseFlagsWithoutPrompt(t *testin
 	}
 }
 
+func TestGatewayRootRedirectsToAdminWhenAdminEnabled(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		AdminPassword: config.SecretString("admin-secret"),
+		Provider:      map[string]*config.ProviderConfig{},
+		Route:         map[string]*config.RouteConfig{},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusFound, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/_admin/" {
+		t.Fatalf("Location = %q, want /_admin/", got)
+	}
+}
+
+func TestGatewayRootReturnsNotFoundWhenAdminDisabled(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{},
+		Route:    map[string]*config.RouteConfig{},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
 func TestNormalizePromptConfigJSONKeepsEnabledPromptFlags(t *testing.T) {
 	cfg := map[string]any{
 		"route": map[string]any{
@@ -712,6 +760,58 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 	}
 	if got := payload.DisplayProtocols; !sameStrings(got, []string{config.RouteProtocolChat}) {
 		t.Fatalf("display_protocols = %v, want [chat]", got)
+	}
+}
+
+func TestHandleProviderDetailIncludesEmbeddingsDisplayProtocol(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"embeddings": {
+				URL:              "https://api.openai.com/v1",
+				Protocol:         "openai",
+				ServiceProtocols: []string{config.ServiceProtocolEmbeddings},
+			},
+			"chat": {
+				URL:              "https://api.openai.com/v1",
+				Protocol:         "openai",
+				ServiceProtocols: []string{config.RouteProtocolChat},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/proxy": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"hybrid": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "embeddings", Model: "text-embedding-3-small"},
+						&config.RouteUpstreamConfig{Provider: "chat", Model: "gpt-4o"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/providers/detail?name=embeddings", nil)
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleProviderDetail(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var payload struct {
+		DisplayProtocols []string `json:"display_protocols"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal provider detail: %v", err)
+	}
+	if got := payload.DisplayProtocols; !sameStrings(got, []string{config.ServiceProtocolEmbeddings}) {
+		t.Fatalf("display_protocols = %v, want [embeddings]", got)
 	}
 }
 

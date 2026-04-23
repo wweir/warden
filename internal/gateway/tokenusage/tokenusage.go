@@ -80,6 +80,19 @@ func FromJSON(body []byte) Observation {
 	return fromJSONBody(body, SourceReportedJSON)
 }
 
+func FromEmbeddingsJSON(body []byte) Observation {
+	obs := fromJSONBody(body, SourceReportedJSON)
+	if !obs.promptObserved || obs.completionObserved {
+		return obs
+	}
+	if obs.TotalTokens > 0 && obs.TotalTokens == obs.PromptTokens {
+		obs.CompletionTokens = 0
+		obs.completionObserved = true
+		obs.Completeness = CompletenessExact
+	}
+	return obs
+}
+
 func FromStream(serviceProtocol, providerProtocol string, body []byte) Observation {
 	switch {
 	case providerProtocol == config.ProviderProtocolAnthropic:

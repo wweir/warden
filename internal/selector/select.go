@@ -93,7 +93,7 @@ func (s *Selector) SelectByName(cfg *config.ConfigStruct, serviceProtocol string
 		if !exists {
 			break
 		}
-		if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(provCfg, serviceProtocol) {
+		if serviceProtocol != "" && !config.ProviderSupportsServiceProtocol(provCfg, serviceProtocol) {
 			break
 		}
 		return buildRouteTarget(matched, upstream, requestedModel), provCfg, nil
@@ -128,7 +128,7 @@ func (s *Selector) buildCandidates(cfg *config.ConfigStruct, serviceProtocol str
 		if !exists {
 			continue
 		}
-		if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(provCfg, serviceProtocol) {
+		if serviceProtocol != "" && !config.ProviderSupportsServiceProtocol(provCfg, serviceProtocol) {
 			continue
 		}
 		st := s.states[upstream.Provider]

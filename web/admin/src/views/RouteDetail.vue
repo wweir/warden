@@ -303,7 +303,7 @@ import {
   saveConfig,
   validateConfig,
 } from '../api.js'
-import { fmtNum } from '../utils.js'
+import { fmtNum, providerRouteProtocols } from '../utils.js'
 import RouteModelsEditor from '../components/RouteModelsEditor.vue'
 
 const { t } = useI18n()
@@ -512,11 +512,7 @@ function deepClone(value) {
 }
 
 function supportedRouteProtocols(provider) {
-  const family = normalizeText(provider?.family || provider?.protocol)
-  if (family === 'anthropic') return ['chat', 'anthropic']
-  if (family === 'openai') return ['chat', 'responses_stateless', 'responses_stateful']
-  if (['qwen', 'copilot', 'ollama'].includes(family)) return ['chat']
-  return []
+  return providerRouteProtocols(provider)
 }
 
 function defaultProviderForProtocol(protocol, providerConfigMap = {}) {

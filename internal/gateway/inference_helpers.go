@@ -141,7 +141,10 @@ func writeStreamResponse(w http.ResponseWriter, body []byte, warnMsg string) {
 	w.(http.Flusher).Flush()
 }
 
-func observeJSONTokenUsage(respBody []byte) tokenusagepkg.Observation {
+func observeJSONTokenUsage(serviceProtocol string, respBody []byte) tokenusagepkg.Observation {
+	if serviceProtocol == config.ServiceProtocolEmbeddings {
+		return tokenusagepkg.FromEmbeddingsJSON(respBody)
+	}
 	return tokenusagepkg.FromJSON(respBody)
 }
 

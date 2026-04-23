@@ -43,6 +43,7 @@ type Gateway struct {
 const (
 	dashboardMetricsSampleInterval = 2 * time.Second
 	dashboardMetricsHistoryLimit   = 180
+	dashboardOutputRateStaleAfter  = 8 * time.Second
 )
 
 // SetReloadFn sets the function called to hot-reload the gateway.

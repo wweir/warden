@@ -97,6 +97,7 @@ func (g *Gateway) handleChatBridge(
 			}
 			defer streamReader.Close()
 
+			session.observeMatchedModel()
 			session.recordTTFT(latency)
 			writeEventStreamHeaders(w)
 
@@ -160,6 +161,7 @@ func (g *Gateway) handleChatBridge(
 			upstreampkg.WriteUpstreamAwareError(w, forwardErr)
 			return
 		}
+		session.observeMatchedModel()
 
 		respBody, convErr := spec.convertNonStreamResponse(chatResp, model)
 		if convErr != nil {

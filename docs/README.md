@@ -25,6 +25,10 @@
   客户端 API Key 管理和敏感字段编码边界
 - [token-usage-observability.md](./token-usage-observability.md)
   token usage 观测、coverage 指标与 admin snapshot 暴露面
+- [embeddings-support.md](./embeddings-support.md)
+  `/embeddings` 的 service protocol 暴露面、provider 兼容边界与 Anthropic route 语义
+- [cliproxy-backend.md](./cliproxy-backend.md)
+  通过 OpenAI-compatible sidecar 接入 CLIProxyAPI/cliproxy 的边界与配置约束
 
 ## Rules
 

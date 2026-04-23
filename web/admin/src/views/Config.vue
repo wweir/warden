@@ -38,7 +38,7 @@
 			<h3>{{ $t("config.general") }}</h3>
 			<div class="form-grid">
 				<label>addr</label>
-				<input v-model="config.addr" class="form-input" placeholder=":8080" />
+				<input v-model="config.addr" class="form-input" placeholder=":9832" />
 
 				<label>admin_password</label>
 				<div class="secret-field">

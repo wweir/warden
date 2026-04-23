@@ -36,6 +36,7 @@ type providerState struct {
 	manualSuppress      bool
 	availableModels     map[string]bool
 	rawModels           []json.RawMessage
+	observedModels      map[string]json.RawMessage
 	displayProtocols    []string
 	lastProtocolProbe   *ProtocolProbe
 	modelProtocolProbes map[string]map[string]ModelProtocolProbe
@@ -110,7 +111,7 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 	for name, prov := range cfg.Provider {
 		states[name] = &providerState{
 			manualSuppress:   prov.Disabled,
-			displayProtocols: append([]string(nil), config.SupportedRouteProtocols(prov)...),
+			displayProtocols: append([]string(nil), config.SupportedDisplayProtocols(prov)...),
 		}
 	}
 	return &Selector{
@@ -187,6 +188,8 @@ func (s *providerState) buildStatus(name string) ProviderStatus {
 	}
 	if s.availableModels != nil {
 		ps.ModelCount = len(s.availableModels)
+	} else if len(s.observedModels) > 0 {
+		ps.ModelCount = len(s.observedModels)
 	}
 	return ps
 }

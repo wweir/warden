@@ -289,6 +289,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelCombobox from './ModelCombobox.vue'
 import TagListEditor from './TagListEditor.vue'
+import { providerRouteProtocols } from '../utils.js'
 
 const props = defineProps({
   routeProtocol: { type: String, default: 'chat' },
@@ -344,11 +345,7 @@ function dedupeNonEmpty(values) {
 }
 
 function supportedRouteProtocols(provider) {
-  const family = String(provider?.family || provider?.protocol || '').trim().toLowerCase()
-  if (family === 'anthropic') return ['chat', 'anthropic']
-  if (family === 'openai') return ['chat', 'responses_stateless', 'responses_stateful']
-  if (['qwen', 'copilot', 'ollama'].includes(family)) return ['chat']
-  return []
+  return providerRouteProtocols(provider)
 }
 
 function providerOptions(currentProvider = '') {

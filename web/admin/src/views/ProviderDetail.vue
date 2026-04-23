@@ -78,8 +78,24 @@
 						<option value="anthropic">anthropic</option>
 						<option value="qwen">qwen</option>
 						<option value="copilot">copilot</option>
-						<option value="ollama">ollama</option>
 					</select>
+
+					<template v-if="providerFamily(providerConfig) === 'openai'">
+						<label>backend</label>
+						<select v-model="providerConfig.backend" class="form-input">
+							<option value="">default</option>
+							<option value="cliproxy">cliproxy</option>
+						</select>
+
+						<template v-if="providerBackend(providerConfig) === 'cliproxy'">
+							<label>backend_provider <span class="req">*</span></label>
+							<input
+								v-model="providerConfig.backend_provider"
+								class="form-input"
+								placeholder="codex"
+							/>
+						</template>
+					</template>
 
 					<template
 						v-if="providerFamily(providerConfig) && !['qwen', 'copilot'].includes(providerFamily(providerConfig))"
@@ -149,6 +165,16 @@
 
 					<label>timeout</label>
 					<input v-model="providerConfig.timeout" class="form-input" placeholder="60s" />
+
+					<label>service_protocols</label>
+					<div class="service-protocols-editor">
+						<TagListEditor
+							v-model="providerConfig.service_protocols"
+							:suggestions="serviceProtocolSuggestions"
+							placeholder="adapter defaults"
+						/>
+						<p class="hint service-protocols-hint">empty = adapter defaults</p>
+					</div>
 
 					<template v-if="providerFamily(providerConfig) === 'openai'">
 						<label>responses_to_chat</label>
@@ -246,6 +272,14 @@
 						<tr>
 							<td>{{ $t("providerDetail.family") }}</td>
 							<td>{{ detail.family || detail.protocol }}</td>
+						</tr>
+						<tr v-if="detail.backend">
+							<td>backend</td>
+							<td>{{ detail.backend }}</td>
+						</tr>
+						<tr v-if="detail.backend_provider">
+							<td>backend_provider</td>
+							<td>{{ detail.backend_provider }}</td>
 						</tr>
 						<tr>
 							<td>{{ $t("providerDetail.supportedProtocols") }}</td>
@@ -589,6 +623,9 @@ function createEmptyProviderConfig() {
 	return {
 		url: "",
 		family: "",
+		backend: "",
+		backend_provider: "",
+		service_protocols: [],
 		models: [],
 		responses_to_chat: false,
 		anthropic_to_chat: false,
@@ -597,6 +634,43 @@ function createEmptyProviderConfig() {
 
 function providerFamily(provider) {
 	return String(provider?.family || "").trim().toLowerCase();
+}
+
+function providerBackend(provider) {
+	return String(provider?.backend || "").trim().toLowerCase();
+}
+
+const serviceProtocolSuggestions = computed(() => {
+	switch (providerFamily(providerConfig.value)) {
+		case "openai": {
+			const protocols = ["chat", "responses_stateless", "responses_stateful", "embeddings"];
+			if (providerConfig.value?.anthropic_to_chat) protocols.push("anthropic");
+			return protocols;
+		}
+		case "anthropic":
+			return ["chat", "anthropic"];
+		case "qwen":
+		case "copilot":
+			return ["chat"];
+		default:
+			return [];
+	}
+});
+
+function normalizeServiceProtocols(protocols) {
+	const out = [];
+	const seen = new Set();
+	for (const raw of protocols || []) {
+		const protocol = String(raw || "").trim().toLowerCase();
+		if (!protocol || seen.has(protocol)) continue;
+		seen.add(protocol);
+		out.push(protocol);
+		if (protocol === "responses_stateful" && !seen.has("responses_stateless")) {
+			seen.add("responses_stateless");
+			out.push("responses_stateless");
+		}
+	}
+	return out;
 }
 
 function secretDisplay(val) {
@@ -720,6 +794,7 @@ async function load() {
 				...createEmptyProviderConfig(),
 				...cloneData(provider),
 				family: provider.family || provider.protocol || "",
+				service_protocols: [...(provider.service_protocols || [])],
 				models: [...(provider.models || [])],
 			};
 			detail.value = await fetchProviderDetail(props.name);
@@ -792,6 +867,17 @@ async function apply() {
 			error.value = t("providerDetail.urlRequired");
 			return;
 		}
+		const backend = family === "openai" ? providerBackend(providerConfig.value) : "";
+		if (backend === "cliproxy") {
+			if (!String(providerConfig.value.backend_provider || "").trim()) {
+				error.value = t("providerDetail.backendProviderRequired");
+				return;
+			}
+			if ((providerConfig.value.service_protocols || []).length === 0) {
+				error.value = t("providerDetail.backendServiceProtocolsRequired");
+				return;
+			}
+		}
 
 		const nextConfig = cloneData(configDoc.value);
 		nextConfig.provider = nextConfig.provider || {};
@@ -803,6 +889,16 @@ async function apply() {
 
 		const nextProviderConfig = cloneData(providerConfig.value);
 		nextProviderConfig.family = providerFamily(nextProviderConfig);
+		nextProviderConfig.backend = nextProviderConfig.family === "openai" ? providerBackend(nextProviderConfig) : "";
+		nextProviderConfig.backend_provider = String(nextProviderConfig.backend_provider || "").trim().toLowerCase();
+		if (!nextProviderConfig.backend) {
+			delete nextProviderConfig.backend;
+			delete nextProviderConfig.backend_provider;
+		}
+		nextProviderConfig.service_protocols = normalizeServiceProtocols(nextProviderConfig.service_protocols);
+		if (nextProviderConfig.service_protocols.length === 0) {
+			delete nextProviderConfig.service_protocols;
+		}
 		delete nextProviderConfig.protocol;
 		if (!apiKeyTouched.value) {
 			delete nextProviderConfig.api_key;
@@ -1056,6 +1152,16 @@ async function unsuppressProvider() {
 	align-items: center;
 	gap: 10px;
 	min-height: 34px;
+}
+
+.service-protocols-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.service-protocols-hint {
+	margin: 0;
 }
 
 .models-editor {

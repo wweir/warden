@@ -24,6 +24,7 @@ import (
 	_ "github.com/sower-proxy/feconf/reader/file"
 	_ "github.com/sower-proxy/feconf/reader/http"
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/cliproxybridge"
 	"github.com/wweir/warden/internal/gateway"
 	"github.com/wweir/warden/internal/install"
 )
@@ -111,6 +112,31 @@ func (a *app) run() (err error) {
 
 	a.gateway.SetReloadFn(a.restart)
 
+	clipBridge, err := cliproxybridge.New(a.cfg)
+	if err != nil {
+		return fmt.Errorf("create cliproxy bridge: %w", err)
+	}
+	clipBridgeClosed := false
+	closeClipBridge := func() {
+		if clipBridge == nil || clipBridgeClosed {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := clipBridge.Close(ctx); closeErr != nil {
+			slog.Warn("Embedded cliproxy shutdown error", "error", closeErr)
+		}
+		clipBridgeClosed = true
+	}
+	defer closeClipBridge()
+	var clipBridgeErr <-chan error
+	if clipBridge != nil {
+		if err := clipBridge.Start(context.Background()); err != nil {
+			return fmt.Errorf("start cliproxy bridge: %w", err)
+		}
+		clipBridgeErr = clipBridge.Err()
+	}
+
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", a.cfg.Addr, err)
@@ -144,6 +170,11 @@ func (a *app) run() (err error) {
 	case <-a.restartCh:
 		slog.Info("Restarting with new config...")
 		doRestart = true
+	case err := <-clipBridgeErr:
+		if err == nil {
+			return fmt.Errorf("embedded cliproxy stopped unexpectedly")
+		}
+		return fmt.Errorf("embedded cliproxy failed: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -154,6 +185,7 @@ func (a *app) run() (err error) {
 	}
 
 	a.gateway.Close()
+	closeClipBridge()
 
 	if doRestart {
 		if restartNeedsPIDFileRemoval() {

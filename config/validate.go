@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,6 +40,9 @@ func (c *ConfigStruct) Validate() error {
 		return err
 	}
 	if err := c.validateProviderConfig(); err != nil {
+		return err
+	}
+	if err := c.validateCLIProxyConfig(); err != nil {
 		return err
 	}
 	if err := c.validateRouteConfig(); err != nil {
@@ -113,6 +117,85 @@ func validateWebhookRuntimeConfig(ctx string, webhook *WebhookConfig) error {
 	return nil
 }
 
+func (c *ConfigStruct) validateCLIProxyConfig() error {
+	if c.CLIProxy == nil {
+		return nil
+	}
+
+	c.CLIProxy.AuthDir = strings.TrimSpace(c.CLIProxy.AuthDir)
+	c.CLIProxy.Proxy = strings.TrimSpace(c.CLIProxy.Proxy)
+	if c.CLIProxy.AuthDir == "" {
+		c.CLIProxy.AuthDir = "~/.cli-proxy-api"
+	}
+	authDir, err := expandHomeDir(c.CLIProxy.AuthDir)
+	if err != nil {
+		return NewValidationError("cliproxy.auth_dir: %v", err)
+	}
+	c.CLIProxy.AuthDir = authDir
+
+	if c.CLIProxy.Proxy != "" {
+		if err := validateProxyURL("cliproxy.proxy", c.CLIProxy.Proxy); err != nil {
+			return err
+		}
+	}
+	if c.CLIProxy.RequestRetry < 0 {
+		return NewValidationError("cliproxy.request_retry must be >= 0")
+	}
+	if c.CLIProxy.MaxRetryCredentials < 0 {
+		return NewValidationError("cliproxy.max_retry_credentials must be >= 0")
+	}
+	if !c.CLIProxy.Enabled {
+		return nil
+	}
+
+	endpoint := ""
+	count := 0
+	for name, prov := range c.Provider {
+		if prov == nil || prov.Backend != ProviderBackendCLIProxy {
+			continue
+		}
+		count++
+		parsed, err := url.Parse(prov.URL)
+		if err != nil {
+			return NewValidationError("provider %s: invalid cliproxy backend url %s: %v", name, prov.URL, err)
+		}
+		if parsed.Scheme != "http" {
+			return NewValidationError("provider %s: embedded cliproxy backend url must use http, got %q", name, parsed.Scheme)
+		}
+		if !isLoopbackHost(parsed.Hostname()) {
+			return NewValidationError("provider %s: embedded cliproxy backend url must use a loopback host, got %q", name, parsed.Hostname())
+		}
+		if parsed.Port() == "" {
+			return NewValidationError("provider %s: embedded cliproxy backend url must include an explicit port", name)
+		}
+		if parsed.EscapedPath() != "/v1" {
+			return NewValidationError("provider %s: embedded cliproxy backend url path must be /v1", name)
+		}
+		current := parsed.Scheme + "://" + parsed.Host
+		if endpoint == "" {
+			endpoint = current
+			continue
+		}
+		if endpoint != current {
+			return NewValidationError("provider %s: all embedded cliproxy backend providers must share the same endpoint %s, got %s", name, endpoint, current)
+		}
+	}
+	if count == 0 {
+		return NewValidationError("cliproxy.enabled requires at least one provider with backend 'cliproxy'")
+	}
+
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() != nil && ip.IsLoopback()
+}
+
 func (c *ConfigStruct) validateRoutePrefixes() error {
 	for prefix, route := range c.Route {
 		if prefix == "" || prefix[0] != '/' {
@@ -128,10 +211,15 @@ func (c *ConfigStruct) validateRoutePrefixes() error {
 func (c *ConfigStruct) validateProviderConfig() error {
 	for name, prov := range c.Provider {
 		prov.Name = name
-		prov.Family = normalizeProviderProtocol(prov.Family)
-		prov.Protocol = normalizeProviderProtocol(prov.Protocol)
+		rawFamily := normalizeProviderProtocol(prov.Family)
+		rawProtocol := normalizeProviderProtocol(prov.Protocol)
+		if rawFamily == "ollama" || rawProtocol == "ollama" {
+			return NewValidationError("provider %s: 'ollama' family/protocol has been removed; use family 'openai' and set service_protocols to ['chat'] for Ollama-compatible endpoints", name)
+		}
+		prov.Family = normalizeProviderAdapterProtocol(rawFamily)
+		prov.Protocol = normalizeProviderAdapterProtocol(rawProtocol)
 		if prov.Family != "" && prov.Protocol != "" && prov.Family != prov.Protocol {
-			return NewValidationError("provider %s: family %q conflicts with protocol %q", name, prov.Family, prov.Protocol)
+			return NewValidationError("provider %s: family %q conflicts with protocol %q", name, rawFamily, rawProtocol)
 		}
 		if prov.Protocol == "" {
 			prov.Protocol = prov.Family
@@ -140,6 +228,38 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			return NewValidationError("provider %s: family is required", name)
 		}
 		prov.Family = prov.Protocol
+		prov.Backend = normalizeProviderBackend(prov.Backend)
+		prov.BackendProvider = normalizeProviderBackend(prov.BackendProvider)
+		if prov.Backend == "" && prov.BackendProvider != "" {
+			return NewValidationError("provider %s: backend_provider requires backend", name)
+		}
+		switch prov.Backend {
+		case "":
+		case ProviderBackendCLIProxy:
+			if prov.Protocol != ProviderProtocolOpenAI {
+				return NewValidationError("provider %s: backend %q requires family 'openai', got %q", name, prov.Backend, prov.Protocol)
+			}
+			if prov.BackendProvider == "" {
+				return NewValidationError("provider %s: backend_provider is required when backend is %q", name, prov.Backend)
+			}
+			if len(prov.ServiceProtocols) == 0 {
+				return NewValidationError("provider %s: backend %q requires explicit service_protocols", name, prov.Backend)
+			}
+		default:
+			return NewValidationError("provider %s: invalid backend %q (must be cliproxy)", name, prov.Backend)
+		}
+		if len(prov.ServiceProtocols) > 0 {
+			if !validConfiguredServiceProtocols(prov.ServiceProtocols) {
+				return NewValidationError("provider %s: invalid service_protocols %v (must be chat/responses_stateless/responses_stateful/anthropic/embeddings)", name, prov.ServiceProtocols)
+			}
+			prov.ServiceProtocols = normalizeConfiguredServiceProtocols(prov.ServiceProtocols)
+			allowedProtocols := DefaultServiceProtocols(prov)
+			for _, protocol := range prov.ServiceProtocols {
+				if !slices.Contains(allowedProtocols, protocol) {
+					return NewValidationError("provider %s: service_protocols %v is incompatible with adapter capabilities %v", name, prov.ServiceProtocols, allowedProtocols)
+				}
+			}
+		}
 		applyProviderDefaults(prov)
 
 		configDir, err := expandHomeDir(prov.ConfigDir)
@@ -156,7 +276,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		}
 
 		switch prov.Protocol {
-		case ProviderProtocolOpenAI, ProviderProtocolAnthropic, ProviderProtocolOllama:
+		case ProviderProtocolOpenAI, ProviderProtocolAnthropic:
 		case ProviderProtocolQwen, ProviderProtocolCopilot:
 			if prov.APIKey.Value() == "" {
 				if p := provider.Get(prov.Protocol); p != nil {
@@ -169,7 +289,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 				}
 			}
 		default:
-			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/ollama/qwen/copilot)", name, prov.Protocol)
+			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/qwen/copilot)", name, prov.Protocol)
 		}
 
 		if prov.Timeout != "" {
@@ -254,6 +374,8 @@ func (c *ConfigStruct) validateRouteConfig() error {
 				}
 			}
 		}
+
+		PruneUnsupportedRouteServiceProtocols(route, c.Provider)
 	}
 
 	return nil
@@ -316,10 +438,10 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 		if !exists {
 			return NewValidationError("route %s exact model %q upstreams[%d]: unknown provider %s", prefix, modelName, idx, upstream.Provider)
 		}
-		if !ProviderSupportsConfiguredProtocol(prov, route.Protocol) {
-			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s does not support route protocol %s", prefix, modelName, idx, upstream.Provider, route.Protocol)
+		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
+			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s does not support any route service protocol %v", prefix, modelName, idx, upstream.Provider, route.serviceProtocols)
 		}
-		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat {
+		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
 			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, modelName, idx, upstream.Provider, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -327,6 +449,9 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 			UpstreamModel: upstream.Model,
 			RenameModel:   upstream.Model != modelName,
 		})
+	}
+	if !compiledRouteModelSupportsServiceProtocol(compiled, c.Provider, route.Protocol) {
+		return NewValidationError("route %s exact model %q: at least one upstream must support route protocol %s", prefix, modelName, route.Protocol)
 	}
 	route.exactModels[modelName] = compiled
 	return nil
@@ -363,10 +488,10 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 		if !exists {
 			return NewValidationError("route %s wildcard model %q providers[%d]: unknown provider %s", prefix, pattern, idx, provName)
 		}
-		if !ProviderSupportsConfiguredProtocol(prov, route.Protocol) {
-			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s does not support route protocol %s", prefix, pattern, idx, provName, route.Protocol)
+		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
+			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s does not support any route service protocol %v", prefix, pattern, idx, provName, route.serviceProtocols)
 		}
-		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat {
+		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
 			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, pattern, idx, provName, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -374,8 +499,23 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 			UpstreamModel: "",
 		})
 	}
+	if !compiledRouteModelSupportsServiceProtocol(compiled, c.Provider, route.Protocol) {
+		return NewValidationError("route %s wildcard model %q: at least one provider must support route protocol %s", prefix, pattern, route.Protocol)
+	}
 	route.wildcards = append(route.wildcards, compiled)
 	return nil
+}
+
+func compiledRouteModelSupportsServiceProtocol(compiled *CompiledRouteModel, providers map[string]*ProviderConfig, serviceProtocol string) bool {
+	if compiled == nil || serviceProtocol == "" {
+		return false
+	}
+	for _, upstream := range compiled.Upstreams {
+		if ProviderSupportsServiceProtocol(providers[upstream.Provider], serviceProtocol) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateConfiguredProtocolName(prefix, modelName, protocol string) error {

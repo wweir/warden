@@ -127,6 +127,13 @@ func (s *inferenceSession) recordTTFT(latency time.Duration) {
 	}
 }
 
+func (s *inferenceSession) observeMatchedModel() {
+	if s.target == nil {
+		return
+	}
+	s.gateway.selector.ObserveMatchedModel(s.target)
+}
+
 func (s *inferenceSession) handleError(err error) bool {
 	if s.request.Context().Err() != nil {
 		return false

@@ -38,7 +38,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		routes:                compileRouteBindings(cfg.Route),
 		broadcaster:           reqlog.NewBroadcaster(),
 		dashboardStore:        telemetrypkg.NewDashboardMetricsStore(dashboardMetricsSampleInterval, dashboardMetricsHistoryLimit),
-		outputRates:           telemetrypkg.NewOutputRateTracker(dashboardMetricsSampleInterval),
+		outputRates:           telemetrypkg.NewOutputRateTracker(dashboardOutputRateStaleAfter),
 		internalHookAuthToken: mustNewInternalHookAuthToken(),
 		ctx:                   ctx,
 		cancel:                cancel,
@@ -47,7 +47,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	go g.selector.RefreshModels(ctx, cfg)
 	g.dashboardStore.Start(ctx, func() telemetrypkg.DashboardCounterSample {
-		return snapshotpkg.CollectDashboardCounters(g.outputRates)
+		return snapshotpkg.CollectDashboardCounters()
 	})
 	g.logger = loggingpkg.NewLogger(cfg.Log)
 	g.handler = g.buildHTTPHandler()
@@ -72,9 +72,11 @@ func (g *Gateway) buildHTTPHandler() http.Handler {
 func shouldRegisterOpenAIEndpoint(route *config.RouteConfig, serviceProtocol string) bool {
 	switch serviceProtocol {
 	case config.RouteProtocolChat:
-		return route.ConfiguredProtocol() == config.RouteProtocolChat
+		return route.SupportsServiceProtocol(config.RouteProtocolChat)
 	case config.RouteProtocolResponsesStateless:
-		return config.IsResponsesRouteProtocol(route.ConfiguredProtocol())
+		return route.SupportsServiceProtocol(config.RouteProtocolResponsesStateless) || route.SupportsServiceProtocol(config.RouteProtocolResponsesStateful)
+	case config.ServiceProtocolEmbeddings:
+		return route.SupportsServiceProtocol(config.ServiceProtocolEmbeddings)
 	default:
 		return false
 	}
@@ -110,7 +112,10 @@ func (g *Gateway) registerRoute(router *httprouter.Router, binding routeBinding)
 	if shouldRegisterOpenAIEndpoint(binding.route, config.RouteProtocolResponsesStateless) {
 		router.Handle(http.MethodPost, binding.prefix+"/responses", g.bindRouteHandler(binding.route, g.handleResponses))
 	}
-	if binding.route.ConfiguredProtocol() == config.RouteProtocolAnthropic {
+	if shouldRegisterOpenAIEndpoint(binding.route, config.ServiceProtocolEmbeddings) {
+		router.Handle(http.MethodPost, binding.prefix+"/embeddings", g.bindRouteHandler(binding.route, g.handleEmbeddings))
+	}
+	if binding.route.SupportsServiceProtocol(config.RouteProtocolAnthropic) {
 		router.Handle(http.MethodPost, binding.prefix+"/messages", g.bindRouteHandler(binding.route, g.handleAnthropicMessages))
 	}
 }

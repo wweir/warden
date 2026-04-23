@@ -76,6 +76,7 @@ func (g *Gateway) handleRelayInference(
 			}
 			defer streamReader.Close()
 
+			session.observeMatchedModel()
 			session.recordTTFT(latency)
 			writeEventStreamHeaders(w)
 
@@ -142,6 +143,7 @@ func (g *Gateway) handleRelayInference(
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, nil, latency)
+		session.observeMatchedModel()
 		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
 		spec.writeNonStream(w, respBody)
 		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
@@ -154,13 +156,13 @@ func (g *Gateway) handleRelayInference(
 				respBody,
 				"",
 				nil,
-				observeJSONTokenUsage(respBody),
+				observeJSONTokenUsage(spec.serviceProtocol, respBody),
 				nil,
 				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
 				g.recordAndBroadcast,
 			)
 		})
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }

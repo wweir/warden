@@ -333,6 +333,10 @@ const outputTrendLegend = computed(() =>
 	buildRouteLegend(outputTrendRoutes.value, realtimeRouteOutputHistory.value, formatTPSValue),
 );
 
+const latestRouteOutputRates = computed(
+	() => realtimeRouteOutputHistory.value[realtimeRouteOutputHistory.value.length - 1]?.routes ?? {},
+);
+
 function quantileFromHistogramBuckets(buckets, quantile) {
 	const levels = Object.keys(buckets)
 		.map(Number)
@@ -447,12 +451,10 @@ const routeMetrics = computed(() => {
 		map[row.route].throughputSamples += count;
 	}
 
-	for (const row of metricsData.value?.route_token_rate ?? []) {
-		if (row.type !== "completion") continue;
-		if (!row.route) continue;
-		if (!map[row.route]) {
-			map[row.route] = {
-				route: row.route,
+	for (const [route, value] of Object.entries(latestRouteOutputRates.value)) {
+		if (!map[route]) {
+			map[route] = {
+				route,
 				success: 0,
 				failure: 0,
 				requests: 0,
@@ -464,7 +466,7 @@ const routeMetrics = computed(() => {
 				outputRate: 0,
 			};
 		}
-		map[row.route].outputRate = Math.max(map[row.route].outputRate, Number(row.value || 0));
+		map[route].outputRate = Number(value || 0);
 	}
 
 	return Object.values(map).map((item) => {
@@ -509,13 +511,15 @@ const filteredRoutes = computed(() => {
 });
 
 function formatMs(value) {
-	if (!value || value < 0) return "-";
-	return `${Math.round(value)}ms`;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || numeric <= 0) return "-";
+	return `${Math.round(numeric)}ms`;
 }
 
 function formatTPS(value) {
-	if (!value || value < 0) return "-";
-	return `${value.toFixed(1)}/s`;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || numeric < 0) return "-";
+	return `${numeric.toFixed(1)}/s`;
 }
 
 function formatPerMinute(value) {

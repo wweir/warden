@@ -706,11 +706,6 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 				RouteProtocolAnthropic,
 			},
 		},
-		{
-			name:     "ollama",
-			provider: &ProviderConfig{Protocol: "ollama"},
-			want:     []string{RouteProtocolChat},
-		},
 	}
 
 	for _, tt := range tests {
@@ -718,6 +713,55 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 			got := SupportedRouteProtocols(tt.provider)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("SupportedRouteProtocols() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *ProviderConfig
+		want     []string
+	}{
+		{
+			name:     "openai compatible",
+			provider: &ProviderConfig{Protocol: "openai"},
+			want: []string{
+				RouteProtocolChat,
+				RouteProtocolResponsesStateless,
+				RouteProtocolResponsesStateful,
+				ServiceProtocolEmbeddings,
+			},
+		},
+		{
+			name:     "anthropic",
+			provider: &ProviderConfig{Protocol: "anthropic"},
+			want:     []string{RouteProtocolChat, RouteProtocolAnthropic},
+		},
+		{
+			name:     "openai anthropic_to_chat",
+			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
+			want: []string{
+				RouteProtocolChat,
+				RouteProtocolResponsesStateless,
+				RouteProtocolResponsesStateful,
+				ServiceProtocolEmbeddings,
+				RouteProtocolAnthropic,
+			},
+		},
+		{
+			name:     "explicit chat only capability",
+			provider: &ProviderConfig{Protocol: "openai", ServiceProtocols: []string{RouteProtocolChat}},
+			want:     []string{RouteProtocolChat},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SupportedServiceProtocols(tt.provider)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("SupportedServiceProtocols() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -782,6 +826,414 @@ func TestValidateProviderLegacyProtocolAliasStillWorks(t *testing.T) {
 	}
 	if prov.Family != ProviderProtocolOpenAI {
 		t.Fatalf("provider family = %q, want %q", prov.Family, ProviderProtocolOpenAI)
+	}
+}
+
+func TestValidateProviderRejectsRemovedOllamaAlias(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"local": {
+				Family: "ollama",
+				URL:    "http://localhost:11434/v1",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"local"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "'ollama' family/protocol has been removed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "service_protocols") {
+		t.Fatalf("error %q does not contain migration guidance", err)
+	}
+}
+
+func TestValidateProviderExplicitServiceProtocolsOverrideDefaults(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"primary": {
+				Protocol:         ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKey:           "test-key",
+				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"primary"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	got := SupportedServiceProtocols(cfg.Provider["primary"])
+	want := []string{RouteProtocolChat, ServiceProtocolEmbeddings}
+	if !slices.Equal(got, want) {
+		t.Fatalf("SupportedServiceProtocols() = %v, want %v", got, want)
+	}
+}
+
+func TestValidateOpenAIChatOnlyProviderSupportsFormerOllamaShape(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"local": {
+				Protocol:         ProviderProtocolOpenAI,
+				URL:              "http://localhost:11434/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"local"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	got := SupportedServiceProtocols(cfg.Provider["local"])
+	if !slices.Equal(got, []string{RouteProtocolChat}) {
+		t.Fatalf("SupportedServiceProtocols() = %v, want [chat]", got)
+	}
+}
+
+func TestValidateCLIProxyBackendMetadata(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          "CLIProxy",
+				BackendProvider:  "Codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	prov := cfg.Provider["codex"]
+	if prov.Backend != ProviderBackendCLIProxy {
+		t.Fatalf("provider backend = %q, want %q", prov.Backend, ProviderBackendCLIProxy)
+	}
+	if prov.BackendProvider != "codex" {
+		t.Fatalf("provider backend_provider = %q, want codex", prov.BackendProvider)
+	}
+}
+
+func TestValidateCLIProxyBackendRequiresOpenAIProvider(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolAnthropic,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "requires family 'openai'") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateCLIProxyBackendRequiresProviderAndServiceProtocols(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:  ProviderProtocolOpenAI,
+				Backend: ProviderBackendCLIProxy,
+				URL:     "http://127.0.0.1:18741/v1",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "backend_provider is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg.Provider["codex"].BackendProvider = "codex"
+	err = cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "requires explicit service_protocols") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyConfig(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{
+			Enabled: true,
+			AuthDir: "~/.cli-proxy-api",
+		},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if strings.HasPrefix(cfg.CLIProxy.AuthDir, "~/") {
+		t.Fatalf("cliproxy auth_dir was not expanded: %q", cfg.CLIProxy.AuthDir)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyRejectsUnsafeEndpoint(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{Enabled: true},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://192.168.1.10:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "loopback host") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyRejectsMismatchedProviders(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{Enabled: true},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+			"gemini": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "gemini",
+				URL:              "http://127.0.0.1:18742/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "must share the same endpoint") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateProviderRejectsIncompatibleAnthropicServiceProtocol(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"primary": {
+				Protocol:         ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKey:           "test-key",
+				ServiceProtocols: []string{RouteProtocolAnthropic},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/anthropic": {
+				Protocol: RouteProtocolAnthropic,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"primary"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "incompatible with adapter capabilities") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateProviderRejectsIncompatibleEmbeddingsServiceProtocol(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"qwen": {
+				Protocol:         ProviderProtocolQwen,
+				APIKey:           "test-key",
+				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"qwen"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "incompatible with adapter capabilities") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRouteDisablesEmbeddingsWhenNoUpstreamSupportsIt(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"anthropic": {
+				Protocol: ProviderProtocolAnthropic,
+				URL:      "https://anthropic.example.com",
+				APIKey:   "test-key",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/claude": {
+				Protocol: RouteProtocolAnthropic,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"claude-3-7-sonnet": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "anthropic", Model: "claude-3-7-sonnet"}},
+					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.Route["/claude"].SupportsServiceProtocol(ServiceProtocolEmbeddings) {
+		t.Fatal("anthropic-only route should not expose embeddings")
+	}
+}
+
+func TestValidateRouteRejectsEmbeddingsOnlyProviderWithoutPrimaryProtocol(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"embeddings": {
+				Protocol:         ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKey:           "test-key",
+				ServiceProtocols: []string{ServiceProtocolEmbeddings},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/openai": {
+				Protocol: RouteProtocolChat,
+				ExactModels: map[string]*ExactRouteModelConfig{
+					"text-embedding-3-small": {
+						Upstreams: []*RouteUpstreamConfig{{Provider: "embeddings", Model: "text-embedding-3-small"}},
+					},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "at least one upstream must support route protocol chat") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

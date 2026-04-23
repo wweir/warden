@@ -205,6 +205,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			}
 		} else {
 			h.deps.Selector.RecordOutcome(provCfg.Name, nil, latency)
+			h.deps.Selector.ObserveMatchedModel(target)
 			if stream && h.deps.RecordTTFT != nil {
 				h.deps.RecordTTFT(metricLabels, latency)
 			}
@@ -227,7 +228,11 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			if stream {
 				observation = tokenusagepkg.FromStream(serviceProtocol, provCfg.Protocol, decodedRespBody)
 			} else {
-				observation = tokenusagepkg.FromJSON(logResp)
+				if serviceProtocol == config.ServiceProtocolEmbeddings {
+					observation = tokenusagepkg.FromEmbeddingsJSON(logResp)
+				} else {
+					observation = tokenusagepkg.FromJSON(logResp)
+				}
 			}
 			if h.deps.RecordTokenMetrics != nil {
 				h.deps.RecordTokenMetrics(metricLabels, observation, durationMs)
@@ -291,7 +296,7 @@ func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceP
 		if candidate == nil {
 			continue
 		}
-		if serviceProtocol != "" && !config.ProviderSupportsConfiguredProtocol(candidate, serviceProtocol) {
+		if serviceProtocol != "" && !config.ProviderSupportsServiceProtocol(candidate, serviceProtocol) {
 			continue
 		}
 		return candidate
@@ -300,7 +305,7 @@ func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceP
 }
 
 func IsInferenceEndpoint(path string) bool {
-	if strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses") {
+	if strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/embeddings") {
 		return true
 	}
 	return path == "/messages" || strings.HasSuffix(path, "/messages")
@@ -340,6 +345,9 @@ func ServiceProtocol(path string, reqBody []byte) string {
 	if strings.HasSuffix(path, "/responses") {
 		return ResponsesRequestProtocol(reqBody)
 	}
+	if strings.HasSuffix(path, "/embeddings") {
+		return config.ServiceProtocolEmbeddings
+	}
 	return ""
 }
 
@@ -353,6 +361,8 @@ func UnsupportedRouteProtocolMessage(routeProtocol, serviceProtocol string) stri
 		return "route protocol " + routeProtocol + " does not support chat requests"
 	case config.RouteProtocolAnthropic:
 		return "route protocol " + routeProtocol + " does not support anthropic messages requests"
+	case config.ServiceProtocolEmbeddings:
+		return "route protocol " + routeProtocol + " does not support embeddings requests"
 	default:
 		return "route does not support this request protocol"
 	}

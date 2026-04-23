@@ -23,8 +23,17 @@ type ConfigStruct struct {
 	APIKeys       map[string]SecretString    `json:"api_keys" usage:"Deprecated: move client API keys into route.<prefix>.api_keys"`
 	Log           *LogConfig                 `json:"log" usage:"Request/response logging configuration"`
 	Webhook       map[string]*WebhookConfig  `json:"webhook" usage:"Reusable HTTP webhook configurations (referenced by log http targets)"`
+	CLIProxy      *CLIProxyConfig            `json:"cliproxy" usage:"Embedded CLIProxyAPI backend configuration"`
 	Provider      map[string]*ProviderConfig `json:"provider" usage:"Upstream LLM provider configurations"`
 	Route         map[string]*RouteConfig    `json:"route" usage:"Route prefix configurations"`
+}
+
+type CLIProxyConfig struct {
+	Enabled             bool   `json:"enabled" usage:"Start an embedded CLIProxyAPI/cliproxy service for cliproxy-backed providers"`
+	AuthDir             string `json:"auth_dir" usage:"Authentication token directory used by the embedded cliproxy service"`
+	Proxy               string `json:"proxy" usage:"Optional outbound proxy URL used by embedded cliproxy providers"`
+	RequestRetry        int    `json:"request_retry" usage:"Retry count used by embedded cliproxy"`
+	MaxRetryCredentials int    `json:"max_retry_credentials" usage:"Maximum number of cliproxy credentials to try for a failed request; 0 means upstream default"`
 }
 
 type LogConfig struct {
@@ -77,19 +86,22 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name            string            `json:"-"` // populated from map key
-	Disabled        bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
-	URL             string            `json:"url" usage:"Upstream LLM base URL"`
-	Family          string            `json:"family" usage:"Required provider adapter family: openai, anthropic, ollama, qwen, copilot"`
-	Protocol        string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
-	APIKey          SecretString      `json:"api_key" usage:"API key for authentication"`
-	ConfigDir       string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
-	Timeout         string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
-	Proxy           string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers         map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models          []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
-	AnthropicToChat bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
+	Name             string            `json:"-"` // populated from map key
+	Disabled         bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
+	URL              string            `json:"url" usage:"Upstream LLM base URL"`
+	Family           string            `json:"family" usage:"Required provider adapter family: openai, anthropic, qwen, copilot"`
+	Protocol         string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
+	Backend          string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
+	BackendProvider  string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
+	ServiceProtocols []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty uses adapter defaults"`
+	APIKey           SecretString      `json:"api_key" usage:"API key for authentication"`
+	ConfigDir        string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
+	Timeout          string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Proxy            string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers          map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models           []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	ResponsesToChat  bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	AnthropicToChat  bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex

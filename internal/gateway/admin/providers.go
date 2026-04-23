@@ -64,11 +64,11 @@ func (h *Handler) HandleProviderProtocolDetect(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	displayProtocols := config.SupportedRouteProtocols(provCfg)
+	displayProtocols := config.SupportedDisplayProtocols(provCfg)
 	probe := sel.ProtocolProbe{}
 	displayProtocols, probe = detectProviderDisplayProtocols(r.Context(), provCfg)
 	if len(displayProtocols) == 0 {
-		displayProtocols = config.SupportedRouteProtocols(provCfg)
+		displayProtocols = config.SupportedDisplayProtocols(provCfg)
 	}
 	h.selector.SetDisplayProtocols(body.Name, displayProtocols, &probe)
 
@@ -145,6 +145,8 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"url":                   provCfg.URL,
 		"family":                provCfg.Family,
 		"protocol":              provCfg.Protocol,
+		"backend":               provCfg.Backend,
+		"backend_provider":      provCfg.BackendProvider,
 		"candidate_protocols":   config.CandidateRouteProtocols(provCfg),
 		"configured_protocols":  config.SupportedRouteProtocols(provCfg),
 		"supported_protocols":   config.SupportedRouteProtocols(provCfg),

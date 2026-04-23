@@ -1,4 +1,4 @@
-addr: ":8080"
+addr: ":9832"
 
 # Admin password for /_admin/. Empty means disabled.
 # admin_password: "your-secret-password"
@@ -27,6 +27,16 @@ addr: ":8080"
 #       dir: "./logs"
 #     - type: http
 #       webhook: "audit-webhook"
+
+# Optional embedded CLIProxyAPI/cliproxy runtime. When enabled, Warden starts
+# one local cliproxy service using the loopback endpoint declared by
+# provider.*.url on cliproxy-backed providers.
+# cliproxy:
+#   enabled: true
+#   auth_dir: "~/.cli-proxy-api"
+#   # proxy: "socks5://127.0.0.1:1080"
+#   # request_retry: 2
+#   # max_retry_credentials: 0
 
 # Upstream providers. family is required; protocol remains only as a
 # backward-compatible alias for older configs.
@@ -67,6 +77,18 @@ provider:
       - "goldeneye"
       - "raptor-mini"
       - "grok-code-fast-1"
+
+  # CLIProxyAPI/cliproxy sidecar example. Warden still talks to it as an
+  # OpenAI-compatible upstream; cliproxy owns Codex authentication/execution.
+  # codex:
+  #   family: "openai"
+  #   backend: "cliproxy"
+  #   backend_provider: "codex"
+  #   url: "http://127.0.0.1:18741/v1"
+  #   service_protocols: ["chat"]
+  #   timeout: "120s"
+  #   models:
+  #     - "gpt-5.3-codex"
 
 # Route-centric config: each route locks exactly one protocol.
 route:

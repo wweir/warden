@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,197 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
 )
+
+func TestGatewayModelsExposeObservedWildcardMatch(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+		case "/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4.1-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+				Models:   []string{"gpt-4.1-mini"},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"gpt-*": wildcardModel(config.RouteProtocolChat, "openai"),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	inferReq := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"hello"}]}`))
+	inferRec := httptest.NewRecorder()
+	gw.ServeHTTP(inferRec, inferReq)
+	if inferRec.Code != http.StatusOK {
+		t.Fatalf("inference status = %d, want %d, body=%q", inferRec.Code, http.StatusOK, inferRec.Body.String())
+	}
+
+	modelsReq := httptest.NewRequest(http.MethodGet, "/openai/models", nil)
+	modelsRec := httptest.NewRecorder()
+	gw.ServeHTTP(modelsRec, modelsReq)
+	if modelsRec.Code != http.StatusOK {
+		t.Fatalf("models status = %d, want %d, body=%q", modelsRec.Code, http.StatusOK, modelsRec.Body.String())
+	}
+	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="gpt-4.1-mini").id`).String(); got != "gpt-4.1-mini" {
+		t.Fatalf("models body = %s, want observed wildcard model", modelsRec.Body.String())
+	}
+	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="gpt-4.1-mini").owned_by`).String(); got != "/openai" {
+		t.Fatalf("owned_by = %q, want /openai", got)
+	}
+}
+
+func TestObserveMatchedModelAddsWildcardMatchAfterSuccess(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "http://openai.example.com",
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"gpt-*": wildcardModel(config.RouteProtocolChat, "openai"),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := &Gateway{
+		cfg:      cfg,
+		selector: sel.NewSelector(cfg),
+	}
+	route := cfg.Route["/openai"]
+
+	manager, err := gw.newInferenceManager(
+		route,
+		config.RouteProtocolChat,
+		"chat/completions",
+		inferenceRequest{Model: "gpt-4.1-mini"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("newInferenceManager() error = %v", err)
+	}
+
+	models := gw.selector.Models(route)
+	bodyBytes, err := json.Marshal(map[string]any{"data": models})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	body := string(bodyBytes)
+	if got := gjson.Get(body, `data.#(id=="gpt-4.1-mini").id`).String(); got != "" {
+		t.Fatalf("models body = %s, want no observed wildcard model before success", body)
+	}
+
+	gw.selector.ObserveMatchedModel(manager.Current().Target)
+
+	models = gw.selector.Models(route)
+	bodyBytes, err = json.Marshal(map[string]any{"data": models})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	body = string(bodyBytes)
+	if got := gjson.Get(body, `data.#(id=="gpt-4.1-mini").id`).String(); got != "gpt-4.1-mini" {
+		t.Fatalf("models body = %s, want observed wildcard model after success", body)
+	}
+	if got := gjson.Get(body, `data.#(id=="gpt-4.1-mini").owned_by`).String(); got != "/openai" {
+		t.Fatalf("owned_by = %q, want /openai", got)
+	}
+}
+
+func TestGatewayProxyWildcardMatchAppearsInModelsForOllamaStyleRoute(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			http.Error(w, "models unavailable", http.StatusNotImplemented)
+		case "/api/chat":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"ok"},"done":true}`))
+		default:
+			t.Fatalf("unexpected upstream path %q", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"ollama": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/ollama": {
+				Protocol: config.RouteProtocolChat,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"*": wildcardModel(config.RouteProtocolChat, "ollama"),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	proxyReq := httptest.NewRequest(http.MethodPost, "/ollama/api/chat", strings.NewReader(`{"model":"qwen2.5:7b","messages":[{"role":"user","content":"hello"}]}`))
+	proxyRec := httptest.NewRecorder()
+	gw.ServeHTTP(proxyRec, proxyReq)
+	if proxyRec.Code != http.StatusOK {
+		t.Fatalf("proxy status = %d, want %d, body=%q", proxyRec.Code, http.StatusOK, proxyRec.Body.String())
+	}
+
+	modelsReq := httptest.NewRequest(http.MethodGet, "/ollama/models", nil)
+	modelsRec := httptest.NewRecorder()
+	gw.ServeHTTP(modelsRec, modelsReq)
+	if modelsRec.Code != http.StatusOK {
+		t.Fatalf("models status = %d, want %d, body=%q", modelsRec.Code, http.StatusOK, modelsRec.Body.String())
+	}
+	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="qwen2.5:7b").id`).String(); got != "qwen2.5:7b" {
+		t.Fatalf("models body = %s, want observed wildcard model for proxy route", modelsRec.Body.String())
+	}
+	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="qwen2.5:7b").owned_by`).String(); got != "/ollama" {
+		t.Fatalf("owned_by = %q, want /ollama", got)
+	}
+}
 
 func TestGatewayResponsesRouteExposesResponsesEndpoint(t *testing.T) {
 	t.Parallel()
@@ -77,6 +268,376 @@ func TestGatewayResponsesRouteExposesResponsesEndpoint(t *testing.T) {
 	}
 	if gjson.Get(rec.Body.String(), "output.0.type").String() != "message" {
 		t.Fatalf("response output type = %q, want message", gjson.Get(rec.Body.String(), "output.0.type").String())
+	}
+}
+
+func TestGatewayChatRouteExposesEmbeddingsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	var gotBody []byte
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotPath = r.URL.Path
+			gotBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-large","usage":{"prompt_tokens":4,"total_tokens":4}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"text-embedding-3-large": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-large"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/embeddings", strings.NewReader(`{"model":"text-embedding-3-large","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotPath != "/embeddings" {
+		t.Fatalf("upstream path = %q, want /embeddings", gotPath)
+	}
+	if gjson.GetBytes(gotBody, "model").String() != "text-embedding-3-large" {
+		t.Fatalf("upstream model = %q, want text-embedding-3-large", gjson.GetBytes(gotBody, "model").String())
+	}
+	if gjson.Get(rec.Body.String(), "data.0.object").String() != "embedding" {
+		t.Fatalf("response data object = %q, want embedding", gjson.Get(rec.Body.String(), "data.0.object").String())
+	}
+}
+
+func TestGatewayMixedServiceProvidersSelectsProviderByEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var gotChatPath string
+	var gotEmbeddingsPath string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			switch r.URL.Path {
+			case "/chat/completions":
+				gotChatPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+				return
+			case "/embeddings":
+				gotEmbeddingsPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"chat": {
+				URL:              upstream.URL,
+				Protocol:         "openai",
+				APIKey:           config.SecretString("token"),
+				ServiceProtocols: []string{config.RouteProtocolChat},
+			},
+			"embeddings": {
+				URL:              upstream.URL,
+				Protocol:         "openai",
+				APIKey:           config.SecretString("token"),
+				ServiceProtocols: []string{config.ServiceProtocolEmbeddings},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"text-embedding-3-small": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "chat", Model: "gpt-4o"},
+						&config.RouteUpstreamConfig{Provider: "embeddings", Model: "text-embedding-3-small"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	chatReq := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"text-embedding-3-small","messages":[]}`))
+	chatRec := httptest.NewRecorder()
+	gw.ServeHTTP(chatRec, chatReq)
+	if chatRec.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, want %d, body=%q", chatRec.Code, http.StatusOK, chatRec.Body.String())
+	}
+	if gotChatPath != "/chat/completions" {
+		t.Fatalf("chat upstream path = %q, want /chat/completions", gotChatPath)
+	}
+
+	embedReq := httptest.NewRequest(http.MethodPost, "/openai/embeddings", strings.NewReader(`{"model":"text-embedding-3-small","input":"hello"}`))
+	embedRec := httptest.NewRecorder()
+	gw.ServeHTTP(embedRec, embedReq)
+	if embedRec.Code != http.StatusOK {
+		t.Fatalf("embeddings status = %d, want %d, body=%q", embedRec.Code, http.StatusOK, embedRec.Body.String())
+	}
+	if gotEmbeddingsPath != "/embeddings" {
+		t.Fatalf("embeddings upstream path = %q, want /embeddings", gotEmbeddingsPath)
+	}
+}
+
+func TestGatewayResponsesRouteExposesEmbeddingsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotPath = r.URL.Path
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/responses": {
+				Protocol: config.RouteProtocolResponsesStateful,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"text-embedding-3-small": exactModel(config.RouteProtocolResponsesStateful,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-small"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/responses/embeddings", strings.NewReader(`{"model":"text-embedding-3-small","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotPath != "/embeddings" {
+		t.Fatalf("upstream path = %q, want /embeddings", gotPath)
+	}
+}
+
+func TestGatewayAnthropicRouteExposesEmbeddingsEndpointViaOpenAIProvider(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotPath = r.URL.Path
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:             upstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/claude": {
+				Protocol: config.RouteProtocolAnthropic,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"text-embedding-3-small": exactModel(config.RouteProtocolAnthropic,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-small"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/claude/embeddings", strings.NewReader(`{"model":"text-embedding-3-small","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotPath != "/embeddings" {
+		t.Fatalf("upstream path = %q, want /embeddings", gotPath)
+	}
+}
+
+func TestGatewayAnthropicRouteEmbeddingsSkipsNativeAnthropicProvider(t *testing.T) {
+	t.Parallel()
+
+	var anthropicHits int
+	anthropicUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			anthropicHits++
+			http.Error(w, "anthropic embeddings should not be called", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer anthropicUpstream.Close()
+
+	var openAIPath string
+	var openAIModel string
+	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			openAIPath = r.URL.Path
+			body, _ := io.ReadAll(r.Body)
+			openAIModel = gjson.GetBytes(body, "model").String()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+	}))
+	defer openAIUpstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"anthropic": {
+				URL:      anthropicUpstream.URL,
+				Protocol: "anthropic",
+				APIKey:   config.SecretString("token"),
+			},
+			"openai": {
+				URL:             openAIUpstream.URL,
+				Protocol:        "openai",
+				APIKey:          config.SecretString("token"),
+				AnthropicToChat: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/claude": {
+				Protocol: config.RouteProtocolAnthropic,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"embed-public": exactModel(config.RouteProtocolAnthropic,
+						&config.RouteUpstreamConfig{Provider: "anthropic", Model: "claude-3-7-sonnet"},
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-small"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/claude/embeddings", strings.NewReader(`{"model":"embed-public","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if anthropicHits != 0 {
+		t.Fatalf("anthropic upstream hits = %d, want 0", anthropicHits)
+	}
+	if openAIPath != "/embeddings" {
+		t.Fatalf("openai upstream path = %q, want /embeddings", openAIPath)
+	}
+	if openAIModel != "text-embedding-3-small" {
+		t.Fatalf("openai upstream model = %q, want text-embedding-3-small", openAIModel)
+	}
+}
+
+func TestGatewayAnthropicRouteRejectsEmbeddingsOnNativeAnthropicProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"anthropic": {
+				URL:      "https://anthropic.example.com",
+				Protocol: "anthropic",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/claude": {
+				Protocol: config.RouteProtocolAnthropic,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-3-7-sonnet": exactModel(config.RouteProtocolAnthropic,
+						&config.RouteUpstreamConfig{Provider: "anthropic", Model: "claude-3-7-sonnet"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/claude/embeddings", strings.NewReader(`{"model":"claude-3-7-sonnet","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "does not support embeddings requests") {
+		t.Fatalf("body = %q, want unsupported embeddings message", rec.Body.String())
 	}
 }
 
@@ -544,7 +1105,9 @@ func TestGatewayChatRouteRejectsStatefulResponsesRequests(t *testing.T) {
 
 	upstreamHits := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamHits++
+		if r.Method == http.MethodPost {
+			upstreamHits++
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"resp_123","status":"completed","output":[{"type":"message","content":"ok"}]}`))
 	}))

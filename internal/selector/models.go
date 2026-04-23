@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -57,11 +58,13 @@ func (s *Selector) RefreshModels(ctx context.Context, cfg *config.ConfigStruct) 
 					st.availableModels[id] = true
 					st.rawModels = append(st.rawModels, buildModelEntryRaw(id, name))
 				}
+				mergeObservedModelsLocked(st)
 				slog.Info("Models merged from config and upstream", "provider", name, "count", len(st.availableModels))
 				return
 			}
 			st.availableModels = fetched
 			st.rawModels = fetchedRaw
+			mergeObservedModelsLocked(st)
 			slog.Info("Models discovered from upstream", "provider", name, "count", len(fetched))
 		}(name, provCfg)
 	}
@@ -121,7 +124,7 @@ func (s *Selector) Models(route *config.RouteConfig) []json.RawMessage {
 			if st == nil {
 				continue
 			}
-			for _, raw := range st.rawModels {
+			for _, raw := range providerModelEntries(st) {
 				entry, id := decodeModelEntry(raw)
 				if id == "" || seen[id] {
 					continue
@@ -139,6 +142,69 @@ func (s *Selector) Models(route *config.RouteConfig) []json.RawMessage {
 	}
 
 	return result
+}
+
+// ObserveMatchedModel records a selected wildcard model for /models exposure.
+// It does not initialize availability filtering for providers that have no discovery state.
+func (s *Selector) ObserveMatchedModel(target *RouteTarget) {
+	if target == nil || !target.Wildcard || target.UpstreamModel == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, exists := s.states[target.ProviderName]
+	if !exists {
+		return
+	}
+
+	if st.availableModels != nil {
+		st.availableModels[target.UpstreamModel] = true
+	}
+	for _, raw := range st.rawModels {
+		_, id := decodeModelEntry(raw)
+		if id == target.UpstreamModel {
+			return
+		}
+	}
+	if st.observedModels == nil {
+		st.observedModels = make(map[string]json.RawMessage)
+	}
+	if _, exists := st.observedModels[target.UpstreamModel]; exists {
+		return
+	}
+	st.observedModels[target.UpstreamModel] = buildModelEntryRaw(target.UpstreamModel, target.ProviderName)
+}
+
+func providerModelEntries(st *providerState) []json.RawMessage {
+	if st == nil {
+		return nil
+	}
+
+	result := append([]json.RawMessage(nil), st.rawModels...)
+	if len(st.observedModels) == 0 {
+		return result
+	}
+
+	ids := make([]string, 0, len(st.observedModels))
+	for id := range st.observedModels {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		result = append(result, st.observedModels[id])
+	}
+	return result
+}
+
+func mergeObservedModelsLocked(st *providerState) {
+	if st == nil || len(st.observedModels) == 0 || st.availableModels == nil {
+		return
+	}
+	for id := range st.observedModels {
+		st.availableModels[id] = true
+	}
 }
 
 func decodeModelEntry(raw json.RawMessage) (map[string]json.RawMessage, string) {

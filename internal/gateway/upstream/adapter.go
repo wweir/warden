@@ -3,6 +3,7 @@ package upstream
 import (
 	"encoding/json"
 
+	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -19,6 +20,10 @@ func ProtocolEndpoint(protocol string, isResponses bool) string {
 	default:
 		return "/chat/completions"
 	}
+}
+
+func EmbeddingsEndpoint() string {
+	return "/" + config.ServiceProtocolEmbeddings
 }
 
 // MarshalProtocolRequest marshals a ChatCompletionRequest for the given protocol.

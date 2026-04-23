@@ -19,7 +19,7 @@ import (
 const providerProbeTimeout = 15 * time.Second
 
 func detectProviderDisplayProtocols(ctx context.Context, provCfg *config.ProviderConfig) ([]string, sel.ProtocolProbe) {
-	candidates := config.SupportedRouteProtocols(provCfg)
+	candidates := config.SupportedDisplayProtocols(provCfg)
 	now := time.Now()
 	if len(candidates) == 0 {
 		return nil, sel.ProtocolProbe{
@@ -91,6 +91,11 @@ func protocolProbeEndpoint(providerProtocol, configuredProtocol string) string {
 			return ""
 		}
 		return upstreampkg.ProtocolEndpoint(providerProtocol, false)
+	case config.ServiceProtocolEmbeddings:
+		if providerProtocol != config.ProviderProtocolOpenAI {
+			return ""
+		}
+		return upstreampkg.EmbeddingsEndpoint()
 	default:
 		return ""
 	}

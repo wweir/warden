@@ -506,6 +506,8 @@ export default {
 		family: "Adapter Family",
 		selectFamily: "Select family",
 		familyRequired: "Adapter family is required",
+		backendProviderRequired: "cliproxy backend requires backend_provider",
+		backendServiceProtocolsRequired: "cliproxy backend requires explicit service_protocols",
 		supportedProtocols: "Supported Protocols",
 		candidateProtocols: "Family Candidate Protocols",
 		configuredProtocols: "Configured Protocols",

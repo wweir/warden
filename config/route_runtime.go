@@ -11,6 +11,7 @@ const (
 	RouteProtocolResponsesStateless = "responses_stateless"
 	RouteProtocolResponsesStateful  = "responses_stateful"
 	RouteProtocolAnthropic          = "anthropic"
+	ServiceProtocolEmbeddings       = "embeddings"
 )
 
 type CompiledRouteModel struct {
@@ -40,27 +41,7 @@ func CompatibleRouteProtocols(prov *ProviderConfig) []string {
 }
 
 func CandidateRouteProtocols(prov *ProviderConfig) []string {
-	if prov == nil {
-		return nil
-	}
-	switch providerFamily(prov) {
-	case ProviderProtocolAnthropic:
-		return []string{RouteProtocolChat, RouteProtocolAnthropic}
-	case ProviderProtocolOpenAI:
-		candidates := []string{
-			RouteProtocolChat,
-			RouteProtocolResponsesStateless,
-			RouteProtocolResponsesStateful,
-		}
-		if prov.AnthropicToChat {
-			candidates = append(candidates, RouteProtocolAnthropic)
-		}
-		return candidates
-	case ProviderProtocolQwen, ProviderProtocolCopilot, ProviderProtocolOllama:
-		return []string{RouteProtocolChat}
-	default:
-		return nil
-	}
+	return RouteProtocolsFromServiceProtocols(SupportedServiceProtocols(prov))
 }
 
 func SupportedRouteProtocols(prov *ProviderConfig) []string {
@@ -71,6 +52,66 @@ func ProviderSupportsConfiguredProtocol(prov *ProviderConfig, routeProtocol stri
 	return slices.Contains(SupportedRouteProtocols(prov), routeProtocol)
 }
 
+func SupportedDisplayProtocols(prov *ProviderConfig) []string {
+	serviceProtocols := SupportedServiceProtocols(prov)
+	if len(serviceProtocols) == 0 {
+		return nil
+	}
+	displayProtocols := RouteProtocolsFromServiceProtocols(serviceProtocols)
+	if slices.Contains(serviceProtocols, ServiceProtocolEmbeddings) {
+		displayProtocols = append(displayProtocols, ServiceProtocolEmbeddings)
+	}
+	return displayProtocols
+}
+
+func SupportedServiceProtocols(prov *ProviderConfig) []string {
+	if prov == nil {
+		return nil
+	}
+	if normalized := normalizeConfiguredServiceProtocols(prov.ServiceProtocols); len(normalized) > 0 {
+		return normalized
+	}
+	return DefaultServiceProtocols(prov)
+}
+
+func DefaultServiceProtocols(prov *ProviderConfig) []string {
+	if prov == nil {
+		return nil
+	}
+	switch providerAdapterProtocol(prov) {
+	case ProviderProtocolAnthropic:
+		return []string{RouteProtocolChat, RouteProtocolAnthropic}
+	case ProviderProtocolOpenAI:
+		supported := []string{
+			RouteProtocolChat,
+			RouteProtocolResponsesStateless,
+			RouteProtocolResponsesStateful,
+			ServiceProtocolEmbeddings,
+		}
+		if prov.AnthropicToChat {
+			supported = append(supported, RouteProtocolAnthropic)
+		}
+		return supported
+	case ProviderProtocolQwen, ProviderProtocolCopilot:
+		return []string{RouteProtocolChat}
+	default:
+		return nil
+	}
+}
+
+func ProviderSupportsServiceProtocol(prov *ProviderConfig, serviceProtocol string) bool {
+	return slices.Contains(SupportedServiceProtocols(prov), serviceProtocol)
+}
+
+func ProviderSupportsAnyServiceProtocol(prov *ProviderConfig, serviceProtocols []string) bool {
+	for _, serviceProtocol := range serviceProtocols {
+		if ProviderSupportsServiceProtocol(prov, serviceProtocol) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsResponsesRouteProtocol(routeProtocol string) bool {
 	return routeProtocol == RouteProtocolResponsesStateless || routeProtocol == RouteProtocolResponsesStateful
 }
@@ -78,16 +119,45 @@ func IsResponsesRouteProtocol(routeProtocol string) bool {
 func SupportedServiceProtocolsForConfiguredProtocol(routeProtocol string) []string {
 	switch routeProtocol {
 	case RouteProtocolChat:
-		return []string{RouteProtocolChat}
+		return []string{RouteProtocolChat, ServiceProtocolEmbeddings}
 	case RouteProtocolResponsesStateless:
-		return []string{RouteProtocolResponsesStateless}
+		return []string{RouteProtocolResponsesStateless, ServiceProtocolEmbeddings}
 	case RouteProtocolResponsesStateful:
-		return []string{RouteProtocolResponsesStateless, RouteProtocolResponsesStateful}
+		return []string{RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, ServiceProtocolEmbeddings}
 	case RouteProtocolAnthropic:
-		return []string{RouteProtocolAnthropic}
+		return []string{RouteProtocolAnthropic, ServiceProtocolEmbeddings}
 	default:
 		return nil
 	}
+}
+
+func RouteProtocolsFromServiceProtocols(serviceProtocols []string) []string {
+	if len(serviceProtocols) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var routeProtocols []string
+	add := func(protocol string) {
+		if protocol == "" || seen[protocol] {
+			return
+		}
+		seen[protocol] = true
+		routeProtocols = append(routeProtocols, protocol)
+	}
+	for _, protocol := range serviceProtocols {
+		switch protocol {
+		case RouteProtocolChat:
+			add(RouteProtocolChat)
+		case RouteProtocolResponsesStateless:
+			add(RouteProtocolResponsesStateless)
+		case RouteProtocolResponsesStateful:
+			add(RouteProtocolResponsesStateless)
+			add(RouteProtocolResponsesStateful)
+		case RouteProtocolAnthropic:
+			add(RouteProtocolAnthropic)
+		}
+	}
+	return routeProtocols
 }
 
 func (r *RouteConfig) ConfiguredProtocol() string {
@@ -100,6 +170,40 @@ func (r *RouteConfig) ServiceProtocols() []string {
 
 func (r *RouteConfig) SupportsServiceProtocol(serviceProtocol string) bool {
 	return slices.Contains(r.serviceProtocols, serviceProtocol)
+}
+
+func RouteHasServiceProtocolSupport(route *RouteConfig, providers map[string]*ProviderConfig, serviceProtocol string) bool {
+	if route == nil || len(providers) == 0 {
+		return false
+	}
+	for _, model := range route.exactModels {
+		for _, upstream := range model.Upstreams {
+			if ProviderSupportsServiceProtocol(providers[upstream.Provider], serviceProtocol) {
+				return true
+			}
+		}
+	}
+	for _, model := range route.wildcards {
+		for _, upstream := range model.Upstreams {
+			if ProviderSupportsServiceProtocol(providers[upstream.Provider], serviceProtocol) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func PruneUnsupportedRouteServiceProtocols(route *RouteConfig, providers map[string]*ProviderConfig) {
+	if route == nil || len(route.serviceProtocols) == 0 {
+		return
+	}
+	result := route.serviceProtocols[:0]
+	for _, serviceProtocol := range route.serviceProtocols {
+		if RouteHasServiceProtocolSupport(route, providers, serviceProtocol) {
+			result = append(result, serviceProtocol)
+		}
+	}
+	route.serviceProtocols = result
 }
 
 func (r *RouteConfig) MatchModel(model string) *CompiledRouteModel {
@@ -229,12 +333,49 @@ func wildcardPatternsConflict(a, b string) bool {
 	return visit(0, 0)
 }
 
-func providerFamily(prov *ProviderConfig) string {
+func providerAdapterProtocol(prov *ProviderConfig) string {
 	if prov == nil {
 		return ""
 	}
-	if normalized := normalizeProviderProtocol(prov.Family); normalized != "" {
+	if normalized := normalizeProviderAdapterProtocol(prov.Family); normalized != "" {
 		return normalized
 	}
-	return normalizeProviderProtocol(prov.Protocol)
+	return normalizeProviderAdapterProtocol(prov.Protocol)
+}
+
+func normalizeConfiguredServiceProtocols(protocols []string) []string {
+	if len(protocols) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(protocols))
+	add := func(protocol string) {
+		if protocol == "" || seen[protocol] {
+			return
+		}
+		seen[protocol] = true
+		result = append(result, protocol)
+	}
+	for _, raw := range protocols {
+		protocol := normalizeRouteProtocol(raw)
+		switch protocol {
+		case RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
+			add(protocol)
+			if protocol == RouteProtocolResponsesStateful {
+				add(RouteProtocolResponsesStateless)
+			}
+		}
+	}
+	return result
+}
+
+func validConfiguredServiceProtocols(protocols []string) bool {
+	for _, raw := range protocols {
+		switch normalizeRouteProtocol(raw) {
+		case RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
+		default:
+			return false
+		}
+	}
+	return true
 }

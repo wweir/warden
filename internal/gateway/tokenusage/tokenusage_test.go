@@ -38,6 +38,30 @@ func TestFromJSONAnthropicUsageWithCache(t *testing.T) {
 	}
 }
 
+func TestFromJSONEmbeddingsUsage(t *testing.T) {
+	t.Parallel()
+
+	obs := FromEmbeddingsJSON([]byte(`{"usage":{"prompt_tokens":6,"total_tokens":6}}`))
+	if obs.CompletenessLabel() != CompletenessExact {
+		t.Fatalf("completeness = %q, want %q", obs.CompletenessLabel(), CompletenessExact)
+	}
+	if obs.PromptTokens != 6 || obs.CompletionTokens != 0 || obs.TotalTokens != 6 {
+		t.Fatalf("unexpected observation: %+v", obs)
+	}
+}
+
+func TestFromJSONDoesNotInferEmbeddingsCompletionTokens(t *testing.T) {
+	t.Parallel()
+
+	obs := FromJSON([]byte(`{"usage":{"prompt_tokens":6,"total_tokens":6}}`))
+	if obs.CompletenessLabel() != CompletenessPartial {
+		t.Fatalf("completeness = %q, want %q", obs.CompletenessLabel(), CompletenessPartial)
+	}
+	if obs.PromptTokens != 6 || obs.CompletionTokens != 0 || obs.TotalTokens != 6 {
+		t.Fatalf("unexpected observation: %+v", obs)
+	}
+}
+
 func TestFromOpenAIChatStream(t *testing.T) {
 	t.Parallel()
 
