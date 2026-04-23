@@ -1,6 +1,6 @@
 MAKEFLAGS += --jobs all
 GO := CGO_ENABLED=0 go
-NPM := npm
+BUN := bun
 BINARY_NAME := warden
 WINDOWS_SETUP_NAME := ${BINARY_NAME}-setup
 LOCAL_GOEXE := $(shell go env GOEXE)
@@ -18,15 +18,13 @@ UNAME_S := $(shell uname -s)
 
 default: test build
 
-.PHONY: default test web build package run install clean
-.NOTPARALLEL: default
 
 test: web
 	${GO} vet ./...
 	${GO} test ./...
 
 web:
-	cd web/admin && ${NPM} ci && ${NPM} run build
+	cd web/admin && ${BUN} install --frozen-lockfile && ${BUN} run build
 
 build: web
 	mkdir -p bin
