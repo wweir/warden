@@ -40,7 +40,7 @@ func InstallService(opts Options) error {
 		return err
 	}
 
-	ensureExampleConfig(windowsConfigPath)
+	ensureManagedBootstrapConfig(windowsConfigPath, opts)
 
 	if err := os.MkdirAll(filepath.Dir(windowsScriptPath), 0o755); err != nil {
 		return fmt.Errorf("create task script dir: %w", err)

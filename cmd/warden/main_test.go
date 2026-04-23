@@ -270,6 +270,7 @@ func TestParseModeFlags(t *testing.T) {
 		reload            bool
 		nonInteractive    bool
 		startAfterInstall *bool
+		exposeExternally  *bool
 	}{
 		{name: "none", args: nil},
 		{name: "install", args: []string{"-i"}, install: true},
@@ -277,6 +278,8 @@ func TestParseModeFlags(t *testing.T) {
 		{name: "explicit false", args: []string{"-i=true", "-r=false"}, install: true, reload: false},
 		{name: "config arg ignored", args: []string{"-c", "warden.yaml", "-r"}, reload: true},
 		{name: "non interactive start", args: []string{"-i", "--non-interactive", "--start"}, install: true, nonInteractive: true, startAfterInstall: boolPtr(true)},
+		{name: "expose", args: []string{"-i", "--expose"}, install: true, exposeExternally: boolPtr(true)},
+		{name: "local only wins", args: []string{"-i", "--expose", "--local-only"}, install: true, exposeExternally: boolPtr(false)},
 		{name: "no start wins", args: []string{"-i", "--start", "--no-start"}, install: true, startAfterInstall: boolPtr(false)},
 	}
 
@@ -288,6 +291,9 @@ func TestParseModeFlags(t *testing.T) {
 			}
 			if !equalBoolPtr(got.startAfterInstall, tt.startAfterInstall) {
 				t.Fatalf("parseModeFlags(%v) startAfterInstall = %v, want %v", tt.args, got.startAfterInstall, tt.startAfterInstall)
+			}
+			if !equalBoolPtr(got.exposeExternally, tt.exposeExternally) {
+				t.Fatalf("parseModeFlags(%v) exposeExternally = %v, want %v", tt.args, got.exposeExternally, tt.exposeExternally)
 			}
 		})
 	}
@@ -305,10 +311,17 @@ func TestBuildInstallOptions(t *testing.T) {
 	if opts.StartAfterInstall == nil || !*opts.StartAfterInstall {
 		t.Fatalf("StartAfterInstall = %v, want true", opts.StartAfterInstall)
 	}
+	if opts.ExposeExternally != nil {
+		t.Fatalf("ExposeExternally = %v, want nil", opts.ExposeExternally)
+	}
 
-	opts = buildInstallOptions(modeFlags{})
+	expose := true
+	opts = buildInstallOptions(modeFlags{exposeExternally: &expose})
 	if opts.Confirm == nil {
 		t.Fatal("Confirm should be set for interactive install")
+	}
+	if opts.ExposeExternally == nil || !*opts.ExposeExternally {
+		t.Fatalf("ExposeExternally = %v, want true", opts.ExposeExternally)
 	}
 }
 

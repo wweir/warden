@@ -53,6 +53,7 @@ type modeFlags struct {
 	reload            bool
 	nonInteractive    bool
 	startAfterInstall *bool
+	exposeExternally  *bool
 }
 
 type app struct {
@@ -176,6 +177,8 @@ func main() {
 	flag.Bool("non-interactive", false, "install without interactive prompts")
 	flag.Bool("start", false, "start service after install")
 	flag.Bool("no-start", false, "do not start service after install")
+	flag.Bool("expose", false, "for managed install, bind bootstrap config to all network interfaces")
+	flag.Bool("local-only", false, "for managed install, bind bootstrap config to localhost only")
 
 	configureLogging()
 
@@ -286,6 +289,12 @@ func parseModeFlags(args []string) modeFlags {
 			flags.startAfterInstall = boolPtr(false)
 		case "--no-start=false":
 			flags.startAfterInstall = boolPtr(true)
+		case "--expose", "--expose=true":
+			flags.exposeExternally = boolPtr(true)
+		case "--expose=false", "--local-only", "--local-only=true":
+			flags.exposeExternally = boolPtr(false)
+		case "--local-only=false":
+			flags.exposeExternally = boolPtr(true)
 		}
 	}
 	return flags
@@ -294,6 +303,7 @@ func parseModeFlags(args []string) modeFlags {
 func buildInstallOptions(mode modeFlags) install.Options {
 	opts := install.Options{
 		StartAfterInstall: mode.startAfterInstall,
+		ExposeExternally:  mode.exposeExternally,
 	}
 	if !mode.nonInteractive {
 		opts.Confirm = stdinConfirm

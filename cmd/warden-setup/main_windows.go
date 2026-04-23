@@ -66,7 +66,7 @@ func run() error {
 		return fmt.Errorf("run embedded installer: %w\n%s", err, trimmed)
 	}
 
-	showInfo(fmt.Sprintf("Warden 安装完成。\n\n运行时：C:\\Program Files\\Warden\\warden.exe\n配置：%s", install.ManagedConfigPath()))
+	showInfo(fmt.Sprintf("Warden 安装完成。\n\n运行时：C:\\Program Files\\Warden\\warden.exe\n配置：%s\n默认仅监听本机： http://localhost:9832/_admin/\n如需对外提供服务，请编辑 addr 和 admin_password。", install.ManagedConfigPath()))
 	return nil
 }
 

@@ -62,7 +62,7 @@ WantedBy=multi-user.target
 	}
 	fmt.Printf("  Service file installed: %s\n", linuxServicePath)
 
-	ensureExampleConfig(linuxConfigPath)
+	ensureManagedBootstrapConfig(linuxConfigPath, opts)
 
 	if err := runSystemctl("daemon-reload"); err != nil {
 		return err

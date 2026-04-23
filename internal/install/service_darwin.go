@@ -53,7 +53,7 @@ func InstallService(opts Options) error {
 	}
 	fmt.Printf("  launchd plist installed: %s\n", darwinLaunchdPlist)
 
-	ensureExampleConfig(darwinConfigPath)
+	ensureManagedBootstrapConfig(darwinConfigPath, opts)
 
 	if isUpdate {
 		return finishDarwinUpdate(opts)

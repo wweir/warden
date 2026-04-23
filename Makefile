@@ -12,6 +12,9 @@ RELEASE_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/a
 WINDOWS_PACKAGE_FORMAT ?= setup
 GO_LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 GO_LDFLAGS_WINDOWS_GUI := -ldflags "-H=windowsgui -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
+UNAME_S := $(shell uname -s)
+
+.PHONY: default test web build package run install clean
 
 default: test build
 
@@ -71,7 +74,11 @@ run: build
 	${LOCAL_BINARY}
 
 install: build
-	${LOCAL_BINARY} -i
+	@if [ "${UNAME_S}" = "Linux" ] && [ "$$(id -u)" -ne 0 ]; then \
+		sudo ${LOCAL_BINARY} -i; \
+	else \
+		${LOCAL_BINARY} -i; \
+	fi
 
 clean:
 	rm -rf bin dist

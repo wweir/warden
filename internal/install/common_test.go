@@ -2,6 +2,9 @@ package install
 
 import (
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,6 +25,143 @@ func TestShouldStartAfterInstall(t *testing.T) {
 	}, "start?")
 	if !called || !got {
 		t.Fatalf("ShouldStartAfterInstall() = %v, called=%v, want true/true", got, called)
+	}
+}
+
+func TestShouldExposeManagedService(t *testing.T) {
+	trueValue := true
+	if !ShouldExposeManagedService(Options{ExposeExternally: &trueValue}) {
+		t.Fatal("ShouldExposeManagedService() = false, want true")
+	}
+
+	called := false
+	got := ShouldExposeManagedService(Options{
+		Confirm: func(label string) bool {
+			called = true
+			return strings.Contains(label, "Expose Warden on all network interfaces?")
+		},
+	})
+	if !called || !got {
+		t.Fatalf("ShouldExposeManagedService() = %v, called=%v, want true/true", got, called)
+	}
+}
+
+func TestEnsureManagedBootstrapConfigWritesLocalOnlyManagedBootstrapConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "warden.yaml")
+
+	var created bool
+	output := captureStdout(t, func() {
+		created = ensureManagedBootstrapConfig(configPath, Options{})
+	})
+	if !created {
+		t.Fatal("ensureManagedBootstrapConfig() = false, want true")
+	}
+	for _, want := range []string{
+		"Created default config: " + configPath,
+		"Bootstrap config listens on localhost only: http://localhost:9832/_admin/",
+		`Admin UI username is "admin"; update admin_password before exposing Warden`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `addr: "127.0.0.1:9832"`) {
+		t.Fatalf("config missing addr, got:\n%s", text)
+	}
+	for _, want := range []string{
+		`admin_password: "admin"`,
+		`Admin UI (local only): http://localhost:9832/_admin/`,
+		`Username is "admin"; password comes from admin_password.`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("managed bootstrap config missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{
+		"provider:",
+		"route:",
+		"api.openai.com",
+		"qwen:",
+		"copilot:",
+	} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("managed bootstrap config contains %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestEnsureManagedBootstrapConfigWritesExternallyExposedBootstrapConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "warden.yaml")
+	expose := true
+
+	var created bool
+	output := captureStdout(t, func() {
+		created = ensureManagedBootstrapConfig(configPath, Options{ExposeExternally: &expose})
+	})
+	if !created {
+		t.Fatal("ensureManagedBootstrapConfig() = false, want true")
+	}
+	for _, want := range []string{
+		"Created default config: " + configPath,
+		"Bootstrap config listens on all network interfaces via port 9832",
+		`Admin UI is disabled until admin_password is set in the config`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `addr: ":9832"`) {
+		t.Fatalf("config missing external addr, got:\n%s", text)
+	}
+	for _, want := range []string{
+		`Admin UI stays disabled in the external bootstrap config.`,
+		`# admin_password: "replace-with-a-strong-secret"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `admin_password: "admin"`) {
+		t.Fatalf("external bootstrap config should not contain default admin password, got:\n%s", text)
+	}
+}
+
+func TestEnsureManagedBootstrapConfigKeepsExistingConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "warden.yaml")
+	original := []byte("addr: \":9000\"\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("write original config: %v", err)
+	}
+
+	var created bool
+	output := captureStdout(t, func() {
+		created = ensureManagedBootstrapConfig(configPath, Options{})
+	})
+	if created {
+		t.Fatal("ensureManagedBootstrapConfig() = true, want false")
+	}
+	if output != "" {
+		t.Fatalf("ensureManagedBootstrapConfig() output = %q, want empty", output)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("config was overwritten, got %q want %q", string(data), string(original))
 	}
 }
 
@@ -69,6 +209,35 @@ func TestWindowsTaskScriptIncludesBinaryConfigAndLog(t *testing.T) {
 			t.Fatalf("script missing %q", want)
 		}
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	fn()
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
+	return string(data)
 }
 
 func TestTasklistHasOtherImageProcess(t *testing.T) {
