@@ -11,6 +11,7 @@ import (
 
 func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg.OutputRateTracker, dashboardStore *telemetrypkg.DashboardMetricsStore) map[string]any {
 	telemetrypkg.UpdateProviderMetrics(statuses)
+	now := time.Now()
 
 	type requestStat struct {
 		Route          string `json:"route"`
@@ -198,11 +199,18 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 		Endpoint       string  `json:"endpoint"`
 		Type           string  `json:"type"`
 		Value          float64 `json:"value"`
+		LastUpdatedMs  int64   `json:"last_updated_ms"`
+		ExpiresAtMs    int64   `json:"expires_at_ms"`
+		FreshForMs     int64   `json:"fresh_for_ms"`
 	}
 	var providerRates []tokenRateStat
 	routeRateMap := map[string]tokenRateStat{}
 	if outputRates != nil {
-		for _, entry := range outputRates.Snapshot(time.Now()) {
+		for _, entry := range outputRates.Snapshot(now) {
+			freshForMs := entry.ExpiresAt.Sub(now).Milliseconds()
+			if freshForMs < 0 {
+				freshForMs = 0
+			}
 			providerRates = append(providerRates, tokenRateStat{
 				Route:          entry.Route,
 				Protocol:       entry.Protocol,
@@ -214,6 +222,9 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 				Endpoint:       entry.Endpoint,
 				Type:           entry.Type,
 				Value:          entry.Value,
+				LastUpdatedMs:  entry.UpdatedAt.UnixMilli(),
+				ExpiresAtMs:    entry.ExpiresAt.UnixMilli(),
+				FreshForMs:     freshForMs,
 			})
 			key := entry.Route + "\x00" + entry.Protocol + "\x00" + entry.RouteModel + "\x00" + entry.MatchedPattern + "\x00" + entry.Endpoint + "\x00" + entry.Type
 			row := routeRateMap[key]
@@ -225,11 +236,23 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 			row.Endpoint = entry.Endpoint
 			row.Type = entry.Type
 			row.Value += entry.Value
+			if updatedAt := entry.UpdatedAt.UnixMilli(); updatedAt > row.LastUpdatedMs {
+				row.LastUpdatedMs = updatedAt
+			}
+			if expiresAt := entry.ExpiresAt.UnixMilli(); expiresAt > row.ExpiresAtMs {
+				row.ExpiresAtMs = expiresAt
+			}
 			routeRateMap[key] = row
 		}
 	}
 	routeRates := make([]tokenRateStat, 0, len(routeRateMap))
 	for _, row := range routeRateMap {
+		if row.ExpiresAtMs > 0 {
+			row.FreshForMs = row.ExpiresAtMs - now.UnixMilli()
+			if row.FreshForMs < 0 {
+				row.FreshForMs = 0
+			}
+		}
 		routeRates = append(routeRates, row)
 	}
 
@@ -321,13 +344,13 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 }
 
-func CollectDashboardCounters(outputRates *telemetrypkg.OutputRateTracker) telemetrypkg.DashboardCounterSample {
+func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
 	sample := telemetrypkg.DashboardCounterSample{
-		Timestamp:    time.Now(),
-		OutputByProv: make(map[string]float64),
-		RouteReqs:    make(map[string]float64),
-		RouteFails:   make(map[string]float64),
-		RouteOutput:  make(map[string]float64),
+		Timestamp:        time.Now(),
+		CompletionByProv: make(map[string]float64),
+		RouteReqs:        make(map[string]float64),
+		RouteFails:       make(map[string]float64),
+		RouteCompletions: make(map[string]float64),
 	}
 
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteRequestCounter) {
@@ -354,32 +377,52 @@ func CollectDashboardCounters(outputRates *telemetrypkg.OutputRateTracker) telem
 	}
 
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteTokenCounter) {
+		route := ""
 		tokenType := ""
 		for _, label := range met.GetLabel() {
+			if label.GetName() == "route" {
+				route = label.GetValue()
+				continue
+			}
 			if label.GetName() == "type" {
 				tokenType = label.GetValue()
 				break
 			}
 		}
-		if tokenType != "prompt" && tokenType != "completion" {
-			continue
+		value := met.GetCounter().GetValue()
+		switch tokenType {
+		case "prompt":
+			sample.PromptTokens += value
+		case "completion":
+			sample.CompletionTokens += value
+			if route != "" {
+				sample.RouteCompletions[route] += value
+			}
+		case "cache":
+			sample.CacheTokens += value
 		}
-		sample.Tokens += met.GetCounter().GetValue()
+		if tokenType == "prompt" || tokenType == "completion" {
+			sample.Tokens += value
+		}
 	}
 
-	if outputRates != nil {
-		for _, entry := range outputRates.Snapshot(sample.Timestamp) {
-			if entry.Type != "completion" {
+	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.ProviderTokenCounter) {
+		provider := ""
+		tokenType := ""
+		for _, label := range met.GetLabel() {
+			if label.GetName() == "provider" {
+				provider = label.GetValue()
 				continue
 			}
-			sample.OutputRate += entry.Value
-			if entry.Provider != "" {
-				sample.OutputByProv[entry.Provider] += entry.Value
-			}
-			if entry.Route != "" {
-				sample.RouteOutput[entry.Route] += entry.Value
+			if label.GetName() == "type" {
+				tokenType = label.GetValue()
+				break
 			}
 		}
+		if tokenType != "completion" || provider == "" {
+			continue
+		}
+		sample.CompletionByProv[provider] += met.GetCounter().GetValue()
 	}
 
 	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteFailovers) {

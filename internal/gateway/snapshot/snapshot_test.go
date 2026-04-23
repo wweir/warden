@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/wweir/warden/config"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
@@ -56,5 +57,126 @@ func TestListAPIKeysPayloadIncludesCacheTokens(t *testing.T) {
 	}
 	if stats.PromptTokens != 11 || stats.CompletionTokens != 7 || stats.CacheTokens != 5 {
 		t.Fatalf("unexpected usage stats: %+v", stats)
+	}
+}
+
+func TestCollectMetricsDataIncludesRealtimeOutputAndFreshness(t *testing.T) {
+	now := time.Now()
+	base := now.Add(-2 * time.Second)
+	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 3)
+	store.Update(telemetrypkg.DashboardCounterSample{
+		Timestamp:        base,
+		Requests:         10,
+		Failures:         1,
+		Tokens:           150,
+		PromptTokens:     90,
+		CompletionTokens: 60,
+		CacheTokens:      12,
+		CompletionByProv: map[string]float64{"provider-a": 60},
+		RouteReqs:        map[string]float64{"/snapshot-metrics-test": 10},
+		RouteFails:       map[string]float64{"/snapshot-metrics-test": 1},
+		RouteCompletions: map[string]float64{"/snapshot-metrics-test": 60},
+	})
+	store.Update(telemetrypkg.DashboardCounterSample{
+		Timestamp:        now,
+		Requests:         12,
+		Failures:         1,
+		Tokens:           186,
+		PromptTokens:     108,
+		CompletionTokens: 78,
+		CacheTokens:      18,
+		CompletionByProv: map[string]float64{"provider-a": 78},
+		RouteReqs:        map[string]float64{"/snapshot-metrics-test": 12},
+		RouteFails:       map[string]float64{"/snapshot-metrics-test": 1},
+		RouteCompletions: map[string]float64{"/snapshot-metrics-test": 78},
+	})
+
+	tracker := telemetrypkg.NewOutputRateTracker(8 * time.Second)
+	labels := telemetrypkg.Labels{
+		Route:         "/snapshot-metrics-test",
+		Protocol:      config.RouteProtocolChat,
+		Provider:      "provider-a",
+		RouteModel:    "gpt-4o",
+		ProviderModel: "gpt-4o",
+		Endpoint:      "chat/completions",
+	}
+	tracker.Record(labels, "completion", 9, now)
+
+	payload := CollectMetricsData(nil, tracker, store)
+
+	realtimeRaw, ok := payload["realtime"]
+	if !ok {
+		t.Fatalf("payload missing realtime: %#v", payload)
+	}
+	realtime, ok := realtimeRaw.(telemetrypkg.DashboardRealtimeSnapshot)
+	if !ok {
+		t.Fatalf("realtime type = %T, want telemetrypkg.DashboardRealtimeSnapshot", realtimeRaw)
+	}
+	if len(realtime.Output) != 1 {
+		t.Fatalf("realtime output points = %d, want 1", len(realtime.Output))
+	}
+	if got := realtime.Output[0].PromptTPS; got != 9 {
+		t.Fatalf("prompt_tps = %.3f, want 9", got)
+	}
+	if got := realtime.Output[0].CompletionTPS; got != 9 {
+		t.Fatalf("completion_tps = %.3f, want 9", got)
+	}
+	if got := realtime.Output[0].CacheTPS; got != 3 {
+		t.Fatalf("cache_tps = %.3f, want 3", got)
+	}
+	if got := realtime.Output[0].Providers["provider-a"]; got != 9 {
+		t.Fatalf("provider-a completion_tps = %.3f, want 9", got)
+	}
+	if got := realtime.Routes.Output[0].Routes["/snapshot-metrics-test"]; got != 9 {
+		t.Fatalf("route completion_tps = %.3f, want 9", got)
+	}
+
+	providerRatesRaw, ok := payload["provider_token_rate"]
+	if !ok {
+		t.Fatalf("payload missing provider_token_rate: %#v", payload)
+	}
+	raw, err := json.Marshal(providerRatesRaw)
+	if err != nil {
+		t.Fatalf("marshal provider_token_rate: %v", err)
+	}
+	var rows []struct {
+		Route          string  `json:"route,omitempty"`
+		Protocol       string  `json:"protocol,omitempty"`
+		RouteModel     string  `json:"route_model,omitempty"`
+		MatchedPattern string  `json:"matched_pattern,omitempty"`
+		Provider       string  `json:"provider,omitempty"`
+		ProviderModel  string  `json:"provider_model,omitempty"`
+		Model          string  `json:"model,omitempty"`
+		Endpoint       string  `json:"endpoint"`
+		Type           string  `json:"type"`
+		Value          float64 `json:"value"`
+		LastUpdatedMs  int64   `json:"last_updated_ms"`
+		ExpiresAtMs    int64   `json:"expires_at_ms"`
+		FreshForMs     int64   `json:"fresh_for_ms"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("unmarshal provider_token_rate: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("provider_token_rate is empty")
+	}
+	var matched bool
+	for _, row := range rows {
+		if row.Provider != "provider-a" || row.Type != "completion" || row.Route != "/snapshot-metrics-test" {
+			continue
+		}
+		matched = true
+		if row.LastUpdatedMs == 0 || row.ExpiresAtMs == 0 {
+			t.Fatalf("freshness timestamps missing: %+v", row)
+		}
+		if row.ExpiresAtMs <= row.LastUpdatedMs {
+			t.Fatalf("expires_at_ms = %d, want > last_updated_ms %d", row.ExpiresAtMs, row.LastUpdatedMs)
+		}
+		if row.FreshForMs < 0 {
+			t.Fatalf("fresh_for_ms = %d, want >= 0", row.FreshForMs)
+		}
+	}
+	if !matched {
+		t.Fatalf("provider_token_rate missing matching completion row: %+v", rows)
 	}
 }

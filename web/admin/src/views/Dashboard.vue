@@ -301,46 +301,13 @@ const realtimeErrorHistory = computed(() => metricsData.value?.realtime?.errors 
 const usageLatest = computed(() => realtimeUsageHistory.value[realtimeUsageHistory.value.length - 1] ?? { req_per_min: 0, tok_per_min: 0 })
 const errorLatest = computed(() => realtimeErrorHistory.value[realtimeErrorHistory.value.length - 1] ?? { error_rate: 0, stream_err_per_1k: 0, failover_per_1k: 0 })
 
-const providerTokenRateStats = computed(() => {
-  const stats = {
-    prompt_tps: 0,
-    completion_tps: 0,
-    cache_tps: 0,
-    providers: {},
-  }
-  for (const item of metricsData.value?.provider_token_rate ?? metricsData.value?.token_rate ?? []) {
-    const value = Number(item.value || 0)
-    if (item.type === 'prompt') stats.prompt_tps += value
-    if (item.type === 'completion') {
-      stats.completion_tps += value
-      if (item.provider) {
-        stats.providers[item.provider] = Number(stats.providers[item.provider] || 0) + value
-      }
-    }
-    if (item.type === 'cache') stats.cache_tps += value
-  }
-  return stats
-})
-
 const outputLatest = computed(() => {
   const latest = realtimeOutputHistory.value[realtimeOutputHistory.value.length - 1]
-  if (latest) {
-    return {
-      prompt_tps: providerTokenRateStats.value.prompt_tps,
-      completion_tps: providerTokenRateStats.value.completion_tps || Number(latest.completion_tps || 0),
-      cache_tps: providerTokenRateStats.value.cache_tps,
-      providers: {
-        ...(latest.providers ?? {}),
-        ...providerTokenRateStats.value.providers,
-      },
-    }
-  }
-
   return {
-    prompt_tps: providerTokenRateStats.value.prompt_tps,
-    completion_tps: providerTokenRateStats.value.completion_tps,
-    cache_tps: providerTokenRateStats.value.cache_tps,
-    providers: providerTokenRateStats.value.providers,
+    prompt_tps: Number(latest?.prompt_tps || 0),
+    completion_tps: Number(latest?.completion_tps || 0),
+    cache_tps: Number(latest?.cache_tps || 0),
+    providers: { ...(latest?.providers ?? {}) },
   }
 })
 
@@ -371,9 +338,6 @@ const outputProviderNames = computed(() => {
     for (const provider of Object.keys(point.providers ?? {})) {
       historyNames.add(provider)
     }
-  }
-  for (const provider of Object.keys(providerTokenRateStats.value.providers)) {
-    historyNames.add(provider)
   }
 
   const ordered = []
@@ -524,13 +488,15 @@ const riskyRoutesByTraffic = computed(() => {
 })
 
 function formatMs(value) {
-  if (!value || value < 0) return '-'
-  return `${Math.round(value)}ms`
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return '-'
+  return `${Math.round(numeric)}ms`
 }
 
 function formatTPS(value) {
-  if (!value || value < 0) return '-'
-  return `${value.toFixed(1)}/s`
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0) return '-'
+  return `${numeric.toFixed(1)}/s`
 }
 
 function formatTPSAxis(value) {

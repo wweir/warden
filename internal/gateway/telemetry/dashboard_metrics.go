@@ -7,17 +7,19 @@ import (
 )
 
 type DashboardCounterSample struct {
-	Timestamp    time.Time
-	Requests     float64
-	Failures     float64
-	Tokens       float64
-	OutputRate   float64
-	OutputByProv map[string]float64
-	RouteReqs    map[string]float64
-	RouteFails   map[string]float64
-	RouteOutput  map[string]float64
-	Failovers    float64
-	StreamErrors float64
+	Timestamp        time.Time
+	Requests         float64
+	Failures         float64
+	Tokens           float64
+	PromptTokens     float64
+	CompletionTokens float64
+	CacheTokens      float64
+	CompletionByProv map[string]float64
+	RouteReqs        map[string]float64
+	RouteFails       map[string]float64
+	RouteCompletions map[string]float64
+	Failovers        float64
+	StreamErrors     float64
 }
 
 type DashboardUsagePoint struct {
@@ -35,7 +37,9 @@ type DashboardErrorPoint struct {
 
 type DashboardOutputPoint struct {
 	TS            int64              `json:"ts"`
+	PromptTPS     float64            `json:"prompt_tps"`
 	CompletionTPS float64            `json:"completion_tps"`
+	CacheTPS      float64            `json:"cache_tps"`
 	Providers     map[string]float64 `json:"providers,omitempty"`
 }
 
@@ -123,9 +127,12 @@ func (s *DashboardMetricsStore) Update(sample DashboardCounterSample) {
 	deltaRequests := sample.Requests - s.baseline.Requests
 	deltaFailures := sample.Failures - s.baseline.Failures
 	deltaTokens := sample.Tokens - s.baseline.Tokens
+	deltaPromptTokens := sample.PromptTokens - s.baseline.PromptTokens
+	deltaCompletionTokens := sample.CompletionTokens - s.baseline.CompletionTokens
+	deltaCacheTokens := sample.CacheTokens - s.baseline.CacheTokens
 	deltaFailovers := sample.Failovers - s.baseline.Failovers
 	deltaStreamErrors := sample.StreamErrors - s.baseline.StreamErrors
-	if deltaRequests < 0 || deltaFailures < 0 || deltaTokens < 0 || deltaFailovers < 0 || deltaStreamErrors < 0 {
+	if deltaRequests < 0 || deltaFailures < 0 || deltaTokens < 0 || deltaPromptTokens < 0 || deltaCompletionTokens < 0 || deltaCacheTokens < 0 || deltaFailovers < 0 || deltaStreamErrors < 0 {
 		s.clearLocked()
 		s.resetBaselineLocked(sample)
 		return
@@ -145,7 +152,22 @@ func (s *DashboardMetricsStore) Update(sample DashboardCounterSample) {
 		return
 	}
 
+	deltaCompletionByProv, rollback := diffCounterMap(sample.CompletionByProv, s.baseline.CompletionByProv)
+	if rollback {
+		s.clearLocked()
+		s.resetBaselineLocked(sample)
+		return
+	}
+
+	deltaRouteCompletions, rollback := diffCounterMap(sample.RouteCompletions, s.baseline.RouteCompletions)
+	if rollback {
+		s.clearLocked()
+		s.resetBaselineLocked(sample)
+		return
+	}
+
 	scale := time.Minute.Seconds() / elapsed.Seconds()
+	tpsScale := 1 / elapsed.Seconds()
 	usage := DashboardUsagePoint{
 		TS:        sample.Timestamp.UnixMilli(),
 		ReqPerMin: deltaRequests * scale,
@@ -159,8 +181,10 @@ func (s *DashboardMetricsStore) Update(sample DashboardCounterSample) {
 	}
 	output := DashboardOutputPoint{
 		TS:            sample.Timestamp.UnixMilli(),
-		CompletionTPS: sample.OutputRate,
-		Providers:     cloneFloatMap(sample.OutputByProv),
+		PromptTPS:     deltaPromptTokens * tpsScale,
+		CompletionTPS: deltaCompletionTokens * tpsScale,
+		CacheTPS:      deltaCacheTokens * tpsScale,
+		Providers:     scaleFloatMap(deltaCompletionByProv, tpsScale),
 	}
 	routeRequests := DashboardRoutePoint{
 		TS:     sample.Timestamp.UnixMilli(),
@@ -168,7 +192,7 @@ func (s *DashboardMetricsStore) Update(sample DashboardCounterSample) {
 	}
 	routeOutput := DashboardRoutePoint{
 		TS:     sample.Timestamp.UnixMilli(),
-		Routes: cloneFloatMap(sample.RouteOutput),
+		Routes: scaleFloatMap(deltaRouteCompletions, tpsScale),
 	}
 	routeErrors := DashboardRoutePoint{
 		TS:     sample.Timestamp.UnixMilli(),
@@ -266,10 +290,10 @@ func cloneFloatMap(src map[string]float64) map[string]float64 {
 
 func cloneCounterSample(sample DashboardCounterSample) *DashboardCounterSample {
 	cloned := sample
-	cloned.OutputByProv = cloneFloatMap(sample.OutputByProv)
+	cloned.CompletionByProv = cloneFloatMap(sample.CompletionByProv)
 	cloned.RouteReqs = cloneFloatMap(sample.RouteReqs)
 	cloned.RouteFails = cloneFloatMap(sample.RouteFails)
-	cloned.RouteOutput = cloneFloatMap(sample.RouteOutput)
+	cloned.RouteCompletions = cloneFloatMap(sample.RouteCompletions)
 	return &cloned
 }
 

@@ -13,30 +13,34 @@ func TestDashboardMetricsStoreUpdate(t *testing.T) {
 	base := time.Unix(1700000000, 0)
 
 	store.Update(telemetrypkg.DashboardCounterSample{
-		Timestamp:    base,
-		Requests:     100,
-		Failures:     5,
-		Tokens:       1000,
-		OutputRate:   24,
-		OutputByProv: map[string]float64{"openai": 14, "anthropic": 10},
-		RouteReqs:    map[string]float64{"/openai": 70, "/claude": 30},
-		RouteFails:   map[string]float64{"/openai": 3, "/claude": 2},
-		RouteOutput:  map[string]float64{"/openai": 16, "/claude": 8},
-		Failovers:    1,
-		StreamErrors: 2,
+		Timestamp:        base,
+		Requests:         100,
+		Failures:         5,
+		Tokens:           1000,
+		PromptTokens:     600,
+		CompletionTokens: 400,
+		CacheTokens:      120,
+		CompletionByProv: map[string]float64{"openai": 240, "anthropic": 160},
+		RouteReqs:        map[string]float64{"/openai": 70, "/claude": 30},
+		RouteFails:       map[string]float64{"/openai": 3, "/claude": 2},
+		RouteCompletions: map[string]float64{"/openai": 260, "/claude": 140},
+		Failovers:        1,
+		StreamErrors:     2,
 	})
 	store.Update(telemetrypkg.DashboardCounterSample{
-		Timestamp:    base.Add(2 * time.Second),
-		Requests:     104,
-		Failures:     6,
-		Tokens:       1120,
-		OutputRate:   30,
-		OutputByProv: map[string]float64{"openai": 18, "anthropic": 12},
-		RouteReqs:    map[string]float64{"/openai": 72, "/claude": 32},
-		RouteFails:   map[string]float64{"/openai": 3, "/claude": 3},
-		RouteOutput:  map[string]float64{"/openai": 19, "/claude": 11},
-		Failovers:    2,
-		StreamErrors: 3,
+		Timestamp:        base.Add(2 * time.Second),
+		Requests:         104,
+		Failures:         6,
+		Tokens:           1120,
+		PromptTokens:     660,
+		CompletionTokens: 460,
+		CacheTokens:      150,
+		CompletionByProv: map[string]float64{"openai": 276, "anthropic": 184},
+		RouteReqs:        map[string]float64{"/openai": 72, "/claude": 32},
+		RouteFails:       map[string]float64{"/openai": 3, "/claude": 3},
+		RouteCompletions: map[string]float64{"/openai": 298, "/claude": 162},
+		Failovers:        2,
+		StreamErrors:     3,
 	})
 
 	snapshot := store.Snapshot()
@@ -62,6 +66,8 @@ func TestDashboardMetricsStoreUpdate(t *testing.T) {
 	assertApprox(t, snapshot.Usage[0].ReqPerMin, 120)
 	assertApprox(t, snapshot.Usage[0].TokPerMin, 3600)
 	assertApprox(t, snapshot.Output[0].CompletionTPS, 30)
+	assertApprox(t, snapshot.Output[0].PromptTPS, 30)
+	assertApprox(t, snapshot.Output[0].CacheTPS, 15)
 	assertApprox(t, snapshot.Output[0].Providers["openai"], 18)
 	assertApprox(t, snapshot.Output[0].Providers["anthropic"], 12)
 	assertApprox(t, snapshot.Errors[0].ErrorRate, 25)

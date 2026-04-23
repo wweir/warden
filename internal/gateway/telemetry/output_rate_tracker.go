@@ -28,6 +28,7 @@ type OutputRateEntry struct {
 	Type           string
 	Value          float64
 	UpdatedAt      time.Time
+	ExpiresAt      time.Time
 }
 
 type OutputRateTracker struct {
@@ -98,6 +99,7 @@ func (t *OutputRateTracker) Snapshot(now time.Time) []OutputRateEntry {
 			delete(t.entries, key)
 			continue
 		}
+		entry.ExpiresAt = entry.UpdatedAt.Add(t.staleAfter)
 		entries = append(entries, entry)
 	}
 
