@@ -70,6 +70,10 @@ export function healthCheck(name) {
 	});
 }
 
+export function fetchProviderFormMeta() {
+	return apiJSON("/_admin/api/providers/form-meta");
+}
+
 export function setProviderSuppress(name, suppress) {
 	return apiJSON("/_admin/api/providers/suppress", {
 		method: "POST",

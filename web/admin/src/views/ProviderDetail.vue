@@ -61,197 +61,322 @@
 					</div>
 				</div>
 
-				<div class="form-grid">
-					<label>{{ $t("providerDetail.name") }} <span class="req">*</span></label>
-					<input
-						v-if="create"
-						v-model.trim="providerName"
-						class="form-input"
-						:placeholder="$t('providerDetail.namePlaceholder')"
-					/>
-					<input v-else :value="providerName" class="form-input" readonly />
-
-					<label>{{ $t("providerDetail.family") }} <span class="req">*</span></label>
-					<select v-model="providerConfig.family" class="form-input">
-						<option value="">{{ $t("providerDetail.selectFamily") }}</option>
-						<option value="openai">openai</option>
-						<option value="anthropic">anthropic</option>
-						<option value="qwen">qwen</option>
-						<option value="copilot">copilot</option>
-					</select>
-
-					<template v-if="providerFamily(providerConfig) === 'openai'">
-						<label>backend</label>
-						<select v-model="providerConfig.backend" class="form-input">
-							<option value="">default</option>
-							<option value="cliproxy">cliproxy</option>
-						</select>
-
-						<template v-if="providerBackend(providerConfig) === 'cliproxy'">
-							<label>backend_provider <span class="req">*</span></label>
-							<input
-								v-model="providerConfig.backend_provider"
-								class="form-input"
-								placeholder="codex"
-							/>
-						</template>
-					</template>
-
-					<template
-						v-if="providerFamily(providerConfig) && !['qwen', 'copilot'].includes(providerFamily(providerConfig))"
-					>
-						<label>url <span class="req">*</span></label>
-						<div class="url-field">
-							<input
-								v-model="providerConfig.url"
-								class="form-input"
-								:placeholder="providerUrlPlaceholder(providerFamily(providerConfig))"
-							/>
-							<input
-								v-model="providerConfig.proxy"
-								class="form-input url-proxy"
-								placeholder="proxy (socks5://...)"
-							/>
+				<div class="provider-form">
+					<section v-if="create" class="form-panel">
+						<div class="form-panel-head">
+							<div>
+								<h4>{{ $t("providerDetail.providerType") }}</h4>
+								<p class="section-desc">{{ $t("providerDetail.providerTypeDesc") }}</p>
+							</div>
 						</div>
-
-						<label>api_key</label>
-						<div class="secret-field">
-							<input
-								:type="showAPIKey ? 'text' : 'password'"
-								:value="secretDisplay(providerConfig.api_key)"
-								@input="apiKeyTouched = true; providerConfig.api_key = $event.target.value"
-								class="form-input"
-								placeholder="(not set)"
-							/>
-							<button class="btn-icon" @click="showAPIKey = !showAPIKey" type="button" :aria-label="$t('providerDetail.toggleApiKeyVisibility')">
-								{{ showAPIKey ? "🙈" : "👁" }}
-							</button>
-							<span
-								:class="[
-									'badge',
-									isSecretConfigured(providerConfig.api_key)
-										? 'badge-ok'
-										: 'badge-none',
-								]"
+						<div class="preset-grid">
+							<button
+								v-for="preset in providerPresets"
+								:key="preset.id"
+								type="button"
+								:class="['preset-card', selectedPresetId === preset.id ? 'preset-card-active' : '']"
+								@click="applyPresetByID(preset.id)"
 							>
-								{{
-									isSecretConfigured(providerConfig.api_key)
-										? $t("common.configured")
-										: $t("common.notSet")
-								}}
-							</span>
+								<span class="preset-title">{{ preset.title }}</span>
+								<span class="preset-meta">{{ presetFieldSummary(preset) }}</span>
+								<span class="preset-summary">{{ preset.summary }}</span>
+							</button>
 						</div>
-					</template>
+					</section>
 
-					<template v-if="['qwen', 'copilot'].includes(providerFamily(providerConfig))">
-						<label>config_dir</label>
-						<input
-							v-model="providerConfig.config_dir"
-							class="form-input"
-							:placeholder="
-								providerFamily(providerConfig) === 'qwen'
-									? '~/.qwen'
-									: '~/.config/github-copilot'
-							"
-						/>
-
-						<label>proxy</label>
-						<input
-							v-model="providerConfig.proxy"
-							class="form-input"
-							placeholder="socks5://127.0.0.1:1080"
-						/>
-					</template>
-
-					<label>timeout</label>
-					<input v-model="providerConfig.timeout" class="form-input" placeholder="60s" />
-
-					<label>service_protocols</label>
-					<div class="service-protocols-editor">
-						<TagListEditor
-							v-model="providerConfig.service_protocols"
-							:suggestions="serviceProtocolSuggestions"
-							placeholder="adapter defaults"
-						/>
-						<p class="hint service-protocols-hint">empty = adapter defaults</p>
-					</div>
-
-					<template v-if="providerFamily(providerConfig) === 'openai'">
-						<label>responses_to_chat</label>
-						<div class="form-hint-row">
+					<section class="form-panel">
+						<div class="form-panel-head">
+							<div>
+								<h4>{{ $t("providerDetail.basicSection") }}</h4>
+								<p class="section-desc">{{ $t("providerDetail.basicSectionDesc") }}</p>
+							</div>
+							<div v-if="currentPreset" class="panel-badges">
+								<span class="badge badge-ok">{{ currentPreset.title }}</span>
+							</div>
+						</div>
+						<div class="form-grid">
+							<label>{{ $t("providerDetail.name") }} <span class="req">*</span></label>
 							<input
-								type="checkbox"
-								v-model="providerConfig.responses_to_chat"
-								class="form-checkbox"
+								v-if="create"
+								v-model.trim="providerName"
+								class="form-input"
+								:placeholder="$t('providerDetail.namePlaceholder')"
 							/>
-							<span class="hint">{{ $t("config.responsesToChatHint") }}</span>
-						</div>
+							<input v-else :value="providerName" class="form-input" readonly />
 
-						<label>anthropic_to_chat</label>
-						<div class="form-hint-row">
+							<label>{{ $t("providerDetail.providerType") }}</label>
+							<div class="field-stack">
+								<div class="field-summary">
+									<span class="badge badge-muted">
+										{{ currentPreset ? currentPreset.title : $t("providerDetail.rawSchemaMode") }}
+									</span>
+									<span class="hint">{{ rawFieldSummary }}</span>
+								</div>
+								<p class="hint">
+									{{ $t("providerDetail.providerTypeHint") }}
+								</p>
+							</div>
+						</div>
+					</section>
+
+					<section v-if="providerFamily(providerConfig)" class="form-panel">
+						<div class="form-panel-head">
+							<div>
+								<h4>{{ $t("providerDetail.connectionSection") }}</h4>
+								<p class="section-desc">{{ $t("providerDetail.connectionSectionDesc") }}</p>
+							</div>
+						</div>
+						<div class="form-grid">
+							<template v-if="showsURLField">
+								<label>url <span class="req">*</span></label>
+								<div class="url-field">
+									<input
+										v-model="providerConfig.url"
+										class="form-input"
+										:placeholder="providerUrlPlaceholder(providerFamily(providerConfig))"
+									/>
+									<input
+										v-model="providerConfig.proxy"
+										class="form-input url-proxy"
+										:placeholder="$t('providerDetail.proxyPlaceholder')"
+									/>
+								</div>
+							</template>
+
+							<template v-else>
+								<label>proxy</label>
+								<input
+									v-model="providerConfig.proxy"
+									class="form-input"
+									:placeholder="$t('providerDetail.proxyPlaceholder')"
+								/>
+							</template>
+
+							<label>{{ $t("providerDetail.timeout") }}</label>
 							<input
-								type="checkbox"
-								v-model="providerConfig.anthropic_to_chat"
-								class="form-checkbox"
+								v-model="providerConfig.timeout"
+								class="form-input"
+								:placeholder="$t('providerDetail.defaultTimeout')"
 							/>
-							<span class="hint">{{ $t("config.anthropicToChatHint") }}</span>
 						</div>
-					</template>
+					</section>
 
-					<template
-						v-if="providerFamily(providerConfig) && !['qwen', 'copilot'].includes(providerFamily(providerConfig))"
-					>
-						<label>headers</label>
-						<KeyValueEditor
-							v-model="providerConfig.headers"
-							keyPlaceholder="Header name"
-							valuePlaceholder="Value"
-						/>
-					</template>
+					<section v-if="providerFamily(providerConfig)" class="form-panel">
+						<div class="form-panel-head">
+							<div>
+								<h4>{{ $t("providerDetail.authSection") }}</h4>
+								<p class="section-desc">{{ $t("providerDetail.authSectionDesc") }}</p>
+							</div>
+						</div>
+						<div v-if="authMode === 'api_key'" class="form-grid">
+							<label>api_key</label>
+							<div class="secret-field">
+								<input
+									:type="showAPIKey ? 'text' : 'password'"
+									:value="secretDisplay(providerConfig.api_key)"
+									@input="apiKeyTouched = true; providerConfig.api_key = $event.target.value"
+									class="form-input"
+									:placeholder="$t('providerDetail.apiKeyPlaceholder')"
+								/>
+								<button
+									class="btn-icon"
+									@click="showAPIKey = !showAPIKey"
+									type="button"
+									:aria-label="$t('providerDetail.toggleApiKeyVisibility')"
+								>
+									{{ showAPIKey ? "🙈" : "👁" }}
+								</button>
+								<span
+									:class="[
+										'badge',
+										isSecretConfigured(providerConfig.api_key) ? 'badge-ok' : 'badge-none',
+									]"
+								>
+									{{
+										isSecretConfigured(providerConfig.api_key)
+											? $t("common.configured")
+											: $t("common.notSet")
+									}}
+								</span>
+							</div>
+						</div>
+						<div v-else-if="authMode === 'config_dir'" class="form-grid">
+							<label>config_dir</label>
+							<input
+								v-model="providerConfig.config_dir"
+								class="form-input"
+								:placeholder="configDirPlaceholder"
+							/>
+						</div>
+						<div v-else class="section-note">
+							{{ $t("providerDetail.authManagedByBackend") }}
+						</div>
+					</section>
 
-					<label>models</label>
-					<div class="models-editor">
-						<div class="models-toolbar">
-							<div class="models-copy">
-								<p class="models-guide">{{ $t("providerDetail.modelsGuide") }}</p>
-								<div class="models-meta">
-									<span class="badge badge-none">
-										{{ $t("providerDetail.modelsOptional") }}
+					<section v-if="providerFamily(providerConfig)" class="form-panel">
+						<div class="form-panel-head">
+							<div>
+								<h4>{{ $t("providerDetail.capabilitySection") }}</h4>
+								<p class="section-desc">{{ $t("providerDetail.capabilitySectionDesc") }}</p>
+							</div>
+						</div>
+						<div class="form-grid">
+							<label>{{ $t("providerDetail.capabilityTemplate") }}</label>
+							<div class="field-stack">
+								<select
+									:value="selectedServiceTemplateId"
+									class="form-input"
+									@change="handleServiceTemplateChange($event.target.value)"
+								>
+									<option
+										v-for="template in capabilityTemplateOptions"
+										:key="template.id"
+										:value="template.id"
+									>
+										{{ template.title }}
+									</option>
+								</select>
+								<p class="hint">{{ currentCapabilityTemplateSummary }}</p>
+							</div>
+
+							<label>{{ $t("providerDetail.effectiveServiceProtocols") }}</label>
+							<div class="field-stack">
+								<div class="protocol-chip-list">
+									<span
+										v-for="protocol in effectiveServiceProtocols"
+										:key="protocol"
+										class="badge badge-muted"
+									>
+										{{ protocol }}
 									</span>
-									<span class="hint">
-										{{ $t("providerDetail.modelsConfiguredCount", { n: providerConfig.models.length }) }}
-									</span>
-									<span v-if="!create" class="hint">
-										{{ $t("providerDetail.modelsDiscoveredCount", { n: discoveredModelIds.length }) }}
+									<span v-if="effectiveServiceProtocols.length === 0" class="hint">
+										{{ $t("providerDetail.noEffectiveProtocols") }}
 									</span>
 								</div>
+								<p class="hint">{{ $t("providerDetail.capabilityTemplateHint") }}</p>
 							</div>
-							<button
-								v-if="missingDiscoveredModelIds.length > 0"
-								type="button"
-								class="btn btn-secondary btn-sm"
-								@click="appendDiscoveredModels"
-							>
-								{{ $t("providerDetail.addDiscoveredModels", { n: missingDiscoveredModelIds.length }) }}
-							</button>
-						</div>
-						<p class="hint models-hint">
-							{{
-								discoveredModelIds.length > 0
-									? $t("providerDetail.modelsSuggestionHint", { n: discoveredModelIds.length })
-									: $t("providerDetail.modelsNoSuggestionHint")
-							}}
-						</p>
-						<TagListEditor
-							v-model="providerConfig.models"
-							:suggestions="discoveredModelIds"
-							:placeholder="$t('providerDetail.modelsPlaceholder')"
-						/>
-						<p class="hint models-hint">
-							{{ $t("providerDetail.modelsBehaviorHint") }}
-						</p>
-					</div>
 
+							<label>models</label>
+							<div class="models-editor">
+								<div class="models-toolbar">
+									<div class="models-copy">
+										<p class="models-guide">{{ $t("providerDetail.modelsGuide") }}</p>
+										<div class="models-meta">
+											<span class="badge badge-none">
+												{{ $t("providerDetail.modelsOptional") }}
+											</span>
+											<span class="hint">
+												{{ $t("providerDetail.modelsConfiguredCount", { n: providerConfig.models.length }) }}
+											</span>
+											<span v-if="!create" class="hint">
+												{{ $t("providerDetail.modelsDiscoveredCount", { n: discoveredModelIds.length }) }}
+											</span>
+										</div>
+									</div>
+									<button
+										v-if="missingDiscoveredModelIds.length > 0"
+										type="button"
+										class="btn btn-secondary btn-sm"
+										@click="appendDiscoveredModels"
+									>
+										{{ $t("providerDetail.addDiscoveredModels", { n: missingDiscoveredModelIds.length }) }}
+									</button>
+								</div>
+								<p class="hint models-hint">
+									{{
+										discoveredModelIds.length > 0
+											? $t("providerDetail.modelsSuggestionHint", { n: discoveredModelIds.length })
+											: $t("providerDetail.modelsNoSuggestionHint")
+									}}
+								</p>
+								<TagListEditor
+									v-model="providerConfig.models"
+									:suggestions="discoveredModelIds"
+									:placeholder="$t('providerDetail.modelsPlaceholder')"
+								/>
+								<p class="hint models-hint">
+									{{ $t("providerDetail.modelsBehaviorHint") }}
+								</p>
+							</div>
+						</div>
+					</section>
+
+					<details :open="!create" class="form-panel advanced-panel">
+						<summary>{{ $t("providerDetail.advancedSection") }}</summary>
+						<p class="section-desc advanced-desc">
+							{{ $t("providerDetail.advancedSectionDesc") }}
+						</p>
+						<div class="form-grid">
+							<label>{{ $t("providerDetail.family") }} <span class="req">*</span></label>
+							<select v-model="providerConfig.family" class="form-input">
+								<option value="">{{ $t("providerDetail.selectFamily") }}</option>
+								<option value="openai">openai</option>
+								<option value="anthropic">anthropic</option>
+								<option value="qwen">qwen</option>
+								<option value="copilot">copilot</option>
+							</select>
+
+							<template v-if="providerFamily(providerConfig) === 'openai'">
+								<label>backend</label>
+								<select v-model="providerConfig.backend" class="form-input">
+									<option value="">default</option>
+									<option value="cliproxy">cliproxy</option>
+								</select>
+
+								<template v-if="providerBackend(providerConfig) === 'cliproxy'">
+									<label>backend_provider <span class="req">*</span></label>
+									<input
+										v-model="providerConfig.backend_provider"
+										class="form-input"
+										placeholder="codex"
+									/>
+								</template>
+							</template>
+
+							<label>service_protocols</label>
+							<div class="service-protocols-editor">
+								<TagListEditor
+									v-model="providerConfig.service_protocols"
+									:suggestions="serviceProtocolSuggestions"
+									:placeholder="$t('providerDetail.serviceProtocolsPlaceholder')"
+								/>
+								<p class="hint service-protocols-hint">
+									{{ $t("providerDetail.serviceProtocolsHint") }}
+								</p>
+							</div>
+
+							<template v-if="providerFamily(providerConfig) === 'openai'">
+								<label>responses_to_chat</label>
+								<div class="form-hint-row">
+									<input
+										type="checkbox"
+										v-model="providerConfig.responses_to_chat"
+										class="form-checkbox"
+									/>
+									<span class="hint">{{ $t("config.responsesToChatHint") }}</span>
+								</div>
+
+								<label>anthropic_to_chat</label>
+								<div class="form-hint-row">
+									<input
+										type="checkbox"
+										v-model="providerConfig.anthropic_to_chat"
+										class="form-checkbox"
+									/>
+									<span class="hint">{{ $t("config.anthropicToChatHint") }}</span>
+								</div>
+							</template>
+
+							<template v-if="showsHeadersField">
+								<label>headers</label>
+								<KeyValueEditor
+									v-model="providerConfig.headers"
+									keyPlaceholder="Header name"
+									valuePlaceholder="Value"
+								/>
+							</template>
+						</div>
+					</details>
 				</div>
 			</section>
 
@@ -433,7 +558,17 @@
 						</button>
 					</div>
 
-					<div v-if="protocolProbeResult" class="hint" :class="protocolProbeResult.status === 'supported' ? 'text-success' : protocolProbeResult.status === 'unsupported' ? 'text-error' : 'text-warning'">
+					<div
+						v-if="protocolProbeResult"
+						class="hint"
+						:class="
+							protocolProbeResult.status === 'supported'
+								? 'text-success'
+								: protocolProbeResult.status === 'unsupported'
+									? 'text-error'
+									: 'text-warning'
+						"
+					>
 						{{ protocolProbeResult.model }} · {{ protocolProbeResult.protocol }} · {{ protocolProbeResult.status }}
 						<span v-if="protocolProbeResult.error"> · {{ protocolProbeResult.error }}</span>
 					</div>
@@ -505,17 +640,18 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import {
+	detectProviderProtocols,
 	fetchConfig,
 	fetchConfigSource,
-	saveConfig,
-	validateConfig,
-	restartGateway,
-	fetchStatus,
 	fetchProviderDetail,
+	fetchProviderFormMeta,
+	fetchStatus,
 	healthCheck,
-	setProviderSuppress,
-	detectProviderProtocols,
 	probeProviderModelProtocol,
+	restartGateway,
+	saveConfig,
+	setProviderSuppress,
+	validateConfig,
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
 import TagListEditor from "../components/TagListEditor.vue";
@@ -524,6 +660,7 @@ const { t } = useI18n();
 const router = useRouter();
 
 const REDACTED = "__REDACTED__";
+const CUSTOM_SERVICE_TEMPLATE = "__custom__";
 
 const props = defineProps({
 	name: { type: String, default: "" },
@@ -533,8 +670,11 @@ const props = defineProps({
 const detail = ref(null);
 const configDoc = ref({});
 const configSource = ref(null);
+const providerFormMeta = ref({ presets: [], service_protocol_templates: [] });
 const providerName = ref("");
 const providerConfig = ref(createEmptyProviderConfig());
+const selectedPresetId = ref("");
+const selectedServiceTemplateId = ref(CUSTOM_SERVICE_TEMPLATE);
 const error = ref("");
 const message = ref("");
 const checking = ref(false);
@@ -563,6 +703,25 @@ watch(
 );
 
 watch(
+	() => [
+		providerConfig.value.family,
+		providerConfig.value.backend,
+		providerConfig.value.backend_provider,
+		providerConfig.value.url,
+		providerConfig.value.config_dir,
+		providerConfig.value.service_protocols,
+		providerConfig.value.anthropic_to_chat,
+	],
+	() => {
+		if (props.create) {
+			selectedPresetId.value = inferPresetID(providerConfig.value);
+		}
+		syncSelectedServiceTemplate();
+	},
+	{ deep: true },
+);
+
+watch(
 	() => [props.name, props.create],
 	() => {
 		load();
@@ -574,17 +733,56 @@ const pageTitle = computed(() =>
 	props.create ? t("providerDetail.newProviderTitle") : providerName.value || props.name,
 );
 
+const providerPresets = computed(() => providerFormMeta.value?.presets || []);
+const serviceProtocolTemplates = computed(
+	() => providerFormMeta.value?.service_protocol_templates || [],
+);
+
+const currentPreset = computed(
+	() => providerPresets.value.find((preset) => preset.id === selectedPresetId.value) || null,
+);
+
+const visibleServiceProtocolTemplates = computed(() => {
+	const family = providerFamily(providerConfig.value);
+	const backend = providerBackend(providerConfig.value);
+	return serviceProtocolTemplates.value.filter((template) => {
+		if (Array.isArray(template.families) && template.families.length > 0 && !template.families.includes(family)) {
+			return false;
+		}
+		if (Array.isArray(template.backends) && template.backends.length > 0 && !template.backends.includes(backend)) {
+			return false;
+		}
+		return true;
+	});
+});
+
+const capabilityTemplateOptions = computed(() => [
+	...visibleServiceProtocolTemplates.value,
+	{
+		id: CUSTOM_SERVICE_TEMPLATE,
+		title: t("providerDetail.capabilityTemplateCustom"),
+		summary: t("providerDetail.capabilityTemplateCustomDesc"),
+	},
+]);
+
+const currentCapabilityTemplateSummary = computed(() => {
+	const current = capabilityTemplateOptions.value.find(
+		(template) => template.id === selectedServiceTemplateId.value,
+	);
+	return current?.summary || t("providerDetail.capabilityTemplateCustomDesc");
+});
+
 const parsedModels = computed(() => {
 	if (!detail.value) return [];
-	return detail.value.models.map((m) => {
-		if (typeof m === "string") {
+	return detail.value.models.map((model) => {
+		if (typeof model === "string") {
 			try {
-				return JSON.parse(m);
+				return JSON.parse(model);
 			} catch {
-				return { id: m };
+				return { id: model };
 			}
 		}
-		return m;
+		return model;
 	});
 });
 
@@ -603,7 +801,9 @@ const missingDiscoveredModelIds = computed(() =>
 );
 
 const probeableModels = computed(() =>
-	discoveredModelIds.value.length > 0 ? discoveredModelIds.value : [...(providerConfig.value.models || [])],
+	discoveredModelIds.value.length > 0
+		? discoveredModelIds.value
+		: [...(providerConfig.value.models || [])],
 );
 
 const exactProbeResults = computed(() => {
@@ -615,30 +815,56 @@ const exactProbeResults = computed(() => {
 	});
 });
 
-function cloneData(value) {
-	return JSON.parse(JSON.stringify(value ?? {}));
-}
+const effectiveServiceProtocols = computed(() => {
+	const configured = normalizeServiceProtocols(providerConfig.value.service_protocols);
+	if (configured.length > 0) return configured;
+	return defaultServiceProtocolsForProvider(providerConfig.value);
+});
 
-function createEmptyProviderConfig() {
-	return {
-		url: "",
-		family: "",
-		backend: "",
-		backend_provider: "",
-		service_protocols: [],
-		models: [],
-		responses_to_chat: false,
-		anthropic_to_chat: false,
-	};
-}
+const rawFieldSummary = computed(() => {
+	const parts = [];
+	const family = providerFamily(providerConfig.value);
+	const backend = providerBackend(providerConfig.value);
+	const backendProvider = normalizeText(providerConfig.value.backend_provider);
+	if (family) parts.push(`family=${family}`);
+	if (backend) parts.push(`backend=${backend}`);
+	if (backendProvider) parts.push(`backend_provider=${backendProvider}`);
+	return parts.join(" · ") || t("providerDetail.rawSchemaSummaryEmpty");
+});
 
-function providerFamily(provider) {
-	return String(provider?.family || "").trim().toLowerCase();
-}
+const showsURLField = computed(() =>
+	!!providerFamily(providerConfig.value) &&
+	!["qwen", "copilot"].includes(providerFamily(providerConfig.value)),
+);
 
-function providerBackend(provider) {
-	return String(provider?.backend || "").trim().toLowerCase();
-}
+const showsHeadersField = computed(() => showsURLField.value);
+
+const authMode = computed(() => {
+	if (providerBackend(providerConfig.value) === "cliproxy") {
+		return "none";
+	}
+	switch (providerFamily(providerConfig.value)) {
+		case "qwen":
+		case "copilot":
+			return "config_dir";
+		case "":
+			return "";
+		default:
+			return "api_key";
+	}
+});
+
+const configDirPlaceholder = computed(() => {
+	if (currentPreset.value?.default_config_dir) return currentPreset.value.default_config_dir;
+	switch (providerFamily(providerConfig.value)) {
+		case "qwen":
+			return "~/.qwen";
+		case "copilot":
+			return "~/.config/github-copilot";
+		default:
+			return "";
+	}
+});
 
 const serviceProtocolSuggestions = computed(() => {
 	switch (providerFamily(providerConfig.value)) {
@@ -657,11 +883,45 @@ const serviceProtocolSuggestions = computed(() => {
 	}
 });
 
+function createEmptyProviderConfig() {
+	return {
+		url: "",
+		family: "",
+		backend: "",
+		backend_provider: "",
+		service_protocols: [],
+		models: [],
+		responses_to_chat: false,
+		anthropic_to_chat: false,
+		proxy: "",
+		timeout: "",
+		config_dir: "",
+		headers: {},
+		api_key: "",
+	};
+}
+
+function normalizeText(value) {
+	return String(value || "").trim().toLowerCase();
+}
+
+function cloneData(value) {
+	return JSON.parse(JSON.stringify(value ?? {}));
+}
+
+function providerFamily(provider) {
+	return normalizeText(provider?.family || provider?.protocol);
+}
+
+function providerBackend(provider) {
+	return normalizeText(provider?.backend);
+}
+
 function normalizeServiceProtocols(protocols) {
 	const out = [];
 	const seen = new Set();
 	for (const raw of protocols || []) {
-		const protocol = String(raw || "").trim().toLowerCase();
+		const protocol = normalizeText(raw);
 		if (!protocol || seen.has(protocol)) continue;
 		seen.add(protocol);
 		out.push(protocol);
@@ -673,24 +933,129 @@ function normalizeServiceProtocols(protocols) {
 	return out;
 }
 
-function secretDisplay(val) {
-	return val === REDACTED ? REDACTED : val || "";
+function defaultServiceProtocolsForProvider(provider) {
+	switch (providerFamily(provider)) {
+		case "openai": {
+			const protocols = ["chat", "responses_stateless", "responses_stateful", "embeddings"];
+			if (provider?.anthropic_to_chat) protocols.push("anthropic");
+			return protocols;
+		}
+		case "anthropic":
+			return ["chat", "anthropic"];
+		case "qwen":
+		case "copilot":
+			return ["chat"];
+		default:
+			return [];
+	}
 }
 
-function isSecretConfigured(val) {
-	return !!val;
+function serviceProtocolsEqual(left, right) {
+	const a = normalizeServiceProtocols(left);
+	const b = normalizeServiceProtocols(right);
+	if (a.length !== b.length) return false;
+	return a.every((protocol, index) => protocol === b[index]);
 }
 
-function providerUrlPlaceholder(protocol) {
-	switch (protocol) {
+function inferPresetID(provider) {
+	const family = providerFamily(provider);
+	const backend = providerBackend(provider);
+	const backendProvider = normalizeText(provider?.backend_provider);
+	const url = String(provider?.url || "").trim();
+	if (family === "openai" && backend === "cliproxy" && backendProvider) {
+		const match = providerPresets.value.find(
+			(preset) =>
+				preset.family === family &&
+				normalizeText(preset.backend) === backend &&
+				normalizeText(preset.backend_provider) === backendProvider,
+		);
+		return match?.id || "";
+	}
+	if (family === "openai" && backend === "") {
+		if (url === "https://api.openai.com/v1") return "openai-official";
+		if (url === "http://127.0.0.1:11434/v1") return "ollama-chat";
+		return "openai-compatible";
+	}
+	if (family === "anthropic" && url === "https://api.anthropic.com/v1") return "anthropic-official";
+	if (family === "qwen") return "qwen-cli";
+	if (family === "copilot") return "copilot-cli";
+	return "";
+}
+
+function inferServiceTemplateID(provider) {
+	for (const template of visibleServiceProtocolTemplates.value) {
+		if (!serviceProtocolsEqual(provider.service_protocols, template.service_protocols)) continue;
+		if (!!provider.anthropic_to_chat !== !!template.anthropic_to_chat) continue;
+		return template.id;
+	}
+	return CUSTOM_SERVICE_TEMPLATE;
+}
+
+function syncSelectedServiceTemplate() {
+	selectedServiceTemplateId.value = inferServiceTemplateID(providerConfig.value);
+}
+
+function presetFieldSummary(preset) {
+	const parts = [];
+	if (preset.family) parts.push(`family=${preset.family}`);
+	if (preset.backend) parts.push(`backend=${preset.backend}`);
+	if (preset.backend_provider) parts.push(`backend_provider=${preset.backend_provider}`);
+	return parts.join(" · ");
+}
+
+function applyServiceProtocolTemplateByID(templateID) {
+	const template = serviceProtocolTemplates.value.find((item) => item.id === templateID);
+	if (!template) return;
+	providerConfig.value.service_protocols = [...(template.service_protocols || [])];
+	providerConfig.value.anthropic_to_chat = !!template.anthropic_to_chat;
+	selectedServiceTemplateId.value = templateID;
+}
+
+function applyPresetByID(presetID) {
+	const preset = providerPresets.value.find((item) => item.id === presetID);
+	if (!preset) return;
+
+	const next = createEmptyProviderConfig();
+	next.family = preset.family || "";
+	next.backend = preset.backend || "";
+	next.backend_provider = preset.backend_provider || "";
+	next.url = preset.default_url || "";
+	next.config_dir = preset.default_config_dir || "";
+	providerConfig.value = next;
+	selectedPresetId.value = preset.id;
+	showAPIKey.value = false;
+	apiKeyTouched.value = false;
+	if (preset.service_protocol_template) {
+		applyServiceProtocolTemplateByID(preset.service_protocol_template);
+	} else {
+		syncSelectedServiceTemplate();
+	}
+}
+
+function handleServiceTemplateChange(templateID) {
+	selectedServiceTemplateId.value = templateID;
+	if (templateID === CUSTOM_SERVICE_TEMPLATE) return;
+	applyServiceProtocolTemplateByID(templateID);
+}
+
+function secretDisplay(value) {
+	return value === REDACTED ? REDACTED : value || "";
+}
+
+function isSecretConfigured(value) {
+	return !!value;
+}
+
+function providerUrlPlaceholder(family) {
+	switch (family) {
 		case "":
 			return "Select family first";
 		case "anthropic":
-			return "https://api.anthropic.com";
+			return "https://api.anthropic.com/v1";
 		case "qwen":
-			return "(defaults to dashscope or portal.qwen.ai)";
+			return "https://portal.qwen.ai/v1";
 		case "copilot":
-			return "(defaults to api.githubcopilot.com)";
+			return "https://api.githubcopilot.com";
 		default:
 			return "https://api.openai.com/v1";
 	}
@@ -738,26 +1103,29 @@ function pruneProviderReferences(nextConfig, targetProvider) {
 		if (!route || typeof route !== "object") continue;
 
 		const nextExactModels = {};
-		for (const [modelName, modelCfg] of Object.entries(route.exact_models || {})) {
-			if (!modelCfg || typeof modelCfg !== "object") continue;
-			const upstreams = (modelCfg.upstreams || []).filter(
+		for (const [modelName, modelConfig] of Object.entries(route.exact_models || {})) {
+			if (!modelConfig || typeof modelConfig !== "object") continue;
+			const upstreams = (modelConfig.upstreams || []).filter(
 				(upstream) => upstream?.provider !== targetProvider,
 			);
 			if (upstreams.length === 0) continue;
-			nextExactModels[modelName] = { ...modelCfg, upstreams };
+			nextExactModels[modelName] = { ...modelConfig, upstreams };
 		}
 
 		const nextWildcardModels = {};
-		for (const [pattern, modelCfg] of Object.entries(route.wildcard_models || {})) {
-			if (!modelCfg || typeof modelCfg !== "object") continue;
-			const providers = (modelCfg.providers || []).filter(
+		for (const [pattern, modelConfig] of Object.entries(route.wildcard_models || {})) {
+			if (!modelConfig || typeof modelConfig !== "object") continue;
+			const providers = (modelConfig.providers || []).filter(
 				(provider) => provider !== targetProvider,
 			);
 			if (providers.length === 0) continue;
-			nextWildcardModels[pattern] = { ...modelCfg, providers };
+			nextWildcardModels[pattern] = { ...modelConfig, providers };
 		}
 
-		if (Object.keys(nextExactModels).length === 0 && Object.keys(nextWildcardModels).length === 0) {
+		if (
+			Object.keys(nextExactModels).length === 0 &&
+			Object.keys(nextWildcardModels).length === 0
+		) {
 			delete nextConfig.route[prefix];
 			continue;
 		}
@@ -773,17 +1141,29 @@ async function load() {
 	error.value = "";
 	healthResult.value = null;
 	configFileChanged.value = false;
+	protocolProbeResult.value = null;
 	try {
-		const [cfg, source] = await Promise.all([fetchConfig(), fetchConfigSource()]);
+		const [cfg, source, formMeta] = await Promise.all([
+			fetchConfig(),
+			fetchConfigSource(),
+			fetchProviderFormMeta(),
+		]);
 		configDoc.value = cfg;
 		configSource.value = source;
+		providerFormMeta.value = formMeta;
 		showAPIKey.value = false;
 		apiKeyTouched.value = false;
 
 		if (props.create) {
 			providerName.value = "";
-			providerConfig.value = createEmptyProviderConfig();
 			detail.value = null;
+			selectedProbeModel.value = "";
+			selectedPresetId.value = "";
+			providerConfig.value = createEmptyProviderConfig();
+			const defaultPresetID = providerPresets.value[0]?.id || "";
+			if (defaultPresetID) {
+				applyPresetByID(defaultPresetID);
+			}
 		} else {
 			providerName.value = props.name;
 			const provider = cfg.provider?.[props.name];
@@ -796,7 +1176,10 @@ async function load() {
 				family: provider.family || provider.protocol || "",
 				service_protocols: [...(provider.service_protocols || [])],
 				models: [...(provider.models || [])],
+				headers: cloneData(provider.headers || {}),
 			};
+			selectedPresetId.value = inferPresetID(providerConfig.value);
+			syncSelectedServiceTemplate();
 			detail.value = await fetchProviderDetail(props.name);
 			if (!selectedProbeModel.value && discoveredModelIds.value.length > 0) {
 				selectedProbeModel.value = discoveredModelIds.value[0];
@@ -863,7 +1246,7 @@ async function apply() {
 			return;
 		}
 		const family = providerFamily(providerConfig.value);
-		if (!['qwen', 'copilot'].includes(family) && !providerConfig.value.url?.trim()) {
+		if (!["qwen", "copilot"].includes(family) && !providerConfig.value.url?.trim()) {
 			error.value = t("providerDetail.urlRequired");
 			return;
 		}
@@ -889,13 +1272,16 @@ async function apply() {
 
 		const nextProviderConfig = cloneData(providerConfig.value);
 		nextProviderConfig.family = providerFamily(nextProviderConfig);
-		nextProviderConfig.backend = nextProviderConfig.family === "openai" ? providerBackend(nextProviderConfig) : "";
-		nextProviderConfig.backend_provider = String(nextProviderConfig.backend_provider || "").trim().toLowerCase();
+		nextProviderConfig.backend =
+			nextProviderConfig.family === "openai" ? providerBackend(nextProviderConfig) : "";
+		nextProviderConfig.backend_provider = normalizeText(nextProviderConfig.backend_provider);
+		nextProviderConfig.service_protocols = normalizeServiceProtocols(
+			nextProviderConfig.service_protocols,
+		);
 		if (!nextProviderConfig.backend) {
 			delete nextProviderConfig.backend;
 			delete nextProviderConfig.backend_provider;
 		}
-		nextProviderConfig.service_protocols = normalizeServiceProtocols(nextProviderConfig.service_protocols);
 		if (nextProviderConfig.service_protocols.length === 0) {
 			delete nextProviderConfig.service_protocols;
 		}
@@ -1074,7 +1460,7 @@ async function unsuppressProvider() {
 	margin-top: 6px;
 	font-size: 13px;
 	color: var(--c-text-3);
-	max-width: 720px;
+	max-width: 760px;
 }
 
 .actions {
@@ -1092,6 +1478,133 @@ async function unsuppressProvider() {
 	font-size: 13px;
 }
 
+.provider-form {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+
+.form-panel {
+	border-top: 1px solid var(--c-border);
+	padding-top: 18px;
+}
+
+.form-panel:first-of-type {
+	border-top: none;
+	padding-top: 0;
+}
+
+.form-panel-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.form-panel-head h4 {
+	margin: 0;
+	font-size: 15px;
+}
+
+.panel-badges {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.preset-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 10px;
+}
+
+.preset-card {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 12px;
+	border: 1px solid var(--c-border);
+	border-radius: 8px;
+	background: var(--c-bg);
+	cursor: pointer;
+	text-align: left;
+	transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+
+.preset-card:hover {
+	border-color: var(--c-primary);
+}
+
+.preset-card-active {
+	border-color: var(--c-primary);
+	box-shadow: inset 0 0 0 1px var(--c-primary);
+	background: var(--c-bg-soft);
+}
+
+.preset-title {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--c-text);
+}
+
+.preset-meta,
+.preset-summary {
+	font-size: 12px;
+	color: var(--c-text-3);
+	line-height: 1.45;
+}
+
+.form-grid {
+	display: grid;
+	grid-template-columns: 160px 1fr;
+	gap: 10px 14px;
+	align-items: start;
+}
+
+.form-grid > label {
+	padding-top: 7px;
+	font-size: 12px;
+	color: var(--c-text-2);
+	font-family: var(--font-mono);
+}
+
+.field-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.field-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.protocol-chip-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.section-note {
+	font-size: 13px;
+	color: var(--c-text-3);
+}
+
+.advanced-panel summary {
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.advanced-desc {
+	margin-bottom: 12px;
+}
+
 .probe-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
@@ -1102,20 +1615,6 @@ async function unsuppressProvider() {
 
 .probe-results-table {
 	margin-top: 12px;
-}
-
-.form-grid {
-	display: grid;
-	grid-template-columns: 140px 1fr;
-	gap: 10px 14px;
-	align-items: start;
-}
-
-.form-grid > label {
-	padding-top: 7px;
-	font-size: 12px;
-	color: var(--c-text-2);
-	font-family: var(--font-mono);
 }
 
 .req {
@@ -1212,15 +1711,18 @@ async function unsuppressProvider() {
 	color: var(--c-text-3);
 }
 
+.badge-muted {
+	background: var(--c-bg-soft);
+	color: var(--c-text-2);
+}
+
 @media (max-width: 768px) {
-	.section-top {
+	.section-top,
+	.form-panel-head {
 		flex-direction: column;
 	}
 
-	.form-grid {
-		grid-template-columns: 1fr;
-	}
-
+	.form-grid,
 	.probe-grid {
 		grid-template-columns: 1fr;
 	}

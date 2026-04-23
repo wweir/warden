@@ -29,6 +29,8 @@
   `/embeddings` 的 service protocol 暴露面、provider 兼容边界与 Anthropic route 语义
 - [cliproxy-backend.md](./cliproxy-backend.md)
   通过 OpenAI-compatible sidecar 接入 CLIProxyAPI/cliproxy 的边界与配置约束
+- [provider-creation-experience.md](./provider-creation-experience.md)
+  provider 新建页的 intent-first 创建层、preset 元数据和 capability template 边界
 
 ## Rules
 

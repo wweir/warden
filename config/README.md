@@ -71,6 +71,7 @@
 - OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols: [chat]`
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
 - `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
+- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；但这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
 - `responses_stateless` 明确拒绝 `previous_response_id`
 - `responses_stateful` 接受 `previous_response_id`，但会禁用 failover，并绕过 `responses_to_chat`

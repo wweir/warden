@@ -484,7 +484,38 @@ export default {
 		newProviderTitle: "New Provider",
 		configEditor: "Provider Config",
 		configEditorDesc:
-			"Edit connection settings, auth, protocol flags, and model list for a single provider here. Saving still writes the full config file and restarts the gateway.",
+			"Start with a provider type, then fill connection, auth, and capability details. Saving still writes the full config file and restarts the gateway.",
+		providerType: "Provider Type",
+		providerTypeDesc:
+			"Pick the upstream shape first, then let the form derive family, backend, backend_provider, and default URLs.",
+		providerTypeHint:
+			"This is an input layer for create flow, not a new persisted field. The saved config is still the raw provider.* schema.",
+		basicSection: "Basics",
+		basicSectionDesc: "Set the provider name and review the current derived type summary.",
+		connectionSection: "Connection",
+		connectionSectionDesc: "Fill upstream URL, proxy, and timeout. CLI-compatible presets prefill the common endpoint.",
+		authSection: "Authentication",
+		authSectionDesc: "Use API key, config_dir, or let the backend own authentication depending on the current type.",
+		capabilitySection: "Capabilities",
+		capabilitySectionDesc: "Choose a capability template first, then add static model fallbacks only when needed.",
+		advancedSection: "Advanced Fields",
+		advancedSectionDesc:
+			"Raw schema fields and compatibility toggles live here. Open this only when you need to override preset-derived defaults.",
+		rawSchemaMode: "Raw schema",
+		rawSchemaSummaryEmpty: "No family selected yet",
+		capabilityTemplate: "Capability Template",
+		capabilityTemplateHint:
+			"Templates cover common combinations. Use raw service_protocols in the advanced section only for unusual surfaces.",
+		capabilityTemplateCustom: "Custom Raw Fields",
+		capabilityTemplateCustomDesc: "Keep the current raw service_protocols and compatibility toggles without auto-rewriting them.",
+		effectiveServiceProtocols: "Effective service protocols",
+		noEffectiveProtocols: "No effective protocols yet",
+		authManagedByBackend:
+			"This provider type expects authentication to be owned by the backend or local CLI credentials. No extra API key is needed here.",
+		apiKeyPlaceholder: "(not set)",
+		serviceProtocolsPlaceholder: "adapter defaults",
+		serviceProtocolsHint: "Empty means adapter defaults. cliproxy backends still require explicit service_protocols.",
+		proxyPlaceholder: "proxy (socks5://...)",
 		modelsGuide:
 			"Use this only when you want a static model baseline for this provider. It is optional, and runtime discovery is still used when available.",
 		modelsOptional: "Optional static baseline",

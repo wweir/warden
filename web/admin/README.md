@@ -40,7 +40,9 @@
 - `Providers` 页面卡片支持直接跳到“基于该 provider 模型创建 route”的新建入口；新 route 会默认生成该 provider 已配置/已发现模型的 `exact_models`，并预选单个协议
 - `Tool Hooks` 页面负责 route hooks 编辑
 - `Providers` 页面负责单个 provider 配置编辑；`provider.models` 在 UI 中被明确当作“静态模型基线/兜底”，并复用运行时已发现模型作为录入建议，不等同于 route 对外暴露模型定义
-- provider 编辑器把 `family` 作为推荐字段，并暴露当前真实支持的 provider 配置项：`url`、`api_key`、`config_dir`、`proxy`、`headers`、`models`；对 `openai` provider 额外暴露 `backend` / `backend_provider` 元数据和 `responses_to_chat` / `anthropic_to_chat` 桥接开关
+- provider 创建页采用 intent-first 结构：先选 provider type，再填写连接 / 认证 / 能力；底层 `family`、`backend`、`backend_provider`、原始 `service_protocols` 等字段折叠到高级区
+- provider 创建页消费后端 `/_admin/api/providers/form-meta` 元数据接口，使用 provider presets 和 capability templates 派生默认值，但最终仍写回现有 `provider.*` schema
+- provider 编辑器仍允许直接编辑当前真实支持的 provider 配置项：`url`、`api_key`、`config_dir`、`proxy`、`headers`、`models`；对 `openai` provider 额外暴露 `backend` / `backend_provider` 元数据和 `responses_to_chat` / `anthropic_to_chat` 桥接开关
 - `Config` 页面保留通用配置、客户端 API 密钥、webhook 和日志目标
 
 ## Dashboard Data Flow

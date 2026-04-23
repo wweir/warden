@@ -466,7 +466,37 @@ export default {
 		newProviderTitle: "新建供应商",
 		configEditor: "供应商配置",
 		configEditorDesc:
-			"这里维护单个 provider 的连接参数、认证、协议开关和模型列表。保存仍然写回整份配置文件并触发重启。",
+			"新建时先按接入类型选择，再补连接、认证和能力。保存仍然写回整份配置文件并触发重启。",
+		providerType: "接入类型",
+		providerTypeDesc:
+			"先声明你要接入哪一类上游，再让页面派生底层 family、backend、backend_provider 和默认 URL。",
+		providerTypeHint:
+			"这里是创建层，不是新的配置字段。最终写回的仍然只有 provider.* 的原始 schema。",
+		basicSection: "基本信息",
+		basicSectionDesc: "先确定 provider 名称和当前接入类型摘要。",
+		connectionSection: "连接信息",
+		connectionSectionDesc: "填写上游地址、代理和超时。兼容 CLI 适配器时默认 URL 会自动带出。",
+		authSection: "认证信息",
+		authSectionDesc: "按当前接入类型选择 API Key、config_dir，或直接交给 backend 管理认证。",
+		capabilitySection: "能力信息",
+		capabilitySectionDesc: "先选能力模板，再按需维护静态模型基线。原始 service_protocols 留在高级区。",
+		advancedSection: "高级字段",
+		advancedSectionDesc:
+			"这里只放底层 schema 字段和兼容开关。只有你明确需要覆盖 preset 派生结果时才展开修改。",
+		rawSchemaMode: "原始 schema",
+		rawSchemaSummaryEmpty: "尚未选择 family",
+		capabilityTemplate: "能力模板",
+		capabilityTemplateHint:
+			"模板先解决常见组合；需要非常规协议面时，再到高级区直接编辑 service_protocols。",
+		capabilityTemplateCustom: "自定义原始字段",
+		capabilityTemplateCustomDesc: "保留当前原始 service_protocols 和兼容开关，不再自动改写。",
+		effectiveServiceProtocols: "生效的 service protocols",
+		noEffectiveProtocols: "当前没有可用协议",
+		authManagedByBackend: "这个接入类型由 backend 或本地 CLI 凭证管理认证，不需要额外填写 API Key。",
+		apiKeyPlaceholder: "（未设置）",
+		serviceProtocolsPlaceholder: "adapter defaults",
+		serviceProtocolsHint: "留空表示 adapter defaults；cliproxy backend 仍然要求显式填写。",
+		proxyPlaceholder: "proxy (socks5://...)",
 		modelsGuide:
 			"只有在你需要给这个 provider 维护静态模型基线时才填写这里。它是可选项；运行时如果能成功发现模型，仍会继续使用发现结果。",
 		modelsOptional: "可选静态基线",

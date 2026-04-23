@@ -763,6 +763,126 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 	}
 }
 
+func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"codex": {
+				URL:              "http://127.0.0.1:19001/v1",
+				Protocol:         config.ProviderProtocolOpenAI,
+				Backend:          config.ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				ServiceProtocols: []string{config.RouteProtocolChat},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/codex": {
+				Protocol: config.RouteProtocolChat,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/providers/form-meta", nil)
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleProviderFormMeta(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var payload struct {
+		Presets []struct {
+			ID                      string `json:"id"`
+			Backend                 string `json:"backend"`
+			BackendProvider         string `json:"backend_provider"`
+			DefaultURL              string `json:"default_url"`
+			ServiceProtocolTemplate string `json:"service_protocol_template"`
+		} `json:"presets"`
+		ServiceProtocolTemplates []struct {
+			ID               string   `json:"id"`
+			ServiceProtocols []string `json:"service_protocols"`
+			AnthropicToChat  bool     `json:"anthropic_to_chat"`
+		} `json:"service_protocol_templates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal provider form meta: %v", err)
+	}
+
+	var codexPreset *struct {
+		ID                      string `json:"id"`
+		Backend                 string `json:"backend"`
+		BackendProvider         string `json:"backend_provider"`
+		DefaultURL              string `json:"default_url"`
+		ServiceProtocolTemplate string `json:"service_protocol_template"`
+	}
+	for i := range payload.Presets {
+		if payload.Presets[i].ID == "cliproxy-codex" {
+			codexPreset = &payload.Presets[i]
+			break
+		}
+	}
+	if codexPreset == nil {
+		t.Fatal("cliproxy-codex preset not found")
+	}
+	if codexPreset.Backend != config.ProviderBackendCLIProxy {
+		t.Fatalf("cliproxy-codex backend = %q, want %q", codexPreset.Backend, config.ProviderBackendCLIProxy)
+	}
+	if codexPreset.BackendProvider != "codex" {
+		t.Fatalf("cliproxy-codex backend_provider = %q, want codex", codexPreset.BackendProvider)
+	}
+	if codexPreset.DefaultURL != "http://127.0.0.1:19001/v1" {
+		t.Fatalf("cliproxy-codex default_url = %q, want existing cliproxy endpoint", codexPreset.DefaultURL)
+	}
+	if codexPreset.ServiceProtocolTemplate != "chat_only" {
+		t.Fatalf("cliproxy-codex service_protocol_template = %q, want chat_only", codexPreset.ServiceProtocolTemplate)
+	}
+
+	foundAnthropicBridge := false
+	for _, tpl := range payload.ServiceProtocolTemplates {
+		if tpl.ID != "anthropic_bridge" {
+			continue
+		}
+		foundAnthropicBridge = true
+		if !sameStrings(tpl.ServiceProtocols, []string{config.RouteProtocolChat, config.RouteProtocolAnthropic}) {
+			t.Fatalf("anthropic_bridge service_protocols = %v, want [chat anthropic]", tpl.ServiceProtocols)
+		}
+		if !tpl.AnthropicToChat {
+			t.Fatal("anthropic_bridge anthropic_to_chat = false, want true")
+		}
+	}
+	if !foundAnthropicBridge {
+		t.Fatal("anthropic_bridge template not found")
+	}
+
+	var openAICompatiblePreset *struct {
+		ID                      string `json:"id"`
+		Backend                 string `json:"backend"`
+		BackendProvider         string `json:"backend_provider"`
+		DefaultURL              string `json:"default_url"`
+		ServiceProtocolTemplate string `json:"service_protocol_template"`
+	}
+	for i := range payload.Presets {
+		if payload.Presets[i].ID == "openai-compatible" {
+			openAICompatiblePreset = &payload.Presets[i]
+			break
+		}
+	}
+	if openAICompatiblePreset == nil {
+		t.Fatal("openai-compatible preset not found")
+	}
+	if openAICompatiblePreset.DefaultURL != "" {
+		t.Fatalf("openai-compatible default_url = %q, want empty for user-supplied endpoint", openAICompatiblePreset.DefaultURL)
+	}
+}
+
 func TestHandleProviderDetailIncludesEmbeddingsDisplayProtocol(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
