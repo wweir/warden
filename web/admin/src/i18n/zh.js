@@ -410,6 +410,10 @@ export default {
 		protocolLockedLabel: "当前 route 协议",
 		protocolLockedHint:
 			"下方 exact model / wildcard model 都只能按这个唯一协议配置，不再允许模型级多协议分支。",
+		serviceProtocols: "服务接口",
+		serviceProtocolsPlaceholder: "默认跟随协议",
+		serviceProtocolsHint:
+			"留空表示按协议自动推导；需要同一路由同时暴露 chat、responses 或 embeddings 时显式填写，且必须包含当前协议。",
 		protocolChat: "chat",
 		protocolResponsesStateless: "responses_stateless",
 		protocolResponsesStateful: "responses_stateful",
@@ -468,37 +472,68 @@ export default {
 		configEditorDesc:
 			"新建时先按接入类型选择，再补连接、认证和能力。保存仍然写回整份配置文件并触发重启。",
 		providerType: "接入类型",
-		providerTypeDesc:
-			"先声明你要接入哪一类上游，再让页面派生底层 family、backend、backend_provider 和默认 URL。",
-		providerTypeHint:
-			"这里是创建层，不是新的配置字段。最终写回的仍然只有 provider.* 的原始 schema。",
-		basicSection: "基本信息",
-		basicSectionDesc: "先确定 provider 名称和当前接入类型摘要。",
+		providerTypeDesc: "选择要接入的上游类型，页面会自动处理底层适配字段。",
+		quickSetupSection: "常用配置",
+		quickSetupDesc:
+			"只保留创建和日常维护必须改的字段：接入类型、连接、认证和可用接口。",
 		connectionSection: "连接信息",
-		connectionSectionDesc: "填写上游地址、代理和超时。兼容 CLI 适配器时默认 URL 会自动带出。",
 		authSection: "认证信息",
-		authSectionDesc: "按当前接入类型选择 API Key、config_dir，或直接交给 backend 管理认证。",
-		capabilitySection: "能力信息",
-		capabilitySectionDesc: "先选能力模板，再按需维护静态模型基线。原始 service_protocols 留在高级区。",
 		advancedSection: "高级字段",
 		advancedSectionDesc:
-			"这里只放底层 schema 字段和兼容开关。只有你明确需要覆盖 preset 派生结果时才展开修改。",
-		rawSchemaMode: "原始 schema",
-		rawSchemaSummaryEmpty: "尚未选择 family",
-		capabilityTemplate: "能力模板",
-		capabilityTemplateHint:
-			"模板先解决常见组合；需要非常规协议面时，再到高级区直接编辑 service_protocols。",
-		capabilityTemplateCustom: "自定义原始字段",
-		capabilityTemplateCustomDesc: "保留当前原始 service_protocols 和兼容开关，不再自动改写。",
-		effectiveServiceProtocols: "生效的 service protocols",
-		noEffectiveProtocols: "当前没有可用协议",
+			"这里只有网络和 HTTP 头等低频字段。接入类型和接口能力都在常用配置里维护。",
+		customAccessType: "自定义接入",
+		customAccessTypeDesc: "直接维护底层适配字段，用于预设列表覆盖不到的上游。",
+		customAccessSection: "自定义接入字段",
+		customAccessDesc:
+			"这是唯一的接入高级入口；普通 OpenAI-compatible、Ollama、cliproxy 等场景优先使用上方预设。",
+		availableInterfaces: "可用接口",
+		finalInterfaces: "最终可用接口",
+		finalInterfacesHint:
+			"路由只能使用这里列出的接口；保存时会写入 service_protocols。",
+		interfaceTemplate_adapter_defaults: "自动：按适配器默认能力",
+		interfaceTemplate_adapter_defaults_desc:
+			"不显式写 service_protocols，按当前适配器族推导接口能力。",
+		interfaceTemplate_chat_only: "仅聊天",
+		interfaceTemplate_chat_only_desc:
+			"只允许聊天接口。推荐给 Ollama、cliproxy 或尚未验证其它接口的上游。",
+		interfaceTemplate_chat_embeddings: "聊天 + 向量",
+		interfaceTemplate_chat_embeddings_desc: "允许聊天和 embeddings，不开放 Responses。",
+		interfaceTemplate_chat_responses_embeddings: "聊天 + Responses + 向量",
+		interfaceTemplate_chat_responses_embeddings_desc:
+			"允许聊天、Responses 无状态/有状态和 embeddings。",
+		interfaceTemplate_anthropic_bridge: "Anthropic Messages 兼容",
+		interfaceTemplate_anthropic_bridge_desc:
+			"通过 OpenAI-compatible provider 承接 Anthropic /messages，并开启 anthropic_to_chat。",
+		interfaceTemplateCustom: "自定义接口",
+		interfaceTemplateCustomDesc: "直接维护接口列表和兼容开关，用于非常规上游。",
+		customInterfacesSection: "自定义接口字段",
+		customInterfacesDesc:
+			"这是唯一的接口高级入口；修改后上方最终可用接口会同步变化。",
+		rawServiceProtocols: "接口列表",
+		serviceProtocol_chat: "Chat",
+		serviceProtocol_responses_stateless: "Responses",
+		serviceProtocol_responses_stateful: "Stateful Responses",
+		serviceProtocol_embeddings: "Embeddings",
+		serviceProtocol_anthropic: "Anthropic Messages",
+		noEffectiveProtocols: "当前没有可用接口",
+		noUrlRequired: "当前接入类型不需要单独维护 HTTP URL。",
+		cliproxyEndpoint: "cliproxy endpoint",
+		cliproxyEndpointHint:
+			"这是 Warden 访问内嵌/本地 CLIProxyAPI 服务的 loopback /v1 地址，不是额外的外部模型服务。",
+		cliproxyManagedConnection:
+			"由 Warden 管理本地/内嵌 CLIProxyAPI endpoint，普通接入不需要维护底层 URL、family、backend 或 backend_provider。",
+		cliproxyConnectionNote:
+			"使用 Warden 管理的本地/内嵌 CLIProxyAPI endpoint；普通接入不需要填写 URL。需要改监听地址时切到自定义接入。",
+		cliproxyAuthNote:
+			"使用 CLIProxyAPI auth_dir 中的本地 CLI 登录凭证；这里不填写 provider API Key。",
 		authManagedByBackend: "这个接入类型由 backend 或本地 CLI 凭证管理认证，不需要额外填写 API Key。",
 		apiKeyPlaceholder: "（未设置）",
 		serviceProtocolsPlaceholder: "adapter defaults",
-		serviceProtocolsHint: "留空表示 adapter defaults；cliproxy backend 仍然要求显式填写。",
+		serviceProtocolsHint: "留空表示按适配器默认能力推导；cliproxy backend 仍然要求显式填写。",
 		proxyPlaceholder: "proxy (socks5://...)",
-		modelsGuide:
-			"只有在你需要给这个 provider 维护静态模型基线时才填写这里。它是可选项；运行时如果能成功发现模型，仍会继续使用发现结果。",
+		staticModelsSection: "静态模型基线",
+		staticModelsSectionDesc:
+			"只在运行时模型发现不可用，或需要给路由编辑器提供固定建议时维护。",
 		modelsOptional: "可选静态基线",
 		modelsConfiguredCount: "已配置 {n} 个",
 		modelsDiscoveredCount: "已发现 {n} 个",
@@ -520,16 +555,15 @@ export default {
 		familyRequired: "适配器族不能为空",
 		backendProviderRequired: "cliproxy backend 必须填写 backend_provider",
 		backendServiceProtocolsRequired: "cliproxy backend 必须显式填写 service_protocols",
-		supportedProtocols: "支持的协议",
-		candidateProtocols: "族候选协议",
 		configuredProtocols: "配置后协议",
 		displayProtocols: "探测展示协议",
 		timeout: "超时",
 		defaultTimeout: "默认 (60s)",
 		apiKey: "API Key",
-		runtimeStatus: "运行状态",
+		runtimeTools: "运行时工具",
+		runtimeToolsDesc: "健康检查、抑制和协议探测属于运行时操作，不混入保存配置的主表单。",
+		runtimeOverview: "运行时概览",
 		consecutiveFailures: "连续失败次数",
-		manuallySuppressed: "手动抑制",
 		suppressed: "自动抑制",
 		yes: "是",
 		no: "否",

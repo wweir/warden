@@ -138,6 +138,16 @@
               </select>
               <span class="field-hint">{{ $t('routeDetail.protocolLockedHint') }}</span>
             </div>
+
+            <div class="field-row">
+              <label class="field-label">{{ $t('routeDetail.serviceProtocols') }}</label>
+              <TagListEditor
+                v-model="routeConfig.service_protocols"
+                :suggestions="routeServiceProtocolOptions"
+                :placeholder="$t('routeDetail.serviceProtocolsPlaceholder')"
+              />
+              <span class="field-hint">{{ $t('routeDetail.serviceProtocolsHint') }}</span>
+            </div>
           </div>
 
           <RouteModelsEditor
@@ -305,6 +315,7 @@ import {
 } from '../api.js'
 import { fmtNum, providerRouteProtocols } from '../utils.js'
 import RouteModelsEditor from '../components/RouteModelsEditor.vue'
+import TagListEditor from '../components/TagListEditor.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -314,6 +325,13 @@ const routeProtocolOptions = [
   { value: 'responses_stateless', label: t('routeDetail.protocolResponsesStateless') },
   { value: 'responses_stateful', label: t('routeDetail.protocolResponsesStateful') },
   { value: 'anthropic', label: t('routeDetail.protocolAnthropic') },
+]
+const routeServiceProtocolOptions = [
+  'chat',
+  'responses_stateless',
+  'responses_stateful',
+  'anthropic',
+  'embeddings',
 ]
 
 const props = defineProps({
@@ -528,6 +546,7 @@ function createEmptyRouteConfig(providerConfigMap = {}, protocol = 'chat') {
   const provider = defaultProviderForProtocol(protocol, providerConfigMap)
   return {
     protocol,
+    service_protocols: [],
     exact_models: {},
     wildcard_models: provider ? { '*': { providers: [provider] } } : {},
   }
@@ -559,6 +578,7 @@ function createProviderSeededRouteConfig(
 
   return {
     protocol,
+    service_protocols: [],
     exact_models: exactModels,
     wildcard_models: {},
   }
@@ -568,6 +588,7 @@ function normalizeEditableRoute(route) {
   const protocol = normalizeText(route?.protocol) || 'chat'
   const normalized = createEmptyRouteConfig(providerMap.value, protocol)
   normalized.protocol = protocol
+  normalized.service_protocols = dedupeOrderedTextValues(route?.service_protocols || [])
   normalized.exact_models = deepClone(route?.exact_models || {})
   normalized.wildcard_models = deepClone(route?.wildcard_models || {})
   if (
@@ -630,6 +651,10 @@ function sanitizeRouteModelsForProtocol(protocol, routeModelConfig = {}) {
 function buildRoutePayload(existingRoute = {}) {
   const nextRoute = deepClone(existingRoute || {})
   nextRoute.protocol = normalizeText(routeConfig.value.protocol) || 'chat'
+  nextRoute.service_protocols = dedupeOrderedTextValues(routeConfig.value.service_protocols || [])
+  if (nextRoute.service_protocols.length === 0) {
+    delete nextRoute.service_protocols
+  }
   const normalized = sanitizeRouteModelsForProtocol(nextRoute.protocol, routeConfig.value)
   nextRoute.exact_models = normalized.exact_models
   nextRoute.wildcard_models = normalized.wildcard_models

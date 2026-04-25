@@ -18,21 +18,27 @@
 
 1. Provider Type
    - 新建时先选 provider 类型，而不是先填底层字段
-   - 典型类型包括 OpenAI 官方、Anthropic 官方、OpenAI-compatible、自定义 Ollama/本地兼容端点、CLIProxy Codex/Gemini/Claude、Qwen、Copilot
+   - 典型类型包括 OpenAI 官方、Anthropic 官方、OpenAI-compatible、自定义 Ollama/本地兼容端点、CLIProxy Codex/Gemini/Claude、Copilot
 
 2. Derived Base Config
    - provider 类型会派生底层默认值，例如 `family`、`backend`、`backend_provider`、默认 `url`、默认 `config_dir`
    - `cliproxy` 类型会优先复用当前配置里已有的 cliproxy endpoint；没有现成 endpoint 时回退到 `http://127.0.0.1:18741/v1`
+   - `cliproxy` 的 URL 是 Warden 到 CLIProxyAPI 服务的内部 HTTP 边界；普通预设路径隐藏该底层字段，只在“自定义接入”中允许直接维护 endpoint、`family`、`backend` 和 `backend_provider`
+   - `cliproxy` 的连接说明只描述本地/内嵌 endpoint 托管；认证说明只描述 CLIProxyAPI `auth_dir` 中的本地 CLI 登录凭证，避免把 endpoint 和 API Key 混在一起
    - 派生值仍然写回现有 `provider.*` schema，不引入新的持久化字段
+   - `family`、`backend`、`backend_provider` 不再作为独立的高级字段重复暴露；只有选择“自定义接入”时才在常用配置区展开
 
-3. Sectioned Form
-   - 创建页按“基本信息 / 连接信息 / 认证信息 / 能力信息 / 高级字段”分组
-   - 普通用户先完成类型、连接和认证即可；高级 schema 字段折叠到高级区
+3. Common Config First
+   - 创建页把接入类型、名称、URL、认证和可用接口收敛到一个常用配置区
+   - 静态模型基线和高级字段直接展示，避免隐藏可保存配置项；运行时诊断仍然独立于保存配置的主表单
+   - 普通用户先完成常用配置即可；高级字段只保留网络和 HTTP 头等低频字段，并默认可见
 
 4. Capability Templates
-   - `service_protocols` 不再默认以自由 tag 输入作为主入口
-   - 创建页先提供能力模板，例如 adapter defaults、chat only、chat + embeddings、chat + responses + embeddings、anthropic bridge
-   - 原始 `service_protocols`、`responses_to_chat`、`anthropic_to_chat` 仍然保留在高级区，供需要精细控制的用户直接修改
+   - 常用区不直接暴露 `service_protocols` 作为主入口，而是用“可用接口”描述用户真正关心的能力面
+   - “可用接口”选项包括自动默认、仅聊天、聊天 + 向量、聊天 + Responses + 向量、Anthropic Messages 兼容
+   - 页面用只读徽标展示最终可用接口，例如 Chat、Responses、Embeddings、Anthropic Messages
+   - 当用户选择“自定义接口”时，原始 `service_protocols`、`responses_to_chat`、`anthropic_to_chat` 在同一个常用配置区内展开；高级字段不再重复暴露这些能力字段
+   - `cliproxy` 预设默认只选择“仅聊天”；自定义接口建议只提供 Chat 和 Responses 相关项，不默认提示 embeddings 或 Anthropic bridge
 
 ## Backend Metadata
 

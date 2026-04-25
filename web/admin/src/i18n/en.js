@@ -427,6 +427,10 @@ export default {
 		protocolLockedLabel: "Current Route Protocol",
 		protocolLockedHint:
 			"All exact model and wildcard model mappings below follow this single route protocol. Model-level multi-protocol branches are no longer allowed.",
+		serviceProtocols: "Service Interfaces",
+		serviceProtocolsPlaceholder: "derive from protocol",
+		serviceProtocolsHint:
+			"Empty derives from the route protocol. Set this when one route should expose chat, responses, or embeddings together; it must include the current protocol.",
 		protocolChat: "chat",
 		protocolResponsesStateless: "responses_stateless",
 		protocolResponsesStateful: "responses_stateful",
@@ -487,37 +491,69 @@ export default {
 			"Start with a provider type, then fill connection, auth, and capability details. Saving still writes the full config file and restarts the gateway.",
 		providerType: "Provider Type",
 		providerTypeDesc:
-			"Pick the upstream shape first, then let the form derive family, backend, backend_provider, and default URLs.",
-		providerTypeHint:
-			"This is an input layer for create flow, not a new persisted field. The saved config is still the raw provider.* schema.",
-		basicSection: "Basics",
-		basicSectionDesc: "Set the provider name and review the current derived type summary.",
+			"Choose the upstream type and let the form manage the raw adapter fields.",
+		quickSetupSection: "Common Config",
+		quickSetupDesc:
+			"Keep only the fields needed for creation and routine edits here: type, connection, auth, and available interfaces.",
 		connectionSection: "Connection",
-		connectionSectionDesc: "Fill upstream URL, proxy, and timeout. CLI-compatible presets prefill the common endpoint.",
 		authSection: "Authentication",
-		authSectionDesc: "Use API key, config_dir, or let the backend own authentication depending on the current type.",
-		capabilitySection: "Capabilities",
-		capabilitySectionDesc: "Choose a capability template first, then add static model fallbacks only when needed.",
 		advancedSection: "Advanced Fields",
 		advancedSectionDesc:
-			"Raw schema fields and compatibility toggles live here. Open this only when you need to override preset-derived defaults.",
-		rawSchemaMode: "Raw schema",
-		rawSchemaSummaryEmpty: "No family selected yet",
-		capabilityTemplate: "Capability Template",
-		capabilityTemplateHint:
-			"Templates cover common combinations. Use raw service_protocols in the advanced section only for unusual surfaces.",
-		capabilityTemplateCustom: "Custom Raw Fields",
-		capabilityTemplateCustomDesc: "Keep the current raw service_protocols and compatibility toggles without auto-rewriting them.",
-		effectiveServiceProtocols: "Effective service protocols",
-		noEffectiveProtocols: "No effective protocols yet",
+			"Only low-frequency network and HTTP header fields live here. Provider type and interface capabilities stay in Common Config.",
+		customAccessType: "Custom Access",
+		customAccessTypeDesc: "Edit the raw adapter fields directly for upstreams not covered by the presets.",
+		customAccessSection: "Custom Access Fields",
+		customAccessDesc:
+			"This is the only advanced access entrypoint. Prefer presets for OpenAI-compatible, Ollama, cliproxy, and other common cases.",
+		availableInterfaces: "Available Interfaces",
+		finalInterfaces: "Final Available Interfaces",
+		finalInterfacesHint:
+			"Routes can only use the interfaces shown here. Saving writes the matching service_protocols.",
+		interfaceTemplate_adapter_defaults: "Auto: Adapter Defaults",
+		interfaceTemplate_adapter_defaults_desc:
+			"Do not write explicit service_protocols; derive interfaces from the current adapter family.",
+		interfaceTemplate_chat_only: "Chat Only",
+		interfaceTemplate_chat_only_desc:
+			"Allow chat only. Recommended for Ollama, cliproxy, or upstreams where other interfaces are not verified.",
+		interfaceTemplate_chat_embeddings: "Chat + Embeddings",
+		interfaceTemplate_chat_embeddings_desc: "Allow chat and embeddings, without Responses.",
+		interfaceTemplate_chat_responses_embeddings: "Chat + Responses + Embeddings",
+		interfaceTemplate_chat_responses_embeddings_desc:
+			"Allow chat, stateless/stateful Responses, and embeddings.",
+		interfaceTemplate_anthropic_bridge: "Anthropic Messages Compatible",
+		interfaceTemplate_anthropic_bridge_desc:
+			"Serve Anthropic /messages through an OpenAI-compatible provider and enable anthropic_to_chat.",
+		interfaceTemplateCustom: "Custom Interfaces",
+		interfaceTemplateCustomDesc: "Edit the interface list and compatibility switches directly for unusual upstreams.",
+		customInterfacesSection: "Custom Interface Fields",
+		customInterfacesDesc:
+			"This is the only advanced interface entrypoint. Changes are reflected in the final interface preview above.",
+		rawServiceProtocols: "Interface List",
+		serviceProtocol_chat: "Chat",
+		serviceProtocol_responses_stateless: "Responses",
+		serviceProtocol_responses_stateful: "Stateful Responses",
+		serviceProtocol_embeddings: "Embeddings",
+		serviceProtocol_anthropic: "Anthropic Messages",
+		noEffectiveProtocols: "No available interfaces yet",
+		noUrlRequired: "This provider type does not require a separate HTTP URL.",
+		cliproxyEndpoint: "cliproxy endpoint",
+		cliproxyEndpointHint:
+			"This is the loopback /v1 address Warden uses to reach the embedded or local CLIProxyAPI service, not another external model service.",
+		cliproxyManagedConnection:
+			"Warden manages the local or embedded CLIProxyAPI endpoint. The normal access path does not require editing raw URL, family, backend, or backend_provider fields.",
+		cliproxyConnectionNote:
+			"Uses the local or embedded CLIProxyAPI endpoint managed by Warden. The normal access path does not require a URL; switch to Custom Access to change the listener.",
+		cliproxyAuthNote:
+			"Uses local CLI login credentials from CLIProxyAPI auth_dir. Do not enter a provider API key here.",
 		authManagedByBackend:
 			"This provider type expects authentication to be owned by the backend or local CLI credentials. No extra API key is needed here.",
 		apiKeyPlaceholder: "(not set)",
 		serviceProtocolsPlaceholder: "adapter defaults",
-		serviceProtocolsHint: "Empty means adapter defaults. cliproxy backends still require explicit service_protocols.",
+		serviceProtocolsHint: "Empty derives from adapter defaults. cliproxy backends still require explicit service_protocols.",
 		proxyPlaceholder: "proxy (socks5://...)",
-		modelsGuide:
-			"Use this only when you want a static model baseline for this provider. It is optional, and runtime discovery is still used when available.",
+		staticModelsSection: "Static Model Baseline",
+		staticModelsSectionDesc:
+			"Maintain this only when runtime model discovery is unavailable or route editing needs fixed model suggestions.",
 		modelsOptional: "Optional static baseline",
 		modelsConfiguredCount: "{n} configured",
 		modelsDiscoveredCount: "{n} discovered",
@@ -539,16 +575,16 @@ export default {
 		familyRequired: "Adapter family is required",
 		backendProviderRequired: "cliproxy backend requires backend_provider",
 		backendServiceProtocolsRequired: "cliproxy backend requires explicit service_protocols",
-		supportedProtocols: "Supported Protocols",
-		candidateProtocols: "Family Candidate Protocols",
 		configuredProtocols: "Configured Protocols",
 		displayProtocols: "Display Protocols",
 		timeout: "Timeout",
 		defaultTimeout: "default (60s)",
 		apiKey: "API Key",
-		runtimeStatus: "Runtime Status",
+		runtimeTools: "Runtime Tools",
+		runtimeToolsDesc:
+			"Health checks, suppression, and protocol probes are runtime actions, so they stay out of the main saved-config form.",
+		runtimeOverview: "Runtime Overview",
 		consecutiveFailures: "Consecutive Failures",
-		manuallySuppressed: "Manually Suppressed",
 		suppressed: "Auto Suppressed",
 		yes: "Yes",
 		no: "No",

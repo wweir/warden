@@ -1,95 +1,104 @@
 export function fmtNum(n) {
-	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-	if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-	return String(n);
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
 }
 
 function normalizeText(value) {
-	return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeConfiguredServiceProtocols(serviceProtocols) {
-	if (!Array.isArray(serviceProtocols) || serviceProtocols.length === 0) return [];
+  if (!Array.isArray(serviceProtocols) || serviceProtocols.length === 0)
+    return [];
 
-	const out = [];
-	const seen = new Set();
-	const add = (protocol) => {
-		if (!protocol || seen.has(protocol)) return;
-		seen.add(protocol);
-		out.push(protocol);
-	};
+  const out = [];
+  const seen = new Set();
+  const add = (protocol) => {
+    if (!protocol || seen.has(protocol)) return;
+    seen.add(protocol);
+    out.push(protocol);
+  };
 
-	for (const raw of serviceProtocols) {
-		const protocol = normalizeText(raw);
-		switch (protocol) {
-			case "chat":
-			case "responses_stateless":
-			case "responses_stateful":
-			case "anthropic":
-			case "embeddings":
-				add(protocol);
-				if (protocol === "responses_stateful") add("responses_stateless");
-				break;
-		}
-	}
+  for (const raw of serviceProtocols) {
+    const protocol = normalizeText(raw);
+    switch (protocol) {
+      case "chat":
+      case "responses_stateless":
+      case "responses_stateful":
+      case "anthropic":
+      case "embeddings":
+        add(protocol);
+        if (protocol === "responses_stateful") add("responses_stateless");
+        break;
+    }
+  }
 
-	return out;
+  return out;
 }
 
 function routeProtocolsFromServiceProtocols(serviceProtocols) {
-	const out = [];
-	const seen = new Set();
-	const add = (protocol) => {
-		if (!protocol || seen.has(protocol)) return;
-		seen.add(protocol);
-		out.push(protocol);
-	};
+  const out = [];
+  const seen = new Set();
+  const add = (protocol) => {
+    if (!protocol || seen.has(protocol)) return;
+    seen.add(protocol);
+    out.push(protocol);
+  };
 
-	for (const protocol of serviceProtocols || []) {
-		switch (protocol) {
-			case "chat":
-				add("chat");
-				break;
-			case "responses_stateless":
-				add("responses_stateless");
-				break;
-			case "responses_stateful":
-				add("responses_stateless");
-				add("responses_stateful");
-				break;
-			case "anthropic":
-				add("anthropic");
-				break;
-		}
-	}
+  for (const protocol of serviceProtocols || []) {
+    switch (protocol) {
+      case "chat":
+        add("chat");
+        break;
+      case "responses_stateless":
+        add("responses_stateless");
+        break;
+      case "responses_stateful":
+        add("responses_stateless");
+        add("responses_stateful");
+        break;
+      case "anthropic":
+        add("anthropic");
+        break;
+    }
+  }
 
-	return out;
+  return out;
 }
 
 function defaultServiceProtocols(provider) {
-	const family = normalizeText(provider?.family || provider?.protocol);
-	switch (family) {
-		case "anthropic":
-			return ["chat", "anthropic"];
-		case "openai": {
-			const protocols = ["chat", "responses_stateless", "responses_stateful", "embeddings"];
-			if (provider?.anthropic_to_chat) protocols.push("anthropic");
-			return protocols;
-		}
-		case "qwen":
-		case "copilot":
-			return ["chat"];
-		default:
-			return [];
-	}
+  const family = normalizeText(provider?.family || provider?.protocol);
+  switch (family) {
+    case "anthropic":
+      return ["chat", "anthropic"];
+    case "openai": {
+      const protocols = [
+        "chat",
+        "responses_stateless",
+        "responses_stateful",
+        "embeddings",
+      ];
+      if (provider?.anthropic_to_chat) protocols.push("anthropic");
+      return protocols;
+    }
+    case "copilot":
+      return ["chat"];
+    default:
+      return [];
+  }
 }
 
 export function providerRouteProtocols(provider) {
-	const configuredServiceProtocols = normalizeConfiguredServiceProtocols(provider?.service_protocols);
-	if (configuredServiceProtocols.length > 0) {
-		return routeProtocolsFromServiceProtocols(configuredServiceProtocols);
-	}
-	return routeProtocolsFromServiceProtocols(defaultServiceProtocols(provider));
+  const configuredServiceProtocols = normalizeConfiguredServiceProtocols(
+    provider?.service_protocols,
+  );
+  if (configuredServiceProtocols.length > 0) {
+    return routeProtocolsFromServiceProtocols(configuredServiceProtocols);
+  }
+  return routeProtocolsFromServiceProtocols(defaultServiceProtocols(provider));
 }
 
 export const DEFAULT_AI_HOOK_PROMPT = `You are a security reviewer for tool calls. Review the tool call below and return ONLY compact JSON:
@@ -113,25 +122,25 @@ Result: {{.Result}}
 Return allow=false for any destructive, privacy-invasive, malicious, or ambiguous case. The reason must name the specific risk.`;
 
 export function formatDuration(ms) {
-	const durationMs = Number(ms);
-	if (!Number.isFinite(durationMs) || durationMs <= 0) return "0ms";
-	if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
+  const durationMs = Number(ms);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "0ms";
+  if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
 
-	const totalSeconds = durationMs / 1_000;
-	if (durationMs < 60_000) {
-		const precision = totalSeconds < 10 ? 1 : 0;
-		return `${Number(totalSeconds.toFixed(precision))}s`;
-	}
+  const totalSeconds = durationMs / 1_000;
+  if (durationMs < 60_000) {
+    const precision = totalSeconds < 10 ? 1 : 0;
+    return `${Number(totalSeconds.toFixed(precision))}s`;
+  }
 
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	const seconds = Math.floor(totalSeconds % 60);
-	if (durationMs < 3_600_000) {
-		if (seconds === 0) return `${totalMinutes}m`;
-		return `${totalMinutes}m ${seconds}s`;
-	}
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  if (durationMs < 3_600_000) {
+    if (seconds === 0) return `${totalMinutes}m`;
+    return `${totalMinutes}m ${seconds}s`;
+  }
 
-	const totalHours = Math.floor(totalMinutes / 60);
-	const minutes = totalMinutes % 60;
-	if (minutes === 0) return `${totalHours}h`;
-	return `${totalHours}h ${minutes}m`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return `${totalHours}h`;
+  return `${totalHours}h ${minutes}m`;
 }
