@@ -87,7 +87,6 @@ func TestEnsureManagedBootstrapConfigWritesLocalOnlyManagedBootstrapConfig(t *te
 		"provider:",
 		"route:",
 		"api.openai.com",
-		"qwen:",
 		"copilot:",
 	} {
 		if strings.Contains(text, unwanted) {

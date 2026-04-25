@@ -31,7 +31,8 @@ Warden 是一个以 `route` 为中心的 AI 网关。
 
 ### 当前边界
 
-- 统一接入 `openai`、`anthropic`、`qwen`、`copilot`
+- 统一接入 `openai`、`anthropic`、`copilot`
+- Qwen 兼容上游统一按 `openai` provider 配置；不再提供原生 `qwen` CLI 适配
 - OpenAI-compatible 上游（包括 Ollama）统一按 `openai` provider 配置；若只支持聊天接口，显式设置 `service_protocols: [chat]`
 - CLIProxyAPI/cliproxy 作为 OpenAI-compatible backend 接入，例如 `family: openai`、`backend: cliproxy`、`backend_provider: codex`
 - 可选启动嵌入式 CLIProxyAPI/cliproxy 服务，随 Warden 进程一起启停
@@ -242,6 +243,7 @@ curl http://localhost:9832/openai/embeddings \
 - `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
 - `cliproxy.enabled` 启用嵌入式 cliproxy；启用时所有 `backend: cliproxy` provider 必须共享同一个 `http://loopback:port/v1` URL
 - `route.protocol` 必须显式声明，而且只能是 `chat`、`responses_stateless`、`responses_stateful`、`anthropic` 之一
+- `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时可让同一路由同时暴露 `chat`、`responses`、`embeddings` 等服务接口，但必须包含 `route.protocol`，且每个显式接口都必须有 route upstream/provider 支持
 - `/embeddings` 是 service protocol，不是新的 `route.protocol`
 - `route.exact_models.<name>` 直接声明 `upstreams`，适合固定映射
 - `route.wildcard_models.<pattern>` 直接声明 `providers`，适合通配
@@ -264,7 +266,7 @@ internal/
   selector/          # provider 选择、状态、模型发现
 pkg/
   protocol/          # OpenAI / Anthropic 协议类型与转换
-  provider/          # Qwen / Copilot OAuth token 管理
+  provider/          # Copilot OAuth token 管理
   toolhook/          # 通用 tool hook 执行
 web/admin/           # Vue 3 管理前端
 ```
@@ -303,7 +305,8 @@ Documentation:
 
 ### Current Scope
 
-- Supports `openai`, `anthropic`, `qwen`, and `copilot`
+- Supports `openai`, `anthropic`, and `copilot`
+- Qwen-compatible upstreams should be configured as `openai` providers; the native `qwen` CLI adapter has been removed
 - OpenAI-compatible upstreams, including Ollama, are configured as `openai` providers; use `service_protocols: [chat]` when the upstream only supports chat
 - CLIProxyAPI/cliproxy is configured as an OpenAI-compatible backend, for example `family: openai`, `backend: cliproxy`, and `backend_provider: codex`
 - Can optionally start an embedded CLIProxyAPI/cliproxy service with the Warden process
@@ -478,6 +481,7 @@ If the matched route requires client API keys, use any of these headers:
 - `provider.*.backend` is an optional upstream implementation marker; the only current value is `cliproxy`, and it requires `family: openai`, `backend_provider`, and explicit `service_protocols`
 - `cliproxy.enabled` starts embedded cliproxy; when enabled, all `backend: cliproxy` providers must share the same `http://loopback:port/v1` URL
 - `route.protocol` is required and must be one of `chat`, `responses_stateless`, `responses_stateful`, or `anthropic`
+- `route.service_protocols` is optional; empty derives from `route.protocol`, while explicit values let one route expose `chat`, `responses`, `embeddings`, and other service interfaces together, but must include `route.protocol`, and every explicit interface must be supported by at least one route upstream/provider
 - `/embeddings` is a service protocol, not a new `route.protocol`
 - `route.exact_models.<name>` declares `upstreams` directly and fits fixed mappings
 - `route.wildcard_models.<pattern>` declares `providers` directly and fits wildcard routing
@@ -500,7 +504,7 @@ internal/
   selector/          # provider selection, state, model discovery
 pkg/
   protocol/          # OpenAI / Anthropic protocol types and conversions
-  provider/          # Qwen / Copilot OAuth token management
+  provider/          # Copilot OAuth token management
   toolhook/          # generic tool hook execution
 web/admin/           # Vue 3 admin frontend
 ```

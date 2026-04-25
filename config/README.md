@@ -44,9 +44,9 @@
 - `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
 - `provider.*.family` 必填；`provider.*.protocol` 只保留为兼容别名，不能与 `family` 冲突
 - `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
-- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`
+- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`；该 URL 是 Warden 访问内嵌/本地 cliproxy 的 endpoint，不代表还要外接一个模型服务
 - `~` 路径在校验阶段统一展开
-- `qwen` / `copilot` 在未设置 `api_key` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
+- `copilot` 在未设置 `api_key` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
 - `route.<prefix>.api_keys` 是该路由自己的客户端访问密钥集合；为空时该路由不做客户端鉴权
 - 同一路由下的 `api_keys` 明文值必须唯一；否则按 key 名聚合的日志和指标归因会失去确定性
 - 顶层 `api_keys` 已废弃；校验阶段会直接报错，避免旧配置被静默放行为公开路由
@@ -65,13 +65,14 @@
 - `route.protocol` 是必填字段，且每个 route 只允许一个 `chat` / `responses_stateless` / `responses_stateful` / `anthropic`
 - `/embeddings` 是额外 service protocol，不是新的 `route.protocol`；只有 route 内至少有一个 upstream/provider 支持 embeddings 时才会暴露
 - route model 的额外提示词由模型自身的 `prompt_enabled` + `system_prompt` 表达
+- `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时用于让同一路由暴露多个服务接口，且必须包含 `route.protocol`；显式声明的每个接口都必须至少有一个 route upstream/provider 支持，否则配置校验失败
 - `route.exact_models.<name>` 直接声明 `upstreams`
 - `route.wildcard_models.<pattern>` 直接声明 `providers`
-- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_* + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`qwen/copilot => chat`
+- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_* + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
 - OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols: [chat]`
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
 - `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
-- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；但这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
+- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only；但这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
 - `responses_stateless` 明确拒绝 `previous_response_id`
 - `responses_stateful` 接受 `previous_response_id`，但会禁用 failover，并绕过 `responses_to_chat`

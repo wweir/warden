@@ -228,6 +228,9 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			return NewValidationError("provider %s: family is required", name)
 		}
 		prov.Family = prov.Protocol
+		if prov.Protocol == "qwen" {
+			return NewValidationError("provider %s: family %q is no longer supported; use family %q with a Qwen-compatible endpoint instead", name, prov.Protocol, ProviderProtocolOpenAI)
+		}
 		prov.Backend = normalizeProviderBackend(prov.Backend)
 		prov.BackendProvider = normalizeProviderBackend(prov.BackendProvider)
 		if prov.Backend == "" && prov.BackendProvider != "" {
@@ -277,7 +280,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 
 		switch prov.Protocol {
 		case ProviderProtocolOpenAI, ProviderProtocolAnthropic:
-		case ProviderProtocolQwen, ProviderProtocolCopilot:
+		case ProviderProtocolCopilot:
 			if prov.APIKey.Value() == "" {
 				if p := provider.Get(prov.Protocol); p != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), providerCredCheckTimeout)
@@ -289,7 +292,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 				}
 			}
 		default:
-			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/qwen/copilot)", name, prov.Protocol)
+			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/copilot)", name, prov.Protocol)
 		}
 
 		if prov.Timeout != "" {
@@ -319,13 +322,21 @@ func (c *ConfigStruct) validateRouteConfig() error {
 	for prefix, route := range c.Route {
 		route.exactModels = make(map[string]*CompiledRouteModel)
 		route.wildcards = nil
+		explicitServiceProtocols := len(route.ServiceProtocols) > 0
 
 		if err := validateConfiguredProtocolName(prefix, "", route.Protocol); err != nil {
 			return err
 		}
-		route.serviceProtocols = SupportedServiceProtocolsForConfiguredProtocol(route.Protocol)
+		route.Protocol = normalizeRouteProtocol(route.Protocol)
+		if len(route.ServiceProtocols) > 0 && !validConfiguredServiceProtocols(route.ServiceProtocols) {
+			return NewValidationError("route %s: invalid service_protocols %v (must be chat/responses_stateless/responses_stateful/anthropic/embeddings)", prefix, route.ServiceProtocols)
+		}
+		route.serviceProtocols = configuredRouteServiceProtocols(route)
 		if len(route.serviceProtocols) == 0 {
 			return NewValidationError("route %s: protocol is required", prefix)
+		}
+		if !slices.Contains(route.serviceProtocols, route.Protocol) {
+			return NewValidationError("route %s: service_protocols must include route protocol %s", prefix, route.Protocol)
 		}
 
 		if len(route.ExactModels) == 0 && len(route.WildcardModels) == 0 {
@@ -375,9 +386,25 @@ func (c *ConfigStruct) validateRouteConfig() error {
 			}
 		}
 
-		PruneUnsupportedRouteServiceProtocols(route, c.Provider)
+		if explicitServiceProtocols {
+			if err := validateExplicitRouteServiceProtocolSupport(prefix, route, c.Provider); err != nil {
+				return err
+			}
+		} else {
+			PruneUnsupportedRouteServiceProtocols(route, c.Provider)
+		}
 	}
 
+	return nil
+}
+
+func validateExplicitRouteServiceProtocolSupport(prefix string, route *RouteConfig, providers map[string]*ProviderConfig) error {
+	for _, serviceProtocol := range route.serviceProtocols {
+		if RouteHasServiceProtocolSupport(route, providers, serviceProtocol) {
+			continue
+		}
+		return NewValidationError("route %s: service_protocols includes %s but no route upstream/provider supports it", prefix, serviceProtocol)
+	}
 	return nil
 }
 
@@ -406,7 +433,7 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 	if hasWildcardPattern(modelName) {
 		return NewValidationError("route %s exact model %q: exact model name cannot contain *", prefix, modelName)
 	}
-	if route.Protocol == RouteProtocolResponsesStateful && len(modelCfg.Upstreams) != 1 {
+	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Upstreams) != 1 {
 		return NewValidationError("route %s exact model %q: exactly one upstream is required for protocol %s", prefix, modelName, route.Protocol)
 	}
 	if len(modelCfg.Upstreams) == 0 {
@@ -441,7 +468,7 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
 			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s does not support any route service protocol %v", prefix, modelName, idx, upstream.Provider, route.serviceProtocols)
 		}
-		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
+		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
 			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, modelName, idx, upstream.Provider, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -464,7 +491,7 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 	if !hasWildcardPattern(pattern) {
 		return NewValidationError("route %s wildcard model %q: pattern must contain *", prefix, pattern)
 	}
-	if route.Protocol == RouteProtocolResponsesStateful && len(modelCfg.Providers) != 1 {
+	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Providers) != 1 {
 		return NewValidationError("route %s wildcard model %q: exactly one provider is required for protocol %s", prefix, pattern, route.Protocol)
 	}
 	if len(modelCfg.Providers) == 0 {
@@ -491,7 +518,7 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
 			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s does not support any route service protocol %v", prefix, pattern, idx, provName, route.serviceProtocols)
 		}
-		if route.Protocol == RouteProtocolResponsesStateful && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
+		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
 			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, pattern, idx, provName, route.Protocol)
 		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
@@ -612,17 +639,6 @@ func resolveWebhookReference(ctx, name string, webhooks map[string]*WebhookConfi
 
 func applyProviderDefaults(prov *ProviderConfig) {
 	switch prov.Protocol {
-	case ProviderProtocolQwen:
-		if prov.URL == "" {
-			if prov.APIKey.Value() != "" {
-				prov.URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-			} else {
-				prov.URL = "https://portal.qwen.ai/v1"
-			}
-		}
-		if prov.ConfigDir == "" {
-			prov.ConfigDir = "~/.qwen"
-		}
 	case ProviderProtocolCopilot:
 		if prov.URL == "" {
 			prov.URL = "https://api.githubcopilot.com"

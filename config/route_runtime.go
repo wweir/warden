@@ -92,7 +92,7 @@ func DefaultServiceProtocols(prov *ProviderConfig) []string {
 			supported = append(supported, RouteProtocolAnthropic)
 		}
 		return supported
-	case ProviderProtocolQwen, ProviderProtocolCopilot:
+	case ProviderProtocolCopilot:
 		return []string{RouteProtocolChat}
 	default:
 		return nil
@@ -131,6 +131,16 @@ func SupportedServiceProtocolsForConfiguredProtocol(routeProtocol string) []stri
 	}
 }
 
+func configuredRouteServiceProtocols(route *RouteConfig) []string {
+	if route == nil {
+		return nil
+	}
+	if normalized := normalizeConfiguredServiceProtocols(route.ServiceProtocols); len(normalized) > 0 {
+		return normalized
+	}
+	return SupportedServiceProtocolsForConfiguredProtocol(route.Protocol)
+}
+
 func RouteProtocolsFromServiceProtocols(serviceProtocols []string) []string {
 	if len(serviceProtocols) == 0 {
 		return nil
@@ -164,7 +174,7 @@ func (r *RouteConfig) ConfiguredProtocol() string {
 	return r.Protocol
 }
 
-func (r *RouteConfig) ServiceProtocols() []string {
+func (r *RouteConfig) EffectiveServiceProtocols() []string {
 	return append([]string(nil), r.serviceProtocols...)
 }
 

@@ -6,7 +6,7 @@ This integration deliberately does not add `codex`, `gemini`, or `claude-cli` as
 
 ## Sidecar Boundary
 
-Use `family: openai` for the Warden provider and point `url` at the local cliproxy `/v1` endpoint:
+Use `family: openai` for the Warden provider and point `url` at the local cliproxy `/v1` endpoint. In embedded mode this URL is still required because it is the internal HTTP boundary Warden uses to start, probe, and call the in-process CLIProxyAPI service; it is not a second external model service.
 
 ```yaml
 provider:
@@ -19,6 +19,8 @@ provider:
 ```
 
 `backend` and `backend_provider` are metadata fields. They document that the OpenAI-compatible upstream is backed by cliproxy and which cliproxy provider is expected to serve it. They do not change Warden's request path by themselves.
+
+The built-in admin presets for `cliproxy-codex`, `cliproxy-claude`, and `cliproxy-gemini` all use this shape and default to `service_protocols: ["chat"]`. CLIProxyAPI exposes additional native surfaces, including Responses, Claude Messages, and Gemini model-path APIs, but Warden's current cliproxy backend path only treats the endpoint as an OpenAI-compatible upstream. Do not enable embeddings for cliproxy unless the concrete endpoint has a verified `/v1/embeddings` implementation.
 
 ## Embedded Service
 

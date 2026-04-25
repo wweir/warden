@@ -18,7 +18,6 @@ type TokenProvider interface {
 }
 
 var providers = map[string]TokenProvider{
-	"qwen":    &qwenProvider{managers: make(map[string]*oauthManager)},
 	"copilot": &copilotProvider{managers: make(map[string]*tokenManager)},
 }
 

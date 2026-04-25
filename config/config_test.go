@@ -682,11 +682,6 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 			},
 		},
 		{
-			name:     "qwen",
-			provider: &ProviderConfig{Protocol: "qwen"},
-			want:     []string{RouteProtocolChat},
-		},
-		{
 			name:     "copilot",
 			provider: &ProviderConfig{Protocol: "copilot"},
 			want:     []string{RouteProtocolChat},
@@ -1152,8 +1147,8 @@ func TestValidateProviderRejectsIncompatibleAnthropicServiceProtocol(t *testing.
 func TestValidateProviderRejectsIncompatibleEmbeddingsServiceProtocol(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"qwen": {
-				Protocol:         ProviderProtocolQwen,
+			"copilot": {
+				Protocol:         ProviderProtocolCopilot,
 				APIKey:           "test-key",
 				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
 			},
@@ -1162,7 +1157,7 @@ func TestValidateProviderRejectsIncompatibleEmbeddingsServiceProtocol(t *testing
 			"/chat": {
 				Protocol: RouteProtocolChat,
 				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"qwen"}},
+					"*": {Providers: []string{"copilot"}},
 				},
 			},
 		},
@@ -1203,6 +1198,93 @@ func TestValidateRouteDisablesEmbeddingsWhenNoUpstreamSupportsIt(t *testing.T) {
 	}
 	if cfg.Route["/claude"].SupportsServiceProtocol(ServiceProtocolEmbeddings) {
 		t.Fatal("anthropic-only route should not expose embeddings")
+	}
+}
+
+func TestValidateRouteAcceptsExplicitServiceProtocols(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {
+				Protocol: ProviderProtocolOpenAI,
+				URL:      "https://api.openai.com/v1",
+				APIKey:   "test-key",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/multi": {
+				Protocol:         RouteProtocolChat,
+				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponsesStateless, ServiceProtocolEmbeddings},
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"openai"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	for _, protocol := range []string{RouteProtocolChat, RouteProtocolResponsesStateless, ServiceProtocolEmbeddings} {
+		if !cfg.Route["/multi"].SupportsServiceProtocol(protocol) {
+			t.Fatalf("route should support %s", protocol)
+		}
+	}
+}
+
+func TestValidateRouteRejectsServiceProtocolsWithoutPrimaryProtocol(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {
+				Protocol: ProviderProtocolOpenAI,
+				URL:      "https://api.openai.com/v1",
+				APIKey:   "test-key",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/bad": {
+				Protocol:         RouteProtocolChat,
+				ServiceProtocols: []string{ServiceProtocolEmbeddings},
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"openai"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "service_protocols must include route protocol chat") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRouteRejectsExplicitServiceProtocolWithoutProviderSupport(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"copilot": {
+				Protocol: ProviderProtocolCopilot,
+				APIKey:   "test-key",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/multi": {
+				Protocol:         RouteProtocolChat,
+				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponsesStateless},
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"copilot"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "service_protocols includes responses_stateless but no route upstream/provider supports it") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1267,8 +1349,8 @@ func TestValidateProviderRequiresExplicitFamilyOrProtocol(t *testing.T) {
 func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"qwen": {
-				Family:  ProviderProtocolQwen,
+			"copilot": {
+				Family:  ProviderProtocolCopilot,
 				APIKey:  "test-key",
 				Timeout: "30s",
 			},
@@ -1278,7 +1360,7 @@ func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 				Protocol: RouteProtocolChat,
 				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"*": {
-						Providers: []string{"qwen"},
+						Providers: []string{"copilot"},
 					},
 				},
 			},
@@ -1289,15 +1371,43 @@ func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 
-	prov := cfg.Provider["qwen"]
-	if prov.Protocol != ProviderProtocolQwen {
-		t.Fatalf("provider protocol = %q, want %q", prov.Protocol, ProviderProtocolQwen)
+	prov := cfg.Provider["copilot"]
+	if prov.Protocol != ProviderProtocolCopilot {
+		t.Fatalf("provider protocol = %q, want %q", prov.Protocol, ProviderProtocolCopilot)
 	}
-	if prov.URL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
-		t.Fatalf("provider URL = %q, want qwen default", prov.URL)
+	if prov.URL != "https://api.githubcopilot.com" {
+		t.Fatalf("provider URL = %q, want copilot default", prov.URL)
 	}
-	if prov.ConfigDir == "" {
-		t.Fatal("expected qwen default config_dir to be applied")
+	if !strings.HasSuffix(prov.ConfigDir, "/.config/github-copilot") {
+		t.Fatalf("expected copilot default config_dir to be applied, got %q", prov.ConfigDir)
+	}
+}
+
+func TestValidateProviderRejectsRemovedQwenFamily(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"qwen": {
+				Family: "qwen",
+				URL:    "https://portal.qwen.ai/v1",
+				APIKey: "test-key",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"qwen"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), `family "qwen" is no longer supported`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

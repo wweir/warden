@@ -3,7 +3,7 @@ addr: ":28080"
 # Minimal example for agent-facing routes.
 # /cc prefers Anthropic-compatible upstreams.
 # /codex prefers OpenAI-compatible coder models.
-# /openclaw keeps the same route shape but prefers Qwen first.
+# /openclaw keeps the same route shape but prefers Copilot before OpenAI.
 # provider.family is required; protocol remains only as a backward-compatible alias.
 provider:
   openai:
@@ -17,15 +17,6 @@ provider:
     url: "https://api.anthropic.com/v1"
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
-
-  qwen:
-    family: "qwen"
-    config_dir: "~/.qwen"
-    timeout: "120s"
-    models:
-      - "qwen3-coder-plus"
-      - "qwen3-coder-flash"
-      - "vision-model"
 
   copilot:
     family: "copilot"
@@ -70,22 +61,17 @@ route:
             model: "gpt-5.4"
           - provider: "copilot"
             model: "gpt-5.4"
-          - provider: "qwen"
-            model: "qwen3-coder-plus"
       "gpt-5.3-codex":
         upstreams:
           - provider: "openai"
             model: "gpt-5.3-codex"
           - provider: "copilot"
             model: "gpt-5.3-codex"
-          - provider: "qwen"
-            model: "qwen3-coder-plus"
 
   /openclaw:
     protocol: "chat"
     wildcard_models:
       "*":
         providers:
-          - "qwen"
-          - "openai"
           - "copilot"
+          - "openai"

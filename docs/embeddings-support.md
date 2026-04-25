@@ -17,7 +17,7 @@
 - `responses_stateful`
 - `anthropic`
 
-`/embeddings` 是额外的 service protocol。只有当 route 内至少有一个 upstream/provider 真正支持 embeddings 时，才会暴露：
+`/embeddings` 是额外的 service protocol。`route.service_protocols` 留空时会按 `route.protocol` 推导并在有上游支持时暴露 embeddings；显式配置时必须包含 `embeddings` 才会暴露该入口，并且至少一个 route upstream/provider 必须支持 embeddings：
 
 - `chat -> /chat/completions + /embeddings`
 - `responses_stateless -> /responses + /embeddings`
@@ -53,7 +53,7 @@
 - `anthropic`
   - `chat`
   - `anthropic`
-- `qwen` / `copilot`
+- `copilot`
   - `chat`
 
 关键结论：

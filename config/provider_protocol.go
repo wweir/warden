@@ -5,7 +5,6 @@ import "strings"
 const (
 	ProviderProtocolOpenAI    = "openai"
 	ProviderProtocolAnthropic = "anthropic"
-	ProviderProtocolQwen      = "qwen"
 	ProviderProtocolCopilot   = "copilot"
 )
 

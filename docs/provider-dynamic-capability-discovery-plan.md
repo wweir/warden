@@ -22,14 +22,11 @@
 - `anthropic`:
   - `chat`
   - `anthropic`
-- `qwen`:
-  - `chat`
 - `copilot`:
   - `chat`
 
 对实现最关键的决策：
 
-- `qwen` 在 warden 中只按 `chat` 处理
 - `copilot` 不再默认支持任何 `responses*`
 - OpenAI-compatible 第三方上游（例如 Ollama）不再拥有独立 family，而是归入 `openai`；若只支持聊天接口，必须显式配置 `service_protocols: [chat]`
 - `openai` provider 的 `anthropic` 能力不是原生 `/messages`，而是 `anthropic_to_chat` 的受控桥接能力

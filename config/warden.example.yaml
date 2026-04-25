@@ -55,14 +55,6 @@ provider:
     api_key: "${ANTHROPIC_API_KEY}"
     timeout: "120s"
 
-  qwen:
-    family: "qwen"
-    timeout: "120s"
-    models:
-      - "qwen3-coder-plus"
-      - "qwen3-coder-flash"
-      - "vision-model"
-
   copilot:
     family: "copilot"
     timeout: "120s"
@@ -90,10 +82,13 @@ provider:
   #   models:
   #     - "gpt-5.3-codex"
 
-# Route-centric config: each route locks exactly one protocol.
+# Route-centric config: each route has one primary protocol and may expose extra service protocols.
 route:
   /openai:
     protocol: "chat"
+    # Optional. Empty derives from protocol. Use this when one route should
+    # expose multiple service endpoints, for example chat + embeddings.
+    # service_protocols: ["chat", "embeddings"]
     # Optional client API keys for this route only.
     # Empty or omitted means the route is public.
     # api_keys:
@@ -106,23 +101,18 @@ route:
         upstreams:
           - provider: "openai"
             model: "gpt-4o"
-          - provider: "qwen"
-            model: "qwen3-coder-plus"
           - provider: "copilot"
             model: "gpt-5.4"
       gpt-4o-mini:
         upstreams:
           - provider: "openai"
             model: "gpt-4.1-mini"
-          - provider: "qwen"
-            model: "qwen3-coder-flash"
           - provider: "copilot"
             model: "claude-sonnet-4-6"
     wildcard_models:
       "gpt-*":
         providers:
           - "openai"
-          - "qwen"
           - "copilot"
 
   /responses:

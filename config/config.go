@@ -89,13 +89,13 @@ type ProviderConfig struct {
 	Name             string            `json:"-"` // populated from map key
 	Disabled         bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
 	URL              string            `json:"url" usage:"Upstream LLM base URL"`
-	Family           string            `json:"family" usage:"Required provider adapter family: openai, anthropic, qwen, copilot"`
+	Family           string            `json:"family" usage:"Required provider adapter family: openai, anthropic, copilot"`
 	Protocol         string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
 	Backend          string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
 	BackendProvider  string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
 	ServiceProtocols []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty uses adapter defaults"`
 	APIKey           SecretString      `json:"api_key" usage:"API key for authentication"`
-	ConfigDir        string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for qwen/copilot)"`
+	ConfigDir        string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
 	Timeout          string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
 	Proxy            string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers          map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
@@ -108,7 +108,7 @@ type ProviderConfig struct {
 }
 
 // GetAPIKey returns the effective API key for authentication.
-// For qwen protocol, reads from local OAuth credentials file if api_key is not set.
+// For copilot protocol, reads from local OAuth credentials file if api_key is not set.
 func (b *ProviderConfig) GetAPIKey(ctx context.Context) string {
 	if b.APIKey.Value() != "" {
 		return b.APIKey.Value()
@@ -123,7 +123,7 @@ func (b *ProviderConfig) GetAPIKey(ctx context.Context) string {
 	return ""
 }
 
-// InvalidateAuth clears the cached OAuth credentials for qwen/copilot providers,
+// InvalidateAuth clears the cached OAuth credentials for copilot providers,
 // forcing a re-read from disk on the next GetAPIKey call.
 // No-op for providers with a static api_key.
 func (b *ProviderConfig) InvalidateAuth() {
@@ -186,12 +186,13 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 }
 
 type RouteConfig struct {
-	Prefix         string                               `json:"-"` // populated from map key
-	Protocol       string                               `json:"protocol" usage:"The single external protocol exposed by this route: chat, responses_stateless, responses_stateful, or anthropic"`
-	APIKeys        map[string]SecretString              `json:"api_keys" usage:"Client API keys allowed to access this route (name -> key); empty means no client auth"`
-	ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings for this route protocol; each entry defines explicit upstream provider/model targets"`
-	WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings for this route protocol; each pattern defines ordered upstream providers and forwards the requested model unchanged"`
-	Hooks          []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`
+	Prefix           string                               `json:"-"` // populated from map key
+	Protocol         string                               `json:"protocol" usage:"Primary route protocol: chat, responses_stateless, responses_stateful, or anthropic"`
+	ServiceProtocols []string                             `json:"service_protocols" usage:"External service protocols exposed by this route: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty derives from protocol"`
+	APIKeys          map[string]SecretString              `json:"api_keys" usage:"Client API keys allowed to access this route (name -> key); empty means no client auth"`
+	ExactModels      map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings for this route protocol; each entry defines explicit upstream provider/model targets"`
+	WildcardModels   map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings for this route protocol; each pattern defines ordered upstream providers and forwards the requested model unchanged"`
+	Hooks            []*HookRuleConfig                    `json:"hooks" usage:"Tool hook rules scoped to this route"`
 
 	exactModels      map[string]*CompiledRouteModel
 	wildcards        []*CompiledRouteModel
@@ -204,17 +205,19 @@ func (r *RouteConfig) MarshalJSON() ([]byte, error) {
 		return []byte("null"), nil
 	}
 	return json.Marshal(struct {
-		Protocol       string                               `json:"protocol"`
-		APIKeys        map[string]SecretString              `json:"api_keys"`
-		ExactModels    map[string]*ExactRouteModelConfig    `json:"exact_models"`
-		WildcardModels map[string]*WildcardRouteModelConfig `json:"wildcard_models"`
-		Hooks          []*HookRuleConfig                    `json:"hooks"`
+		Protocol         string                               `json:"protocol"`
+		ServiceProtocols []string                             `json:"service_protocols,omitempty"`
+		APIKeys          map[string]SecretString              `json:"api_keys"`
+		ExactModels      map[string]*ExactRouteModelConfig    `json:"exact_models"`
+		WildcardModels   map[string]*WildcardRouteModelConfig `json:"wildcard_models"`
+		Hooks            []*HookRuleConfig                    `json:"hooks"`
 	}{
-		Protocol:       r.Protocol,
-		APIKeys:        r.CloneAPIKeys(),
-		ExactModels:    r.ExactModels,
-		WildcardModels: r.WildcardModels,
-		Hooks:          r.Hooks,
+		Protocol:         r.Protocol,
+		ServiceProtocols: r.ServiceProtocols,
+		APIKeys:          r.CloneAPIKeys(),
+		ExactModels:      r.ExactModels,
+		WildcardModels:   r.WildcardModels,
+		Hooks:            r.Hooks,
 	})
 }
 
