@@ -73,12 +73,13 @@ func (h *Handler) HandleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"prefix":          prefix,
-		"protocol":        route.ConfiguredProtocol(),
-		"providers":       providers,
-		"models":          route.PublicModels(),
-		"exact_models":    exactModels,
-		"wildcard_models": wildcardModels,
-		"hook_count":      len(route.Hooks),
+		"prefix":            prefix,
+		"protocol":          route.ConfiguredProtocol(),
+		"service_protocols": route.EffectiveServiceProtocols(),
+		"providers":         providers,
+		"models":            route.PublicModels(),
+		"exact_models":      exactModels,
+		"wildcard_models":   wildcardModels,
+		"hook_count":        len(route.Hooks),
 	})
 }

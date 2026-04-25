@@ -116,7 +116,7 @@ func SanitizeConfigJSON(newCfg map[string]any, currentCfg map[string]any) {
 }
 
 // DropOAuthProviderAPIKey removes api_key from providers that use OAuth credentials
-// (qwen, copilot), since they authenticate via config_dir and should not store an api_key.
+// (copilot), since they authenticate via config_dir and should not store an api_key.
 func DropOAuthProviderAPIKey(cfgMap map[string]any) {
 	providerMap, _ := cfgMap["provider"].(map[string]any)
 	for _, v := range providerMap {
@@ -125,7 +125,8 @@ func DropOAuthProviderAPIKey(cfgMap map[string]any) {
 			continue
 		}
 		proto, _ := pm["protocol"].(string)
-		if proto == "qwen" || proto == "copilot" {
+		family, _ := pm["family"].(string)
+		if proto == "copilot" || family == "copilot" {
 			delete(pm, "api_key")
 		}
 	}

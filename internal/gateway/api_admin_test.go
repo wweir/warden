@@ -801,8 +801,10 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	var payload struct {
 		Presets []struct {
 			ID                      string `json:"id"`
+			Summary                 string `json:"summary"`
 			Backend                 string `json:"backend"`
 			BackendProvider         string `json:"backend_provider"`
+			AuthMode                string `json:"auth_mode"`
 			DefaultURL              string `json:"default_url"`
 			ServiceProtocolTemplate string `json:"service_protocol_template"`
 		} `json:"presets"`
@@ -818,8 +820,10 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 
 	var codexPreset *struct {
 		ID                      string `json:"id"`
+		Summary                 string `json:"summary"`
 		Backend                 string `json:"backend"`
 		BackendProvider         string `json:"backend_provider"`
+		AuthMode                string `json:"auth_mode"`
 		DefaultURL              string `json:"default_url"`
 		ServiceProtocolTemplate string `json:"service_protocol_template"`
 	}
@@ -838,11 +842,49 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	if codexPreset.BackendProvider != "codex" {
 		t.Fatalf("cliproxy-codex backend_provider = %q, want codex", codexPreset.BackendProvider)
 	}
+	if !strings.Contains(codexPreset.Summary, "Local or embedded cliproxy /v1 endpoint") {
+		t.Fatalf("cliproxy-codex summary = %q, want endpoint wording", codexPreset.Summary)
+	}
+	if codexPreset.AuthMode != "none" {
+		t.Fatalf("cliproxy-codex auth_mode = %q, want none", codexPreset.AuthMode)
+	}
 	if codexPreset.DefaultURL != "http://127.0.0.1:19001/v1" {
 		t.Fatalf("cliproxy-codex default_url = %q, want existing cliproxy endpoint", codexPreset.DefaultURL)
 	}
 	if codexPreset.ServiceProtocolTemplate != "chat_only" {
 		t.Fatalf("cliproxy-codex service_protocol_template = %q, want chat_only", codexPreset.ServiceProtocolTemplate)
+	}
+	wantCLIProxyPresets := map[string]string{
+		"cliproxy-codex":  "codex",
+		"cliproxy-claude": "claude",
+		"cliproxy-gemini": "gemini",
+	}
+	for id, backendProvider := range wantCLIProxyPresets {
+		var found bool
+		for _, preset := range payload.Presets {
+			if preset.ID != id {
+				continue
+			}
+			found = true
+			if preset.Backend != config.ProviderBackendCLIProxy {
+				t.Fatalf("%s backend = %q, want cliproxy", id, preset.Backend)
+			}
+			if preset.BackendProvider != backendProvider {
+				t.Fatalf("%s backend_provider = %q, want %q", id, preset.BackendProvider, backendProvider)
+			}
+			if preset.AuthMode != "none" {
+				t.Fatalf("%s auth_mode = %q, want none", id, preset.AuthMode)
+			}
+			if preset.DefaultURL != "http://127.0.0.1:19001/v1" {
+				t.Fatalf("%s default_url = %q, want existing cliproxy endpoint", id, preset.DefaultURL)
+			}
+			if preset.ServiceProtocolTemplate != "chat_only" {
+				t.Fatalf("%s service_protocol_template = %q, want chat_only", id, preset.ServiceProtocolTemplate)
+			}
+		}
+		if !found {
+			t.Fatalf("%s preset not found", id)
+		}
 	}
 
 	foundAnthropicBridge := false
@@ -864,8 +906,10 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 
 	var openAICompatiblePreset *struct {
 		ID                      string `json:"id"`
+		Summary                 string `json:"summary"`
 		Backend                 string `json:"backend"`
 		BackendProvider         string `json:"backend_provider"`
+		AuthMode                string `json:"auth_mode"`
 		DefaultURL              string `json:"default_url"`
 		ServiceProtocolTemplate string `json:"service_protocol_template"`
 	}
@@ -877,6 +921,11 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	}
 	if openAICompatiblePreset == nil {
 		t.Fatal("openai-compatible preset not found")
+	}
+	for _, preset := range payload.Presets {
+		if preset.ID == "qwen-cli" {
+			t.Fatal("qwen-cli preset should not be exposed")
+		}
 	}
 	if openAICompatiblePreset.DefaultURL != "" {
 		t.Fatalf("openai-compatible default_url = %q, want empty for user-supplied endpoint", openAICompatiblePreset.DefaultURL)

@@ -30,13 +30,13 @@
 ## Route-Centric Runtime
 
 - `route.exact_models` and `route.wildcard_models` define the public model surface explicitly.
-- `route.protocol` locks each route to exactly one configured protocol.
+- `route.protocol` locks each route to one primary protocol; optional `route.service_protocols` can expose additional service endpoints on the same route, and every explicit service protocol must be backed by at least one route upstream/provider.
 - Exact model entries use ordered `upstreams`, while wildcard model entries use ordered `providers`.
 - Retryable failures only fail over within the matched route-model candidate list, so HA can be configured for a single public model without affecting unrelated models on the same route.
 - Exact model entries rewrite the request model to the configured upstream model automatically when names differ.
 - Wildcard model entries preserve the request model name and only choose which provider serves it.
 - Route hooks are carried through request context, and tool execution only reads hooks from the matched route.
-- The gateway derives endpoint exposure from `route.protocol` plus the route's compiled upstream capabilities; it does not depend on provider-card display protocols.
+- The gateway derives endpoint exposure from `route.service_protocols` when configured, otherwise from `route.protocol` plus the route's compiled upstream capabilities; explicit service protocols are validated instead of silently pruned, and exposure does not depend on provider-card display protocols.
 - `chat` routes expose `/chat/completions`, and expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
 - `responses_stateless` routes expose stateless `/responses`, and expose `/embeddings` only when the route has at least one embeddings-capable upstream/provider.
 - `responses_stateless` routes reject `previous_response_id`.
@@ -52,7 +52,7 @@
 - The Responses stream bridge emits a richer event sequence (`response.created`, `response.in_progress`, `response.output_text.done`, `response.function_call_arguments.done`, `response.output_item.done`) and attaches stable `output_index` / `item_id` metadata so stricter SDK state machines can track items incrementally.
 - Streaming provider accounting distinguishes `pre_stream` from `in_stream`: pre-stream failures may retry/fail over, in-stream upstream truncation only marks the current provider unhealthy, and downstream disconnects do not suppress the provider.
 - Non-inference subpaths that fall through to transparent proxying keep raw passthrough behavior; route protocol checks only gate recognized inference endpoints.
-- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_* + embeddings` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `qwen/copilot => chat`.
+- Provider family compatibility is derived centrally from provider config: `openai => chat + responses_* + embeddings` plus optional `anthropic` when `anthropic_to_chat` is enabled, `anthropic => chat + anthropic`, `copilot => chat`.
 - OpenAI-compatible third-party upstreams such as Ollama are configured as `openai` providers and must narrow capabilities explicitly with `service_protocols` when they only support chat.
 - Provider model protocol probes follow the real request path: `anthropic_to_chat` providers probe Anthropic support by converting a Messages request into upstream Chat, instead of hard-rejecting non-native Anthropic providers.
 

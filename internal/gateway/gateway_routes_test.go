@@ -332,6 +332,82 @@ func TestGatewayChatRouteExposesEmbeddingsEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayRouteExplicitServiceProtocolsExposeMultipleEndpoints(t *testing.T) {
+	t.Parallel()
+
+	seenPaths := map[string]bool{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			seenPaths[r.URL.Path] = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/chat/completions":
+			_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		case "/responses":
+			_, _ = w.Write([]byte(`{"id":"resp_123","object":"response","created_at":1,"model":"gpt-4o","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+		case "/embeddings":
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/multi": {
+				Protocol:         config.RouteProtocolChat,
+				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponsesStateless, config.ServiceProtocolEmbeddings},
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"},
+					),
+					"text-embedding-3-small": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-small"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	requests := []struct {
+		path string
+		body string
+	}{
+		{"/multi/chat/completions", `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`},
+		{"/multi/responses", `{"model":"gpt-4o","input":"hello"}`},
+		{"/multi/embeddings", `{"model":"text-embedding-3-small","input":"hello"}`},
+	}
+	for _, tc := range requests {
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d, body=%q", tc.path, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	for _, path := range []string{"/chat/completions", "/responses", "/embeddings"} {
+		if !seenPaths[path] {
+			t.Fatalf("upstream path %s was not called", path)
+		}
+	}
+}
+
 func TestGatewayMixedServiceProvidersSelectsProviderByEndpoint(t *testing.T) {
 	t.Parallel()
 
