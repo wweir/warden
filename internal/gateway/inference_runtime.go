@@ -6,7 +6,6 @@ import (
 
 	"github.com/wweir/warden/config"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
-	loggingpkg "github.com/wweir/warden/internal/gateway/logging"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	sel "github.com/wweir/warden/internal/selector"
@@ -96,7 +95,7 @@ func (s *inferenceSession) refreshCurrent() {
 }
 
 func (s *inferenceSession) logAttempt(model string) {
-	loggingpkg.LogRequest(s.request, s.provider.Name, model)
+	logRequest(s.request, s.provider.Name, model)
 }
 
 func (s *inferenceSession) logParams() observepkg.InferenceLogParams {

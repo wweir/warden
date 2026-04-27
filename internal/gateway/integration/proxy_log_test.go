@@ -1,4 +1,4 @@
-package gateway
+package integration
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wweir/warden/config"
+	gatewaypkg "github.com/wweir/warden/internal/gateway"
 )
 
 func TestGatewayProxyLogsDecompressedResponsesBody(t *testing.T) {
@@ -61,7 +62,7 @@ func TestGatewayProxyLogsDecompressedResponsesBody(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	gw := NewGateway(cfg, "", "")
+	gw := gatewaypkg.NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hello"}`))

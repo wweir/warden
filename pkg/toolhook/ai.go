@@ -50,21 +50,8 @@ func renderPrompt(promptTmpl string, hctx CallContext) (string, error) {
 		return "", fmt.Errorf("parse prompt template: %w", err)
 	}
 
-	// Args exposes individual fields from the Arguments JSON object
-	type data struct {
-		CallContext
-		Args map[string]any
-	}
-	d := data{CallContext: hctx}
-	if len(hctx.Arguments) > 0 {
-		var args map[string]any
-		if err := json.Unmarshal(hctx.Arguments, &args); err == nil {
-			d.Args = args
-		}
-	}
-
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, d); err != nil {
+	if err := tmpl.Execute(&buf, newHookTemplateData(hctx)); err != nil {
 		return "", fmt.Errorf("render prompt template: %w", err)
 	}
 	return buf.String(), nil

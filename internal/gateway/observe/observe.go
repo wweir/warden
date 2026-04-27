@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
-	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/reqlog"
+	fingerprintpkg "github.com/wweir/warden/internal/reqlog/fingerprint"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -81,7 +81,7 @@ func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 		UserAgent:    params.UserAgent,
 		DurationMs:   durationMs,
 		Error:        errMsg,
-		Fingerprint:  reqlog.BuildFingerprint(params.Request),
+		Fingerprint:  fingerprintpkg.BuildFingerprint(params.Request),
 		Request:      params.Request,
 		Response:     respBody,
 		Failovers:    params.Failovers,
@@ -106,7 +106,7 @@ func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 				if len(fallback) == 0 {
 					fallback = respBody
 				}
-				rec.Response = proxypkg.MarshalRawStreamForLog(fallback)
+				rec.Response = MarshalRawStreamForLog(fallback)
 			}
 		}
 
@@ -130,7 +130,7 @@ func PublishPendingInferenceLog(params InferenceLogParams, publish func(reqlog.R
 		Pending:     true,
 		Provider:    params.Provider,
 		UserAgent:   params.UserAgent,
-		Fingerprint: reqlog.BuildFingerprint(params.Request),
+		Fingerprint: fingerprintpkg.BuildFingerprint(params.Request),
 		Request:     params.Request,
 		Failovers:   params.Failovers,
 	})

@@ -1,4 +1,4 @@
-package gateway
+package telemetry_test
 
 import (
 	"math"

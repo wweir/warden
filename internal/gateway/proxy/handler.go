@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -14,14 +13,15 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
+	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	"github.com/wweir/warden/internal/providerauth"
 	"github.com/wweir/warden/internal/reqlog"
+	fingerprintpkg "github.com/wweir/warden/internal/reqlog/fingerprint"
 	sel "github.com/wweir/warden/internal/selector"
-	"github.com/wweir/warden/pkg/protocol/anthropic"
-	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 type Deps struct {
@@ -56,12 +56,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 	model := gjson.GetBytes(reqBody, "model").String()
 	stream := gjson.GetBytes(reqBody, "stream").Bool()
 	explicitProvider := r.Header.Get("X-Provider")
-	allowFailover := IsInferenceEndpoint(r.URL.Path)
+	allowFailover := inferencepkg.IsInferenceEndpoint(r.URL.Path)
 	authRetried := map[string]bool{}
-	serviceProtocol := ServiceProtocol(r.URL.Path, reqBody)
+	serviceProtocol := inferencepkg.ServiceProtocolFromRequest(r.URL.Path, reqBody)
 	endpoint := strings.TrimPrefix(r.URL.Path, "/")
 	if serviceProtocol != "" && !route.SupportsServiceProtocol(serviceProtocol) {
-		http.Error(w, UnsupportedRouteProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
+		http.Error(w, inferencepkg.UnsupportedRouteProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
 		return
 	}
 	if serviceProtocol == config.RouteProtocolResponsesStateful {
@@ -135,7 +135,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			return
 		}
 		proxyReq.Header = upstreampkg.BuildProxyRequestHeaders(r, allowFailover)
-		sel.SetAuthHeaders(r.Context(), proxyReq.Header, provCfg)
+		providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg)
 
 		upstreamStart := time.Now()
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
@@ -220,7 +220,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		durationMs := time.Since(startTime).Milliseconds()
 		logResp := []byte(errBody)
 		if inspectableBody {
-			logResp = AssembleResponse(serviceProtocol, provCfg.Protocol, decodedRespBody)
+			logResp = observepkg.AssembleResponse(serviceProtocol, provCfg.Protocol, decodedRespBody)
 		}
 
 		observation := tokenusagepkg.Missing(tokenusagepkg.SourceReportedJSON)
@@ -250,7 +250,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				Provider:    provCfg.Name,
 				UserAgent:   r.UserAgent(),
 				DurationMs:  durationMs,
-				Fingerprint: reqlog.BuildFingerprint(reqBody),
+				Fingerprint: fingerprintpkg.BuildFingerprint(reqBody),
 				Request:     reqBody,
 				Response:    logResp,
 				Failovers:   currentFailovers(),
@@ -304,100 +304,10 @@ func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceP
 	return nil
 }
 
-func IsInferenceEndpoint(path string) bool {
-	if strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/embeddings") {
-		return true
-	}
-	return path == "/messages" || strings.HasSuffix(path, "/messages")
-}
-
-func AssembleResponse(serviceProtocol, upstreamProtocol string, body []byte) []byte {
-	trimmed := strings.TrimSpace(string(body))
-	if !strings.HasPrefix(trimmed, "event:") && !strings.HasPrefix(trimmed, "data:") {
-		return body
-	}
-	if serviceProtocol == config.RouteProtocolAnthropic {
-		if assembled := anthropic.AssembleStream(body); assembled != nil {
-			return assembled
-		}
-		return MarshalRawStreamForLog(body)
-	}
-	if config.IsResponsesRouteProtocol(serviceProtocol) {
-		if assembled, err := openai.AssembleResponsesStream(body); err == nil {
-			return assembled
-		}
-		return MarshalRawStreamForLog(body)
-	}
-	clientBody := upstreampkg.ConvertStreamIfNeeded(upstreamProtocol, body)
-	if assembled, err := openai.AssembleChatStream(clientBody); err == nil {
-		return assembled
-	}
-	return MarshalRawStreamForLog(clientBody)
-}
-
-func ServiceProtocol(path string, reqBody []byte) string {
-	if strings.HasSuffix(path, "/messages") || path == "/messages" {
-		return config.RouteProtocolAnthropic
-	}
-	if strings.HasSuffix(path, "/chat/completions") {
-		return config.RouteProtocolChat
-	}
-	if strings.HasSuffix(path, "/responses") {
-		return ResponsesRequestProtocol(reqBody)
-	}
-	if strings.HasSuffix(path, "/embeddings") {
-		return config.ServiceProtocolEmbeddings
-	}
-	return ""
-}
-
-func UnsupportedRouteProtocolMessage(routeProtocol, serviceProtocol string) string {
-	switch serviceProtocol {
-	case config.RouteProtocolResponsesStateful:
-		return UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
-	case config.RouteProtocolResponsesStateless:
-		return UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
-	case config.RouteProtocolChat:
-		return "route protocol " + routeProtocol + " does not support chat requests"
-	case config.RouteProtocolAnthropic:
-		return "route protocol " + routeProtocol + " does not support anthropic messages requests"
-	case config.ServiceProtocolEmbeddings:
-		return "route protocol " + routeProtocol + " does not support embeddings requests"
-	default:
-		return "route does not support this request protocol"
-	}
-}
-
 func readBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
 	defer r.Body.Close()
 	return io.ReadAll(r.Body)
-}
-
-func MarshalRawStreamForLog(body []byte) []byte {
-	data, err := json.Marshal(strings.TrimSpace(string(body)))
-	if err != nil {
-		return json.RawMessage(`""`)
-	}
-	return data
-}
-
-func ResponsesRequestProtocol(rawReqBody []byte) string {
-	if gjson.GetBytes(rawReqBody, "previous_response_id").String() != "" {
-		return config.RouteProtocolResponsesStateful
-	}
-	return config.RouteProtocolResponsesStateless
-}
-
-func UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol string) string {
-	switch serviceProtocol {
-	case config.RouteProtocolResponsesStateful:
-		return fmt.Sprintf("route protocol %s does not support stateful responses requests", routeProtocol)
-	case config.RouteProtocolResponsesStateless:
-		return fmt.Sprintf("route protocol %s does not support stateless responses requests", routeProtocol)
-	default:
-		return fmt.Sprintf("route protocol %s does not support responses requests", routeProtocol)
-	}
 }

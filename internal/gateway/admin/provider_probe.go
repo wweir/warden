@@ -11,6 +11,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
+	"github.com/wweir/warden/internal/providerauth"
 	sel "github.com/wweir/warden/internal/selector"
 	anthproto "github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
@@ -109,7 +110,7 @@ func lightProbeEndpoint(ctx context.Context, provCfg *config.ProviderConfig, end
 	if err != nil {
 		return false, err
 	}
-	sel.SetAuthHeaders(ctx, req.Header, provCfg)
+	providerauth.SetHeaders(ctx, req.Header, provCfg)
 	resp, err := provCfg.HTTPClient(providerProbeTimeout).Do(req)
 	if err != nil {
 		return false, err

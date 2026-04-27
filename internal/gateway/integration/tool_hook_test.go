@@ -1,4 +1,4 @@
-package gateway
+package integration
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	gatewaypkg "github.com/wweir/warden/internal/gateway"
 	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/toolhook"
 )
@@ -101,7 +102,7 @@ func newUpstreamFixedResponse(expectedPath, body string) *httptest.Server {
 
 // buildGatewayWithHooks creates a config+gateway for a single route/provider with hooks.
 // Hook configs using Webhook="audit" are auto-registered with the corresponding WebhookCfg.URL.
-func buildGatewayWithHooks(t *testing.T, routePrefix, routeProtocol, upstreamURL, provProtocol, modelName string, hooks []*config.HookRuleConfig) *Gateway {
+func buildGatewayWithHooks(t *testing.T, routePrefix, routeProtocol, upstreamURL, provProtocol, modelName string, hooks []*config.HookRuleConfig) *gatewaypkg.Gateway {
 	t.Helper()
 
 	// Collect webhook references from hook configs.
@@ -139,7 +140,7 @@ func buildGatewayWithHooks(t *testing.T, routePrefix, routeProtocol, upstreamURL
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate config: %v", err)
 	}
-	gw := NewGateway(cfg, "", "")
+	gw := gatewaypkg.NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 	return gw
 }
@@ -212,6 +213,70 @@ func TestToolHookBlockRemovesRejectedToolCall_Chat(t *testing.T) {
 	// Check log record has verdict
 	records := gw.Broadcaster().Recent()
 	record := mustSingleLogRecord(t, records)
+	assertHasRejectedVerdict(t, record.ToolVerdicts, "delete_file")
+}
+
+func TestToolHookBlockRunsForNonStreamFallback_Chat(t *testing.T) {
+	t.Parallel()
+
+	hookSrv := hookServer(false, "dangerous tool")
+	defer hookSrv.Close()
+
+	respBody := chatResponseWithToolCalls(
+		makeToolCall("call_safe", "read_file", `{"path":"/tmp/a"}`),
+		makeToolCall("call_bad", "delete_file", `{"path":"/"}`),
+	)
+	upstream := newUpstreamFixedResponse("/chat/completions", respBody)
+	defer upstream.Close()
+
+	gw := buildGatewayWithHooks(t, "/openai", config.RouteProtocolChat, upstream.URL, "openai", "gpt-4o",
+		[]*config.HookRuleConfig{
+			{Match: "delete_file", Hook: config.HookConfig{
+				Type:    "http",
+				When:    "block",
+				Webhook: "audit",
+				WebhookCfg: &config.WebhookConfig{
+					URL: hookSrv.URL,
+				},
+			}},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions",
+		strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Name string `json:"name"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("choices = %d, want 1", len(resp.Choices))
+	}
+	toolCalls := resp.Choices[0].Message.ToolCalls
+	if len(toolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1 (delete_file should be removed)", len(toolCalls))
+	}
+	if toolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("remaining tool call = %q, want read_file", toolCalls[0].Function.Name)
+	}
+
+	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())
 	assertHasRejectedVerdict(t, record.ToolVerdicts, "delete_file")
 }
 
@@ -943,7 +1008,7 @@ func assertHasRejectedVerdict(t *testing.T, verdicts []toolhook.HookVerdict, too
 	t.Fatalf("expected rejected verdict for tool %q in %+v", toolName, verdicts)
 }
 
-func waitForRejectedVerdict(t *testing.T, gw *Gateway, toolName, mode string) reqlog.Record {
+func waitForRejectedVerdict(t *testing.T, gw *gatewaypkg.Gateway, toolName, mode string) reqlog.Record {
 	t.Helper()
 
 	deadline := time.Now().Add(2 * time.Second)

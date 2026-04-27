@@ -1,10 +1,9 @@
-package gateway
+package upstream
 
 import (
 	"encoding/json"
 	"testing"
 
-	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
@@ -16,7 +15,7 @@ func TestMarshalProtocolRequest_OpenAI(t *testing.T) {
 		},
 	}
 
-	body, err := upstreampkg.MarshalProtocolRequest("openai", req)
+	body, err := MarshalProtocolRequest("openai", req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +37,7 @@ func TestMarshalProtocolRequest_Anthropic(t *testing.T) {
 		},
 	}
 
-	body, err := upstreampkg.MarshalProtocolRequest("anthropic", req)
+	body, err := MarshalProtocolRequest("anthropic", req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,13 +54,13 @@ func TestMarshalProtocolRequest_Anthropic(t *testing.T) {
 }
 
 func TestProtocolEndpoint(t *testing.T) {
-	if got := upstreampkg.ProtocolEndpoint("anthropic", false); got != "/messages" {
+	if got := ProtocolEndpoint("anthropic", false); got != "/messages" {
 		t.Errorf("anthropic endpoint = %q, want /messages", got)
 	}
-	if got := upstreampkg.ProtocolEndpoint("openai", false); got != "/chat/completions" {
+	if got := ProtocolEndpoint("openai", false); got != "/chat/completions" {
 		t.Errorf("openai endpoint = %q, want /chat/completions", got)
 	}
-	if got := upstreampkg.ProtocolEndpoint("openai", true); got != "/responses" {
+	if got := ProtocolEndpoint("openai", true); got != "/responses" {
 		t.Errorf("openai responses endpoint = %q, want /responses", got)
 	}
 }

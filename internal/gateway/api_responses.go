@@ -13,7 +13,6 @@ import (
 	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
-	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/pkg/protocol/openai"
 	"github.com/wweir/warden/pkg/toolhook"
@@ -33,10 +32,10 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	}
 	r = bootstrap.request
 	req := bootstrap.req
-	serviceProtocol := proxypkg.ResponsesRequestProtocol(req.RawBody)
+	serviceProtocol := inferencepkg.ResponsesRequestProtocol(req.RawBody)
 	stateful := serviceProtocol == config.RouteProtocolResponsesStateful
 	if !route.SupportsServiceProtocol(serviceProtocol) {
-		http.Error(w, proxypkg.UnsupportedResponsesProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
+		http.Error(w, inferencepkg.UnsupportedResponsesProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
 		return
 	}
 
@@ -102,6 +101,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					return assembled, respBody, err
 				}
 			},
+			streamRelay: bridgepkg.RelayRawStream,
 		}) {
 			return
 		}

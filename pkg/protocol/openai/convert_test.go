@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -187,7 +188,7 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ResponsesRequestToChatRequest() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.errSubstr != "" && (err == nil || !contains(err.Error(), tt.errSubstr)) {
+			if tt.errSubstr != "" && (err == nil || !strings.Contains(err.Error(), tt.errSubstr)) {
 				t.Fatalf("ResponsesRequestToChatRequest() error = %v, want substring %q", err, tt.errSubstr)
 			}
 			if tt.checkFunc != nil {
@@ -239,7 +240,7 @@ func TestChatResponseToResponsesResponse(t *testing.T) {
 	if len(resp.Output) != 2 {
 		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
 	}
-	if got := string(resp.Output[0]); !contains(got, `"type":"output_text"`) || !contains(got, `"text":"Let me check."`) {
+	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"output_text"`) || !strings.Contains(got, `"text":"Let me check."`) {
 		t.Fatalf("unexpected output message item: %s", got)
 	}
 	if string(resp.Extra["model"]) != `"gpt-4o"` {
@@ -309,52 +310,52 @@ data: [DONE]
 
 	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
 	outputStr := string(output)
-	if !contains(outputStr, "event: response.output_text.delta") {
+	if !strings.Contains(outputStr, "event: response.output_text.delta") {
 		t.Fatal("expected response.output_text.delta event")
 	}
-	if !contains(outputStr, "event: response.output_item.added") {
+	if !strings.Contains(outputStr, "event: response.output_item.added") {
 		t.Fatal("expected response.output_item.added event")
 	}
-	if !contains(outputStr, "event: response.function_call_arguments.delta") {
+	if !strings.Contains(outputStr, "event: response.function_call_arguments.delta") {
 		t.Fatal("expected response.function_call_arguments.delta event")
 	}
-	if !contains(outputStr, "event: response.completed") {
+	if !strings.Contains(outputStr, "event: response.completed") {
 		t.Fatal("expected response.completed event")
 	}
-	if !contains(outputStr, "event: response.created") {
+	if !strings.Contains(outputStr, "event: response.created") {
 		t.Fatal("expected response.created event")
 	}
-	if !contains(outputStr, "event: response.in_progress") {
+	if !strings.Contains(outputStr, "event: response.in_progress") {
 		t.Fatal("expected response.in_progress event")
 	}
-	if !contains(outputStr, "event: response.output_text.done") {
+	if !strings.Contains(outputStr, "event: response.output_text.done") {
 		t.Fatal("expected response.output_text.done event")
 	}
-	if !contains(outputStr, "event: response.function_call_arguments.done") {
+	if !strings.Contains(outputStr, "event: response.function_call_arguments.done") {
 		t.Fatal("expected response.function_call_arguments.done event")
 	}
-	if !contains(outputStr, "event: response.output_item.done") {
+	if !strings.Contains(outputStr, "event: response.output_item.done") {
 		t.Fatal("expected response.output_item.done event")
 	}
-	if !contains(outputStr, `"output_index":0`) {
+	if !strings.Contains(outputStr, `"output_index":0`) {
 		t.Fatal("expected output_index metadata")
 	}
-	if !contains(outputStr, `"item_id":"chatcmpl_1_msg_0"`) {
+	if !strings.Contains(outputStr, `"item_id":"chatcmpl_1_msg_0"`) {
 		t.Fatal("expected message item_id metadata")
 	}
-	if !contains(outputStr, `"name":"lookup"`) {
+	if !strings.Contains(outputStr, `"name":"lookup"`) {
 		t.Fatal("expected function name in output")
 	}
-	if !contains(outputStr, `"text":"Hello"`) {
+	if !strings.Contains(outputStr, `"text":"Hello"`) {
 		t.Fatal("expected final text snapshot in done events")
 	}
-	if !contains(outputStr, `"arguments":"{\"city\":\"Paris\"}"`) {
+	if !strings.Contains(outputStr, `"arguments":"{\"city\":\"Paris\"}"`) {
 		t.Fatal("expected final function arguments snapshot in done events")
 	}
-	if !contains(outputStr, `"status":"completed"`) {
+	if !strings.Contains(outputStr, `"status":"completed"`) {
 		t.Fatal("expected status:completed for complete stream")
 	}
-	if !contains(outputStr, `"type":"output_text"`) {
+	if !strings.Contains(outputStr, `"type":"output_text"`) {
 		t.Fatal("expected completed response to contain canonical output_text block")
 	}
 }
@@ -367,13 +368,13 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choi
 
 	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
 	outputStr := string(output)
-	if !contains(outputStr, "event: response.completed") {
+	if !strings.Contains(outputStr, "event: response.completed") {
 		t.Fatal("expected response.completed event")
 	}
-	if !contains(outputStr, `"status":"incomplete"`) {
+	if !strings.Contains(outputStr, `"status":"incomplete"`) {
 		t.Fatal("expected status:incomplete for incomplete stream")
 	}
-	if !contains(outputStr, "stream disconnected before completion") {
+	if !strings.Contains(outputStr, "stream disconnected before completion") {
 		t.Fatal("expected stream disconnected error message")
 	}
 }
@@ -390,10 +391,10 @@ data: [DONE]
 
 	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
 	outputStr := string(output)
-	if !contains(outputStr, `"status":"incomplete"`) {
+	if !strings.Contains(outputStr, `"status":"incomplete"`) {
 		t.Fatal("expected status:incomplete for length finish_reason")
 	}
-	if !contains(outputStr, `"incomplete_details":{"reason":"max_output_tokens"}`) {
+	if !strings.Contains(outputStr, `"incomplete_details":{"reason":"max_output_tokens"}`) {
 		t.Fatal("expected max_output_tokens incomplete_details")
 	}
 }
@@ -412,7 +413,7 @@ func TestResponsesRequestToChatRequestRejectReasoningItem(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for reasoning item")
 	}
-	if !contains(err.Error(), `unsupported input item type "reasoning"`) {
+	if !strings.Contains(err.Error(), `unsupported input item type "reasoning"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -430,20 +431,7 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown input item")
 	}
-	if !contains(err.Error(), `unsupported input item type "unknown_type"`) {
+	if !strings.Contains(err.Error(), `unsupported input item type "unknown_type"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

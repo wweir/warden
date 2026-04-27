@@ -10,8 +10,6 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
 	httpmwpkg "github.com/wweir/warden/internal/gateway/httpmw"
-	loggingpkg "github.com/wweir/warden/internal/gateway/logging"
-	snapshotpkg "github.com/wweir/warden/internal/gateway/snapshot"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
@@ -47,9 +45,9 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 
 	go g.selector.RefreshModels(ctx, cfg)
 	g.dashboardStore.Start(ctx, func() telemetrypkg.DashboardCounterSample {
-		return snapshotpkg.CollectDashboardCounters()
+		return telemetrypkg.CollectDashboardCounters()
 	})
-	g.logger = loggingpkg.NewLogger(cfg.Log)
+	g.logger = newLogger(cfg.Log)
 	g.handler = g.buildHTTPHandler()
 	return g
 }

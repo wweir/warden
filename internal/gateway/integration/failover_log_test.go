@@ -1,4 +1,4 @@
-package gateway
+package integration
 
 import (
 	"io"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wweir/warden/config"
+	gatewaypkg "github.com/wweir/warden/internal/gateway"
 	"github.com/wweir/warden/internal/reqlog"
 )
 
@@ -151,7 +152,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 				t.Fatalf("validate config: %v", err)
 			}
 
-			gw := NewGateway(cfg, "", "")
+			gw := gatewaypkg.NewGateway(cfg, "", "")
 			t.Cleanup(gw.Close)
 
 			req := httptest.NewRequest(http.MethodPost, tt.requestPath, strings.NewReader(tt.requestBody))
@@ -252,7 +253,7 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	gw := NewGateway(cfg, "", "")
+	gw := gatewaypkg.NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/responses", strings.NewReader(`{"model":"gpt-4o","input":"hello","previous_response_id":"resp_prev"}`))

@@ -64,6 +64,22 @@ type GatewayTarget struct {
 	InternalAuthToken string
 }
 
+type hookTemplateData struct {
+	CallContext
+	Args map[string]any
+}
+
+func newHookTemplateData(hctx CallContext) hookTemplateData {
+	d := hookTemplateData{CallContext: hctx}
+	if len(hctx.Arguments) > 0 {
+		var args map[string]any
+		if err := json.Unmarshal(hctx.Arguments, &args); err == nil {
+			d.Args = args
+		}
+	}
+	return d
+}
+
 // MatchHooks returns all HookConfig entries whose Match pattern matches toolFullName.
 func MatchHooks(toolFullName string, rules []*config.HookRuleConfig) []config.HookConfig {
 	var hooks []config.HookConfig

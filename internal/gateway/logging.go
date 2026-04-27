@@ -1,4 +1,4 @@
-package logging
+package gateway
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ func (m *multiLogger) Close() error {
 	return first
 }
 
-func NewLogger(cfg *config.LogConfig) reqlog.Logger {
+func newLogger(cfg *config.LogConfig) reqlog.Logger {
 	if cfg == nil || len(cfg.Targets) == 0 {
 		return nil
 	}
@@ -83,7 +83,7 @@ func buildTarget(i int, t *config.LogTarget) (reqlog.Logger, error) {
 	}
 }
 
-func LogRequest(r *http.Request, provider, model string) {
+func logRequest(r *http.Request, provider, model string) {
 	slog.Info("Request received", "method", r.Method, "path", r.URL.Path,
 		"provider", provider, "model", model)
 }

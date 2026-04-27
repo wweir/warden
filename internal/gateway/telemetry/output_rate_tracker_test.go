@@ -1,11 +1,10 @@
-package gateway
+package telemetry_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/wweir/warden/config"
-	snapshotpkg "github.com/wweir/warden/internal/gateway/snapshot"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
 
@@ -28,7 +27,7 @@ func TestOutputRateTrackerSnapshotDropsStaleEntries(t *testing.T) {
 }
 
 func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
-	base := snapshotpkg.CollectDashboardCounters()
+	base := telemetrypkg.CollectDashboardCounters()
 	route := "/snapshot-output-test"
 	provider := "snapshot-provider"
 
@@ -37,7 +36,7 @@ func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
 	telemetrypkg.RouteTokenCounter.WithLabelValues(route, config.RouteProtocolChat, "gpt-4o", "", "cache").Add(5)
 	telemetrypkg.ProviderTokenCounter.WithLabelValues(provider, "gpt-4o", route, "gpt-4o", "", "completion").Add(8)
 
-	sample := snapshotpkg.CollectDashboardCounters()
+	sample := telemetrypkg.CollectDashboardCounters()
 	assertApprox(t, sample.PromptTokens-base.PromptTokens, 12)
 	assertApprox(t, sample.CompletionTokens-base.CompletionTokens, 8)
 	assertApprox(t, sample.CacheTokens-base.CacheTokens, 5)
@@ -47,7 +46,7 @@ func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
 }
 
 func TestCollectDashboardCountersExcludesCacheTokensFromUsageRate(t *testing.T) {
-	base := snapshotpkg.CollectDashboardCounters()
+	base := telemetrypkg.CollectDashboardCounters()
 
 	telemetrypkg.RouteTokenCounter.WithLabelValues(
 		"/snapshot-cache-test",
@@ -71,7 +70,7 @@ func TestCollectDashboardCountersExcludesCacheTokensFromUsageRate(t *testing.T) 
 		"cache",
 	).Add(5)
 
-	sample := snapshotpkg.CollectDashboardCounters()
+	sample := telemetrypkg.CollectDashboardCounters()
 	if got := sample.Tokens - base.Tokens; got != 18 {
 		t.Fatalf("token delta = %.0f, want 18", got)
 	}

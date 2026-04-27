@@ -1,4 +1,4 @@
-package gateway
+package integration
 
 import (
 	"io"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/wweir/warden/config"
+	gatewaypkg "github.com/wweir/warden/internal/gateway"
 	adminpkg "github.com/wweir/warden/internal/gateway/admin"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
@@ -67,7 +68,7 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	gw := NewGateway(cfg, "", "")
+	gw := gatewaypkg.NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
 	beforeRequests := testutil.ToFloat64(telemetrypkg.APIKeyRequestCounter.WithLabelValues(clientKeyName, "/openai", config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success"))
@@ -161,7 +162,7 @@ func TestGatewayConfiguredAPIKeyRejectsUnauthorizedRequest(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	gw := NewGateway(cfg, "", "")
+	gw := gatewaypkg.NewGateway(cfg, "", "")
 	t.Cleanup(gw.Close)
 
 	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))

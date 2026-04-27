@@ -1,16 +1,15 @@
-package snapshot
+package telemetry
 
 import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/wweir/warden/config"
-	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	sel "github.com/wweir/warden/internal/selector"
 )
 
-func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg.OutputRateTracker, dashboardStore *telemetrypkg.DashboardMetricsStore) map[string]any {
-	telemetrypkg.UpdateProviderMetrics(statuses)
+func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTracker, dashboardStore *DashboardMetricsStore) map[string]any {
+	UpdateProviderMetrics(statuses)
 	now := time.Now()
 
 	type requestStat struct {
@@ -27,7 +26,7 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 	collectRequestStats := func(collector *prometheus.CounterVec) []requestStat {
 		var rows []requestStat
-		for _, met := range telemetrypkg.CollectMetrics(collector) {
+		for _, met := range CollectMetrics(collector) {
 			row := requestStat{Value: int(met.GetCounter().GetValue())}
 			for _, l := range met.GetLabel() {
 				switch l.GetName() {
@@ -70,7 +69,7 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 	collectDurationStats := func(collector *prometheus.HistogramVec) []durationBucket {
 		var rows []durationBucket
-		for _, met := range telemetrypkg.CollectMetrics(collector) {
+		for _, met := range CollectMetrics(collector) {
 			for _, b := range met.GetHistogram().GetBucket() {
 				if b.GetUpperBound() == float64(1<<63-1) {
 					continue
@@ -115,7 +114,7 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 	collectTokenStats := func(collector *prometheus.CounterVec) []tokenStat {
 		var rows []tokenStat
-		for _, met := range telemetrypkg.CollectMetrics(collector) {
+		for _, met := range CollectMetrics(collector) {
 			row := tokenStat{Value: met.GetCounter().GetValue()}
 			for _, l := range met.GetLabel() {
 				switch l.GetName() {
@@ -157,7 +156,7 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 	collectTokenObservationStats := func(collector *prometheus.CounterVec) []tokenObservationStat {
 		var rows []tokenObservationStat
-		for _, met := range telemetrypkg.CollectMetrics(collector) {
+		for _, met := range CollectMetrics(collector) {
 			row := tokenObservationStat{Value: met.GetCounter().GetValue()}
 			for _, l := range met.GetLabel() {
 				switch l.GetName() {
@@ -270,9 +269,9 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 	collectQuantiles := func(collector *prometheus.HistogramVec, q float64) []quantileStat {
 		var rows []quantileStat
-		for _, met := range telemetrypkg.CollectMetrics(collector) {
+		for _, met := range CollectMetrics(collector) {
 			row := quantileStat{
-				Value: telemetrypkg.HistogramQuantile(q, met.GetHistogram().GetBucket()),
+				Value: HistogramQuantile(q, met.GetHistogram().GetBucket()),
 				Count: met.GetHistogram().GetSampleCount(),
 			}
 			for _, l := range met.GetLabel() {
@@ -300,20 +299,20 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 		return rows
 	}
 
-	providerRequests := collectRequestStats(telemetrypkg.ProviderRequestCounter)
-	routeRequests := collectRequestStats(telemetrypkg.RouteRequestCounter)
-	providerDurations := collectDurationStats(telemetrypkg.ProviderRequestDuration)
-	routeDurations := collectDurationStats(telemetrypkg.RouteRequestDuration)
-	providerTokens := collectTokenStats(telemetrypkg.ProviderTokenCounter)
-	routeTokens := collectTokenStats(telemetrypkg.RouteTokenCounter)
-	providerTokenObservations := collectTokenObservationStats(telemetrypkg.ProviderTokenObservationCounter)
-	routeTokenObservations := collectTokenObservationStats(telemetrypkg.RouteTokenObservationCounter)
-	providerTTFT := collectQuantiles(telemetrypkg.ProviderStreamTTFT, 0.95)
-	routeTTFT := collectQuantiles(telemetrypkg.RouteStreamTTFT, 0.95)
-	providerThroughput := collectQuantiles(telemetrypkg.ProviderCompletionThroughput, 0.99)
-	routeThroughput := collectQuantiles(telemetrypkg.RouteCompletionThroughput, 0.99)
+	providerRequests := collectRequestStats(ProviderRequestCounter)
+	routeRequests := collectRequestStats(RouteRequestCounter)
+	providerDurations := collectDurationStats(ProviderRequestDuration)
+	routeDurations := collectDurationStats(RouteRequestDuration)
+	providerTokens := collectTokenStats(ProviderTokenCounter)
+	routeTokens := collectTokenStats(RouteTokenCounter)
+	providerTokenObservations := collectTokenObservationStats(ProviderTokenObservationCounter)
+	routeTokenObservations := collectTokenObservationStats(RouteTokenObservationCounter)
+	providerTTFT := collectQuantiles(ProviderStreamTTFT, 0.95)
+	routeTTFT := collectQuantiles(RouteStreamTTFT, 0.95)
+	providerThroughput := collectQuantiles(ProviderCompletionThroughput, 0.99)
+	routeThroughput := collectQuantiles(RouteCompletionThroughput, 0.99)
 
-	realtime := telemetrypkg.DashboardRealtimeSnapshot{}
+	realtime := DashboardRealtimeSnapshot{}
 	if dashboardStore != nil {
 		realtime = dashboardStore.Snapshot()
 	}
@@ -344,8 +343,8 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *telemetrypkg
 	}
 }
 
-func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
-	sample := telemetrypkg.DashboardCounterSample{
+func CollectDashboardCounters() DashboardCounterSample {
+	sample := DashboardCounterSample{
 		Timestamp:        time.Now(),
 		CompletionByProv: make(map[string]float64),
 		RouteReqs:        make(map[string]float64),
@@ -353,7 +352,7 @@ func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
 		RouteCompletions: make(map[string]float64),
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteRequestCounter) {
+	for _, met := range CollectMetrics(RouteRequestCounter) {
 		value := met.GetCounter().GetValue()
 		sample.Requests += value
 		route := ""
@@ -376,7 +375,7 @@ func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
 		}
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteTokenCounter) {
+	for _, met := range CollectMetrics(RouteTokenCounter) {
 		route := ""
 		tokenType := ""
 		for _, label := range met.GetLabel() {
@@ -406,7 +405,7 @@ func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
 		}
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.ProviderTokenCounter) {
+	for _, met := range CollectMetrics(ProviderTokenCounter) {
 		provider := ""
 		tokenType := ""
 		for _, label := range met.GetLabel() {
@@ -425,11 +424,11 @@ func CollectDashboardCounters() telemetrypkg.DashboardCounterSample {
 		sample.CompletionByProv[provider] += met.GetCounter().GetValue()
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteFailovers) {
+	for _, met := range CollectMetrics(RouteFailovers) {
 		sample.Failovers += met.GetCounter().GetValue()
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.RouteStreamErrors) {
+	for _, met := range CollectMetrics(RouteStreamErrors) {
 		sample.StreamErrors += met.GetCounter().GetValue()
 	}
 
@@ -450,7 +449,7 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 	}
 
 	usageByKey := map[string]*usageStats{}
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyRequestCounter) {
+	for _, met := range CollectMetrics(APIKeyRequestCounter) {
 		var key string
 		var route string
 		var status string
@@ -483,7 +482,7 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 		}
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyTokenCounter) {
+	for _, met := range CollectMetrics(APIKeyTokenCounter) {
 		var key string
 		var route string
 		var typ string
@@ -517,7 +516,7 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 		}
 	}
 
-	for _, met := range telemetrypkg.CollectMetrics(telemetrypkg.APIKeyTokenObservationCounter) {
+	for _, met := range CollectMetrics(APIKeyTokenObservationCounter) {
 		var key string
 		var route string
 		var completeness string

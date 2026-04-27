@@ -1,4 +1,4 @@
-package gateway
+package admin
 
 import (
 	"bufio"
@@ -9,15 +9,14 @@ import (
 	"testing"
 	"time"
 
-	adminpkg "github.com/wweir/warden/internal/gateway/admin"
 	"github.com/wweir/warden/internal/reqlog"
 )
 
 func TestHandleLogStreamDisablesProxyBufferingAndFlushesPrelude(t *testing.T) {
 	t.Parallel()
 
-	gw := &Gateway{broadcaster: reqlog.NewBroadcaster()}
-	handler := adminpkg.NewHandler(adminpkg.Deps{Broadcaster: gw.broadcaster})
+	broadcaster := reqlog.NewBroadcaster()
+	handler := NewHandler(Deps{Broadcaster: broadcaster})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handler.HandleLogStream(w, r, nil)
 	}))
@@ -57,7 +56,7 @@ func TestHandleLogStreamDisablesProxyBufferingAndFlushesPrelude(t *testing.T) {
 		t.Fatalf("prelude separator = %q, want blank line", blank)
 	}
 
-	gw.broadcaster.Publish(reqlog.Record{
+	broadcaster.Publish(reqlog.Record{
 		RequestID: "req_1",
 		Route:     "/chat",
 		Request:   json.RawMessage(`{"input":"hello"}`),

@@ -1,4 +1,4 @@
-package reqlog
+package fingerprint
 
 import (
 	"encoding/json"

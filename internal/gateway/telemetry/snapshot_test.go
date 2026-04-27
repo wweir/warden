@@ -1,4 +1,4 @@
-package snapshot
+package telemetry
 
 import (
 	"encoding/json"
@@ -6,17 +6,16 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
-	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 )
 
 func TestListAPIKeysPayloadIncludesCacheTokens(t *testing.T) {
 	route := "/snapshot-cache-test"
 	apiKey := "cache-client"
 
-	telemetrypkg.APIKeyRequestCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success").Add(2)
-	telemetrypkg.APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "prompt").Add(11)
-	telemetrypkg.APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "completion").Add(7)
-	telemetrypkg.APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "cache").Add(5)
+	APIKeyRequestCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "chat/completions", "success").Add(2)
+	APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "prompt").Add(11)
+	APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "completion").Add(7)
+	APIKeyTokenCounter.WithLabelValues(apiKey, route, config.RouteProtocolChat, "gpt-4o", "", "cache").Add(5)
 
 	payload := ListAPIKeysPayload(map[string]*config.RouteConfig{
 		route: {
@@ -63,8 +62,8 @@ func TestListAPIKeysPayloadIncludesCacheTokens(t *testing.T) {
 func TestCollectMetricsDataIncludesRealtimeOutputAndFreshness(t *testing.T) {
 	now := time.Now()
 	base := now.Add(-2 * time.Second)
-	store := telemetrypkg.NewDashboardMetricsStore(2*time.Second, 3)
-	store.Update(telemetrypkg.DashboardCounterSample{
+	store := NewDashboardMetricsStore(2*time.Second, 3)
+	store.Update(DashboardCounterSample{
 		Timestamp:        base,
 		Requests:         10,
 		Failures:         1,
@@ -77,7 +76,7 @@ func TestCollectMetricsDataIncludesRealtimeOutputAndFreshness(t *testing.T) {
 		RouteFails:       map[string]float64{"/snapshot-metrics-test": 1},
 		RouteCompletions: map[string]float64{"/snapshot-metrics-test": 60},
 	})
-	store.Update(telemetrypkg.DashboardCounterSample{
+	store.Update(DashboardCounterSample{
 		Timestamp:        now,
 		Requests:         12,
 		Failures:         1,
@@ -91,8 +90,8 @@ func TestCollectMetricsDataIncludesRealtimeOutputAndFreshness(t *testing.T) {
 		RouteCompletions: map[string]float64{"/snapshot-metrics-test": 78},
 	})
 
-	tracker := telemetrypkg.NewOutputRateTracker(8 * time.Second)
-	labels := telemetrypkg.Labels{
+	tracker := NewOutputRateTracker(8 * time.Second)
+	labels := Labels{
 		Route:         "/snapshot-metrics-test",
 		Protocol:      config.RouteProtocolChat,
 		Provider:      "provider-a",
@@ -108,9 +107,9 @@ func TestCollectMetricsDataIncludesRealtimeOutputAndFreshness(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload missing realtime: %#v", payload)
 	}
-	realtime, ok := realtimeRaw.(telemetrypkg.DashboardRealtimeSnapshot)
+	realtime, ok := realtimeRaw.(DashboardRealtimeSnapshot)
 	if !ok {
-		t.Fatalf("realtime type = %T, want telemetrypkg.DashboardRealtimeSnapshot", realtimeRaw)
+		t.Fatalf("realtime type = %T, want DashboardRealtimeSnapshot", realtimeRaw)
 	}
 	if len(realtime.Output) != 1 {
 		t.Fatalf("realtime output points = %d, want 1", len(realtime.Output))

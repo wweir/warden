@@ -10,9 +10,7 @@ import (
 
 	"github.com/wweir/warden/config"
 	adminpkg "github.com/wweir/warden/internal/gateway/admin"
-	loggingpkg "github.com/wweir/warden/internal/gateway/logging"
 	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
-	snapshotpkg "github.com/wweir/warden/internal/gateway/snapshot"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	"github.com/wweir/warden/internal/reqlog"
 	sel "github.com/wweir/warden/internal/selector"
@@ -64,10 +62,10 @@ func (g *Gateway) adminHandler() *adminpkg.Handler {
 		Broadcaster: g.broadcaster,
 		ReloadFn:    g.reloadFn,
 		CollectMetricsData: func() map[string]any {
-			return snapshotpkg.CollectMetricsData(g.selector.ProviderStatuses(), g.outputRates, g.dashboardStore)
+			return telemetrypkg.CollectMetricsData(g.selector.ProviderStatuses(), g.outputRates, g.dashboardStore)
 		},
 		ListAPIKeys: func() []map[string]any {
-			return snapshotpkg.ListAPIKeysPayload(g.cfg.Route)
+			return telemetrypkg.ListAPIKeysPayload(g.cfg.Route)
 		},
 	})
 	return g.admin
@@ -81,7 +79,7 @@ func (g *Gateway) proxyHandler() *proxypkg.Handler {
 		Cfg:                g.cfg,
 		Selector:           g.selector,
 		ApplyMetricHeaders: applyInferenceMetricHeaders,
-		LogRequest:         loggingpkg.LogRequest,
+		LogRequest:         logRequest,
 		RecordFailover:     g.RecordFailoverMetric,
 		RecordTTFT:         g.RecordTTFTMetric,
 		RecordTokenMetrics: g.RecordTokenMetrics,
