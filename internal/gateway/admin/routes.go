@@ -3,8 +3,11 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"path"
+	"slices"
 
 	"github.com/julienschmidt/httprouter"
+	"github.com/wweir/warden/config"
 	sel "github.com/wweir/warden/internal/selector"
 )
 
@@ -31,6 +34,7 @@ func (h *Handler) HandleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 	type routeModelDetail struct {
 		Name          string   `json:"name"`
 		Targets       []string `json:"targets,omitempty"`
+		MatchedModels []string `json:"matched_models,omitempty"`
 		PromptEnabled bool     `json:"prompt_enabled"`
 		SystemPrompt  string   `json:"system_prompt,omitempty"`
 		Wildcard      bool     `json:"wildcard"`
@@ -56,6 +60,7 @@ func (h *Handler) HandleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 	}
 
 	wildcardModels := make([]routeModelDetail, 0, len(route.CompiledWildcardModels()))
+	wildcardMatches := h.routeWildcardMatches(route)
 	for _, wildcard := range route.CompiledWildcardModels() {
 		row := routeModelDetail{
 			Name:          wildcard.Pattern,
@@ -64,6 +69,7 @@ func (h *Handler) HandleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 			Wildcard:      true,
 			Pattern:       wildcard.Pattern,
 			Targets:       make([]string, 0, len(wildcard.Upstreams)),
+			MatchedModels: wildcardMatches[wildcard.Pattern],
 		}
 		for _, upstream := range wildcard.Upstreams {
 			row.Targets = append(row.Targets, upstream.Provider)
@@ -82,4 +88,45 @@ func (h *Handler) HandleRouteDetail(w http.ResponseWriter, r *http.Request, _ ht
 		"wildcard_models":   wildcardModels,
 		"hook_count":        len(route.Hooks),
 	})
+}
+
+func (h *Handler) routeWildcardMatches(route *config.RouteConfig) map[string][]string {
+	out := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+
+	for _, raw := range h.selector.Models(route) {
+		id := routeModelID(raw)
+		if id == "" {
+			continue
+		}
+		matched := route.MatchModel(id)
+		if matched == nil || !matched.Wildcard || matched.Pattern == "" {
+			continue
+		}
+		ok, err := path.Match(matched.Pattern, id)
+		if err != nil || !ok {
+			continue
+		}
+		if seen[matched.Pattern] == nil {
+			seen[matched.Pattern] = make(map[string]bool)
+		}
+		if seen[matched.Pattern][id] {
+			continue
+		}
+		seen[matched.Pattern][id] = true
+		out[matched.Pattern] = append(out[matched.Pattern], id)
+	}
+
+	for pattern := range out {
+		slices.Sort(out[pattern])
+	}
+	return out
+}
+
+func routeModelID(raw json.RawMessage) string {
+	var entry struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &entry)
+	return entry.ID
 }

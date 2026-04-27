@@ -18,7 +18,7 @@
 
 1. Provider Type
    - 新建时先选 provider 类型，而不是先填底层字段
-   - 典型类型包括 OpenAI 官方、Anthropic 官方、OpenAI-compatible、自定义 Ollama/本地兼容端点、CLIProxy Codex/Gemini/Claude、Copilot
+   - 典型类型包括 OpenAI-compatible、Anthropic-compatible、自定义 Ollama/本地兼容端点、CLIProxy Codex/Gemini/Claude、Copilot
 
 2. Derived Base Config
    - provider 类型会派生底层默认值，例如 `family`、`backend`、`backend_provider`、默认 `url`、默认 `config_dir`

@@ -1165,7 +1165,6 @@ function inferPresetID(provider) {
     return match?.id || "";
   }
   if (family === "openai" && backend === "") {
-    if (url === "https://api.openai.com/v1") return "openai-official";
     if (url === "http://127.0.0.1:11434/v1") return "ollama-chat";
     return "openai-compatible";
   }

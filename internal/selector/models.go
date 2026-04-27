@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
-	"github.com/wweir/warden/pkg/protocol/anthropic"
+	"github.com/wweir/warden/internal/providerauth"
 )
 
 const modelsEndpointPath = "/models"
@@ -232,23 +232,6 @@ func mustMarshal(v any) json.RawMessage {
 	return b
 }
 
-// SetAuthHeaders injects authentication headers based on protocol type.
-func SetAuthHeaders(ctx context.Context, h http.Header, provCfg *config.ProviderConfig) {
-	h.Set("Content-Type", "application/json")
-	apiKey := provCfg.GetAPIKey(ctx)
-	if apiKey != "" {
-		switch provCfg.Protocol {
-		case "anthropic":
-			anthropic.SetAuthHeaders(h, apiKey)
-		default:
-			h.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-	for k, v := range provCfg.Headers {
-		h.Set(k, v)
-	}
-}
-
 type modelsResponse struct {
 	Data    []json.RawMessage `json:"data"`
 	HasMore bool              `json:"has_more"`
@@ -276,7 +259,7 @@ func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("create models request: %w", err)
 		}
-		SetAuthHeaders(ctx, req.Header, provCfg)
+		providerauth.SetHeaders(ctx, req.Header, provCfg)
 
 		resp, err := client.Do(req)
 		if err != nil {

@@ -450,6 +450,8 @@ export default {
 		modelNameHint: "Exact model names must not contain *. You can pick a provider model first, then decide the public model name.",
 		modelCol: "Model",
 		patternCol: "Pattern",
+		detectedModelsCol: "Detected Models",
+		noDetectedModels: "No detected models yet",
 		patternHint: "Wildcard patterns must contain *, for example gpt-*.",
 		upstreamsCol: "Upstreams",
 		upstreamsHint: "Tried in order. Earlier entries have higher priority, and you can rewrite a public model name to a different upstream model here.",

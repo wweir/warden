@@ -31,8 +31,8 @@
 - `Routes` 页面中的模型编辑卡片使用左右分栏：左侧维护公开模型信息，右侧维护 upstream/provider 优先级，减少模型较多时的纵向长度
 - `Routes` 页面中的 exact model 卡片把 prompt 开关收敛到公开模型名旁边，并在开启时再展开提示词输入框；upstream 行里给上游模型输入保留更大的横向空间
 - `Routes` 页面中的 exact upstream 行默认采用单行紧凑布局：优先级、provider、上游模型和操作并排显示，只在窄屏下折行
-- `Routes` 详情页采用“顶部概览 + 左侧主列 + 右侧摘要轨”的高密度布局：顶部显示聚合运行态，左侧先给 exact model 摘要再进入编辑器，右侧承接 provider 运行卡片
-- `Routes` 详情页上半区的 exact / wildcard 摘要表镜像当前可编辑配置；exact model 明细行提供“编辑 / 删除”动作，便于对已配置模型继续维护
+- `Routes` 详情页采用“顶部概览 + 左侧主列 + 右侧摘要轨”的高密度布局：顶部显示聚合运行态，左侧主列先单列依次展示 exact / wildcard model 摘要再进入编辑器，右侧承接 provider 运行卡片
+- `Routes` 详情页上半区的 exact / wildcard 摘要表镜像当前可编辑配置，两个摘要区一排一个避免横向拥挤；exact model 明细行提供“编辑 / 删除”动作，wildcard model 明细行展示已发现或已观测的具体模型名，并用固定高度 chip 区域避免长模型列表撑高页面
 - `Routes` 页面的 provider 运行态不再保留底部独立大表，而是拆入顶部概览和右侧摘要轨，减少监控数据来回对照
 - `Routes` 详情页中的明细表在窄屏下通过横向滚动容器保持可读；自定义模型输入和 provider tag 输入都支持键盘导航与基础 ARIA 语义
 - route model 的额外 system prompt 采用渐进披露：默认关闭，只有显式启用后才展示输入框；前端保存 `prompt_enabled`，后端也只在开关开启时注入该 prompt

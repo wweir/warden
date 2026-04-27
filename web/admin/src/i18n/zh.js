@@ -433,6 +433,8 @@ export default {
 		modelNameHint: "精确模型名不能包含 *。可以先选择 provider 的模型，再决定公开模型名称。",
 		modelCol: "模型",
 		patternCol: "模式",
+		detectedModelsCol: "已检测模型",
+		noDetectedModels: "暂无已检测模型",
 		patternHint: "通配符模式必须包含 *，例如 gpt-*。",
 		upstreamsCol: "上游",
 		upstreamsHint: "按顺序尝试上游；越靠前优先级越高，也可以把公开模型名重写成不同的上游模型名。",

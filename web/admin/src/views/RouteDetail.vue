@@ -56,48 +56,98 @@
 
     <div class="route-workbench">
       <div class="workbench-main">
-        <section v-if="configuredExactModels.length > 0" class="detail-panel panel exact-summary-panel">
-          <div class="detail-panel-head">
-            <div>
-              <h3>{{ $t('routeDetail.exactModels') }}</h3>
-              <p class="section-desc">{{ $t('routeDetail.exactModelsEditorDesc') }}</p>
+        <section
+          v-if="configuredExactModels.length > 0 || configuredWildcardModels.length > 0"
+          class="model-summary-grid"
+        >
+          <div class="detail-panel panel exact-summary-panel">
+            <div class="detail-panel-head">
+              <div>
+                <h3>{{ $t('routeDetail.exactModels') }}</h3>
+                <p class="section-desc">{{ $t('routeDetail.exactModelsEditorDesc') }}</p>
+              </div>
+              <span class="badge badge-muted">{{ configuredExactModels.length }}</span>
             </div>
-            <span class="badge badge-muted">{{ configuredExactModels.length }}</span>
+            <div v-if="configuredExactModels.length === 0" class="empty">
+              {{ $t('routeDetail.noExactModelsEditor') }}
+            </div>
+            <div v-else class="table-scroll">
+              <table class="data-table compact-table exact-summary-table">
+                <thead>
+                  <tr>
+                    <th>{{ $t('routeDetail.modelCol') }}</th>
+                    <th>{{ $t('routeDetail.upstreamsCol') }}</th>
+                    <th>{{ $t('routeDetail.promptCol') }}</th>
+                    <th class="table-actions-col">{{ $t('common.actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="model in configuredExactModels" :key="model.name">
+                    <td><code>{{ model.name }}</code></td>
+                    <td>{{ formatTargets(model.targets) }}</td>
+                    <td><pre class="prompt-text">{{ model.prompt_enabled ? model.system_prompt || '-' : '-' }}</pre></td>
+                    <td class="table-actions-cell">
+                      <button
+                        class="btn btn-secondary btn-sm"
+                        type="button"
+                        @click="focusExactModel(model.name)"
+                      >
+                        {{ $t('common.edit') }}
+                      </button>
+                      <button
+                        class="btn btn-danger btn-sm"
+                        type="button"
+                        @click="removeExactModel(model.name)"
+                      >
+                        {{ $t('common.delete') }}
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div class="table-scroll">
-            <table class="data-table compact-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('routeDetail.modelCol') }}</th>
-                  <th>{{ $t('routeDetail.upstreamsCol') }}</th>
-                  <th>{{ $t('routeDetail.promptCol') }}</th>
-                  <th class="table-actions-col">{{ $t('common.actions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="model in configuredExactModels" :key="model.name">
-                  <td><code>{{ model.name }}</code></td>
-                  <td>{{ formatTargets(model.targets) }}</td>
-                  <td><pre class="prompt-text">{{ model.prompt_enabled ? model.system_prompt || '-' : '-' }}</pre></td>
-                  <td class="table-actions-cell">
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      type="button"
-                      @click="focusExactModel(model.name)"
-                    >
-                      {{ $t('common.edit') }}
-                    </button>
-                    <button
-                      class="btn btn-danger btn-sm"
-                      type="button"
-                      @click="removeExactModel(model.name)"
-                    >
-                      {{ $t('common.delete') }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+
+          <div class="detail-panel panel wildcard-summary-panel">
+            <div class="detail-panel-head">
+              <div>
+                <h3>{{ $t('routeDetail.wildcardModels') }}</h3>
+                <p class="section-desc">{{ $t('routeDetail.wildcardModelsEditorDesc') }}</p>
+              </div>
+              <span class="badge badge-muted">{{ configuredWildcardModels.length }}</span>
+            </div>
+            <div v-if="configuredWildcardModels.length === 0" class="empty">
+              {{ $t('routeDetail.noWildcardModelsEditor') }}
+            </div>
+            <div v-else class="table-scroll">
+              <table class="data-table compact-table wildcard-summary-table">
+                <thead>
+                  <tr>
+                    <th>{{ $t('routeDetail.patternCol') }}</th>
+                    <th>{{ $t('routeDetail.providersCol') }}</th>
+                    <th>{{ $t('routeDetail.detectedModelsCol') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="model in configuredWildcardModels" :key="model.pattern || model.name">
+                    <td><code>{{ model.pattern || model.name }}</code></td>
+                    <td>{{ formatTargets(model.targets) }}</td>
+                    <td>
+                      <div v-if="model.matched_models.length > 0" class="matched-models">
+                        <code
+                          v-for="matchedModel in model.matched_models"
+                          :key="matchedModel"
+                          class="model-chip"
+                        >
+                          {{ matchedModel }}
+                        </code>
+                      </div>
+                      <span v-else class="muted-text">{{ $t('routeDetail.noDetectedModels') }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -186,33 +236,6 @@
           </div>
         </section>
 
-        <section v-if="configuredWildcardModels.length > 0" class="detail-panel panel">
-          <div class="detail-panel-head">
-            <div>
-              <h3>{{ $t('routeDetail.wildcardModels') }}</h3>
-              <p class="section-desc">{{ $t('routeDetail.wildcardModelsEditorDesc') }}</p>
-            </div>
-            <span class="badge badge-muted">{{ configuredWildcardModels.length }}</span>
-          </div>
-          <div class="table-scroll">
-            <table class="data-table compact-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('routeDetail.patternCol') }}</th>
-                  <th>{{ $t('routeDetail.providersCol') }}</th>
-                  <th>{{ $t('routeDetail.promptCol') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="model in configuredWildcardModels" :key="model.pattern || model.name">
-                  <td><code>{{ model.pattern || model.name }}</code></td>
-                  <td>{{ formatTargets(model.targets) }}</td>
-                  <td><pre class="prompt-text">{{ model.prompt_enabled ? model.system_prompt || '-' : '-' }}</pre></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
       </div>
 
       <aside class="detail-rail">
@@ -436,6 +459,15 @@ const configuredExactModels = computed(() =>
     }))
     .sort((a, b) => a.name.localeCompare(b.name)),
 )
+const runtimeWildcardModelMap = computed(() => {
+  const out = {}
+  for (const model of detail.value?.wildcard_models || []) {
+    const pattern = normalizeText(model?.pattern || model?.name)
+    if (!pattern) continue
+    out[pattern] = uniqueSortedTextValues(model?.matched_models || [])
+  }
+  return out
+})
 const configuredWildcardModels = computed(() =>
   Object.entries(routeConfig.value?.wildcard_models || {})
     .map(([pattern, cfg]) => ({
@@ -444,6 +476,7 @@ const configuredWildcardModels = computed(() =>
       prompt_enabled: !!cfg?.prompt_enabled,
       system_prompt: cfg?.system_prompt || '',
       targets: dedupeOrderedTextValues(cfg?.providers || []),
+      matched_models: runtimeWildcardModelMap.value[pattern] || [],
     }))
     .sort((a, b) => a.pattern.localeCompare(b.pattern)),
 )
@@ -1192,6 +1225,13 @@ onUnmounted(() => {
   scroll-margin-top: 18px;
 }
 
+.model-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1254,6 +1294,42 @@ onUnmounted(() => {
 
 .table-scroll .data-table {
   min-width: 640px;
+}
+
+.wildcard-summary-table {
+  min-width: 560px;
+}
+
+.exact-summary-table {
+  min-width: 620px;
+}
+
+.matched-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 92px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  padding: 3px 6px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-soft);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.muted-text {
+  color: var(--c-text-3);
 }
 
 .editor-actions {

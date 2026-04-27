@@ -49,18 +49,9 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 	return providerFormMetaResponse{
 		Presets: []providerFormPresetMeta{
 			{
-				ID:                      "openai-official",
-				Title:                   "OpenAI Official",
-				Summary:                 "OpenAI official /v1 endpoint with full OpenAI-compatible defaults.",
-				Family:                  config.ProviderProtocolOpenAI,
-				AuthMode:                "api_key",
-				DefaultURL:              "https://api.openai.com/v1",
-				ServiceProtocolTemplate: "adapter_defaults",
-			},
-			{
 				ID:                      "anthropic-official",
-				Title:                   "Anthropic Official",
-				Summary:                 "Anthropic native /v1 endpoint with chat + anthropic defaults.",
+				Title:                   "Anthropic-compatible",
+				Summary:                 "Anthropic-compatible /v1 endpoint with chat + anthropic defaults.",
 				Family:                  config.ProviderProtocolAnthropic,
 				AuthMode:                "api_key",
 				DefaultURL:              "https://api.anthropic.com/v1",
@@ -69,7 +60,7 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 			{
 				ID:                      "openai-compatible",
 				Title:                   "OpenAI-compatible",
-				Summary:                 "Generic OpenAI-compatible upstream. Good for custom vendors and self-hosted gateways.",
+				Summary:                 "OpenAI-compatible upstream for OpenAI official, custom vendors, and self-hosted gateways.",
 				Family:                  config.ProviderProtocolOpenAI,
 				AuthMode:                "api_key",
 				ServiceProtocolTemplate: "adapter_defaults",

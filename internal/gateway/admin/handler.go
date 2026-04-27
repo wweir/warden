@@ -13,6 +13,7 @@ type Selector interface {
 	ProviderStatuses() []sel.ProviderStatus
 	ProviderDetail(name string) *sel.ProviderStatus
 	ProviderModels(name string) []json.RawMessage
+	Models(route *config.RouteConfig) []json.RawMessage
 	ModelProtocolProbes(name string) []sel.ModelProtocolProbe
 	SetManualSuppress(name string, suppress bool) bool
 	SetDisplayProtocols(name string, protocols []string, probe *sel.ProtocolProbe) bool

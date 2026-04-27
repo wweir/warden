@@ -801,6 +801,7 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	var payload struct {
 		Presets []struct {
 			ID                      string `json:"id"`
+			Title                   string `json:"title"`
 			Summary                 string `json:"summary"`
 			Backend                 string `json:"backend"`
 			BackendProvider         string `json:"backend_provider"`
@@ -820,6 +821,7 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 
 	var codexPreset *struct {
 		ID                      string `json:"id"`
+		Title                   string `json:"title"`
 		Summary                 string `json:"summary"`
 		Backend                 string `json:"backend"`
 		BackendProvider         string `json:"backend_provider"`
@@ -906,6 +908,7 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 
 	var openAICompatiblePreset *struct {
 		ID                      string `json:"id"`
+		Title                   string `json:"title"`
 		Summary                 string `json:"summary"`
 		Backend                 string `json:"backend"`
 		BackendProvider         string `json:"backend_provider"`
@@ -922,10 +925,26 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	if openAICompatiblePreset == nil {
 		t.Fatal("openai-compatible preset not found")
 	}
+	var foundAnthropicCompatible bool
 	for _, preset := range payload.Presets {
 		if preset.ID == "qwen-cli" {
 			t.Fatal("qwen-cli preset should not be exposed")
 		}
+		if preset.ID == "openai-official" {
+			t.Fatal("openai-official preset should be merged into openai-compatible")
+		}
+		if preset.ID == "anthropic-official" {
+			foundAnthropicCompatible = true
+			if preset.Title != "Anthropic-compatible" {
+				t.Fatalf("anthropic-official title = %q, want Anthropic-compatible", preset.Title)
+			}
+		}
+	}
+	if !foundAnthropicCompatible {
+		t.Fatal("anthropic-compatible preset not found")
+	}
+	if !strings.Contains(openAICompatiblePreset.Summary, "OpenAI official") {
+		t.Fatalf("openai-compatible summary = %q, want OpenAI official wording", openAICompatiblePreset.Summary)
 	}
 	if openAICompatiblePreset.DefaultURL != "" {
 		t.Fatalf("openai-compatible default_url = %q, want empty for user-supplied endpoint", openAICompatiblePreset.DefaultURL)
@@ -1039,6 +1058,85 @@ func TestNewGatewayRefreshesProviderModelsForExactRoutes(t *testing.T) {
 	}
 
 	t.Fatalf("ProviderModels() did not refresh for exact route, got %d models", len(gw.selector.ProviderModels("openai")))
+}
+
+func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "gpt-4o", "object": "model", "owned_by": "openai"},
+				{"id": "gpt-4.1-mini", "object": "model", "owned_by": "openai"},
+				{"id": "claude-sonnet-4.5", "object": "model", "owned_by": "anthropic"},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"gpt-*": wildcardModel(config.RouteProtocolChat, "openai"),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(gw.selector.ProviderModels("openai")) == 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/routes/detail?prefix=/openai", nil)
+	rec := httptest.NewRecorder()
+	gw.adminHandler().HandleRouteDetail(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var payload struct {
+		WildcardModels []struct {
+			Pattern       string   `json:"pattern"`
+			MatchedModels []string `json:"matched_models"`
+		} `json:"wildcard_models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal route detail: %v", err)
+	}
+	if len(payload.WildcardModels) != 1 {
+		t.Fatalf("wildcard_models len = %d, want 1", len(payload.WildcardModels))
+	}
+	if got := payload.WildcardModels[0].Pattern; got != "gpt-*" {
+		t.Fatalf("pattern = %q, want gpt-*", got)
+	}
+	if got := payload.WildcardModels[0].MatchedModels; !sameStrings(got, []string{"gpt-4.1-mini"}) {
+		t.Fatalf("matched_models = %v, want [gpt-4.1-mini]", got)
+	}
 }
 
 func sameStrings(got, want []string) bool {
