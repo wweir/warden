@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"bufio"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +11,6 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
-	proxypkg "github.com/wweir/warden/internal/gateway/proxy"
 	"github.com/wweir/warden/internal/reqlog"
 )
 
@@ -186,40 +187,223 @@ func TestGatewayPublishesPendingStreamLogBeforeUpstreamCompletes(t *testing.T) {
 	}
 }
 
-func TestAssembleProxyResponseConvertsAnthropicChatStreamToChatCompletionObject(t *testing.T) {
+func TestGatewayRelaysChatStreamBeforeUpstreamCompletes(t *testing.T) {
 	t.Parallel()
 
-	const streamBody = "" +
-		"event: message_start\n" +
-		"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_abc123\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
-		"event: content_block_start\n" +
-		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
-		"event: content_block_delta\n" +
-		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n" +
-		"event: content_block_delta\n" +
-		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n\n" +
-		"event: message_delta\n" +
-		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n" +
-		"event: message_stop\n" +
-		"data: {\"type\":\"message_stop\"}\n\n"
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+			return
+		}
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("upstream path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
 
-	logged := proxypkg.AssembleResponse(config.RouteProtocolChat, "anthropic", []byte(streamBody))
-	if !gjson.ValidBytes(logged) {
-		t.Fatalf("logged response is not valid JSON: %q", string(logged))
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
 	}
-	if got := gjson.GetBytes(logged, "object").String(); got != "chat.completion" {
-		t.Fatalf("logged object = %q, want chat.completion", got)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
 	}
-	if got := gjson.GetBytes(logged, "choices.0.message.content").String(); got != "Hello world" {
-		t.Fatalf("logged content = %q, want Hello world", got)
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+	server := httptest.NewServer(gw)
+	defer server.Close()
+
+	firstFrame := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer resp.Body.Close()
+		reader := bufio.NewReader(resp.Body)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			errCh <- err
+			return
+		}
+		firstFrame <- line
+		_, _ = io.ReadAll(reader)
+		errCh <- nil
+	}()
+
+	select {
+	case line := <-firstFrame:
+		if !strings.Contains(line, `"content":"hel"`) {
+			close(release)
+			t.Fatalf("first frame = %q, want streamed content", line)
+		}
+	case err := <-errCh:
+		close(release)
+		t.Fatalf("request failed before first frame: %v", err)
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for first chat stream frame before upstream completion")
 	}
-	if got := gjson.GetBytes(logged, "choices.0.finish_reason").String(); got != "stop" {
-		t.Fatalf("logged finish_reason = %q, want stop", got)
+
+	close(release)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("finish request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream completion")
 	}
-	if got := gjson.GetBytes(logged, "usage.prompt_tokens").Int(); got != 10 {
-		t.Fatalf("logged prompt tokens = %d, want 10", got)
+}
+
+func TestGatewayRecordsIncompleteChatStreamAsInStreamError(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+			return
+		}
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("upstream path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
 	}
-	if got := gjson.GetBytes(logged, "usage.completion_tokens").Int(); got != 5 {
-		t.Fatalf("logged completion tokens = %d, want 5", got)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), `"content":"hel"`) {
+		t.Fatalf("body = %q, want relayed partial content", rec.Body.String())
+	}
+
+	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())
+	if record.Error == "" {
+		t.Fatalf("log error is empty, want incomplete stream error")
+	}
+	status := gw.selector.ProviderDetail("openai")
+	if status == nil {
+		t.Fatal("ProviderDetail(openai) = nil")
+	}
+	if status.InStreamErrors != 1 || status.FailureCount != 1 {
+		t.Fatalf("provider stream counters = in_stream:%d failures:%d, want 1/1", status.InStreamErrors, status.FailureCount)
+	}
+}
+
+func TestGatewayFallsBackWhenStreamRequestReturnsJSON(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+			return
+		}
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("upstream path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := gjson.Get(rec.Body.String(), "choices.0.message.content").String(); got != "hello" {
+		t.Fatalf("response content = %q, want hello", got)
+	}
+
+	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())
+	if record.TokenUsage == nil {
+		t.Fatal("expected token_usage in log record")
+	}
+	if record.TokenUsage.PromptTokens != 3 || record.TokenUsage.CompletionTokens != 5 {
+		t.Fatalf("unexpected token_usage: %+v", record.TokenUsage)
 	}
 }

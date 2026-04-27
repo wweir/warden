@@ -98,6 +98,6 @@ API key payload 额外暴露：
 
 - [internal/gateway/tokenusage/tokenusage.go](../internal/gateway/tokenusage/tokenusage.go)
 - [internal/gateway/telemetry/metrics.go](../internal/gateway/telemetry/metrics.go)
+- [internal/gateway/telemetry/snapshot.go](../internal/gateway/telemetry/snapshot.go)
 - [internal/gateway/observe/observe.go](../internal/gateway/observe/observe.go)
-- [internal/gateway/snapshot/snapshot.go](../internal/gateway/snapshot/snapshot.go)
 - [internal/reqlog/types.go](../internal/reqlog/types.go)

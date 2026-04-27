@@ -41,7 +41,15 @@ func ErrorSourceOf(err error) ErrorSource {
 	return ""
 }
 
+func RelayRawStream(src io.Reader, dst http.ResponseWriter) ([]byte, error) {
+	return relayEventStream(src, dst, rawStreamCompleteEvent)
+}
+
 func RelayAnthropicStream(src io.Reader, dst http.ResponseWriter) ([]byte, error) {
+	return relayEventStream(src, dst, anthropicMessageStopEvent)
+}
+
+func relayEventStream(src io.Reader, dst http.ResponseWriter, complete func(protocol.Event) bool) ([]byte, error) {
 	reader := bufio.NewReader(src)
 	var raw bytes.Buffer
 	streamComplete := false
@@ -50,9 +58,8 @@ func RelayAnthropicStream(src io.Reader, dst http.ResponseWriter) ([]byte, error
 		frame, err := ReadSSEFrame(reader)
 		if len(frame) > 0 {
 			raw.Write(frame)
-			events := protocol.ParseEvents(frame)
-			for _, evt := range events {
-				if anthropicMessageStopEvent(evt) {
+			for _, evt := range protocol.ParseEvents(frame) {
+				if complete(evt) {
 					streamComplete = true
 				}
 			}
@@ -72,6 +79,33 @@ func RelayAnthropicStream(src io.Reader, dst http.ResponseWriter) ([]byte, error
 			return raw.Bytes(), &relayError{source: SourceUpstream, err: err}
 		}
 	}
+}
+
+func rawStreamCompleteEvent(evt protocol.Event) bool {
+	if evt.Data == "[DONE]" || evt.EventType == "response.completed" {
+		return true
+	}
+	if evt.Data == "" {
+		return false
+	}
+	var payload struct {
+		Type    string `json:"type"`
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+		return false
+	}
+	if payload.Type == "response.completed" {
+		return true
+	}
+	for _, choice := range payload.Choices {
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func StreamChatAsAnthropic(src io.Reader, dst http.ResponseWriter) ([]byte, []byte, error) {

@@ -15,12 +15,21 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/providerauth"
 	sel "github.com/wweir/warden/internal/selector"
 )
 
 type compositeReadCloser struct {
 	io.Reader
 	closers []io.Closer
+}
+
+type NonStreamingResponseError struct {
+	Body []byte
+}
+
+func (e *NonStreamingResponseError) Error() string {
+	return "upstream returned non-stream response"
 }
 
 func (c *compositeReadCloser) Close() error {
@@ -52,7 +61,7 @@ func SendRequest(ctx context.Context, clientReq *http.Request, provCfg *config.P
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	sel.SetAuthHeaders(ctx, httpReq.Header, provCfg)
+	providerauth.SetHeaders(ctx, httpReq.Header, provCfg)
 
 	client := provCfg.HTTPClient(0)
 	if isStreaming {
@@ -100,7 +109,7 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	sel.SetAuthHeaders(ctx, httpReq.Header, provCfg)
+	providerauth.SetHeaders(ctx, httpReq.Header, provCfg)
 
 	client := provCfg.HTTPClient(firstTokenTimeout)
 	upstreamStart := time.Now()
@@ -129,10 +138,13 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		if readErr != nil {
 			return nil, latency, fmt.Errorf("read non-stream response body: %w", readErr)
 		}
+		if isEventStreamBody(respBody) {
+			return io.NopCloser(bytes.NewReader(respBody)), latency, nil
+		}
 		if upErr := upstreamBodyError(resp.StatusCode, respBody); upErr != nil {
 			return nil, latency, upErr
 		}
-		return nil, latency, &sel.UpstreamError{Code: resp.StatusCode, Body: string(respBody)}
+		return nil, latency, &NonStreamingResponseError{Body: respBody}
 	}
 
 	return reader, latency, nil
@@ -248,4 +260,9 @@ func isEventStreamContentType(contentType string) bool {
 		return strings.HasPrefix(strings.ToLower(contentType), "text/event-stream")
 	}
 	return mediaType == "text/event-stream"
+}
+
+func isEventStreamBody(body []byte) bool {
+	trimmed := strings.TrimSpace(string(body))
+	return strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:")
 }

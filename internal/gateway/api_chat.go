@@ -8,6 +8,7 @@ import (
 
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
+	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
@@ -84,6 +85,10 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				return assembled, clientBody, err
 			}
 		},
+		canRelayStream: func(providerProtocol string) bool {
+			return providerProtocol != config.RouteProtocolAnthropic
+		},
+		streamRelay: bridgepkg.RelayRawStream,
 	})
 }
 
