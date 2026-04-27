@@ -335,6 +335,128 @@ func TestGatewayChatRouteExposesEmbeddingsEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayEmbeddingsForwardsSupportedRequestShapes(t *testing.T) {
+	var gotBody []byte
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"upstream-embedding","usage":{"prompt_tokens":2,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"public-embedding": exactModel(config.RouteProtocolChat,
+						&config.RouteUpstreamConfig{Provider: "openai", Model: "upstream-embedding"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	tests := []struct {
+		name string
+		body string
+		want func(t *testing.T, body []byte)
+	}{
+		{
+			name: "string input with provider fields",
+			body: `{"model":"public-embedding","input":"hello","encoding_format":"base64","dimensions":256,"input_type":"query","user":"u-1"}`,
+			want: func(t *testing.T, body []byte) {
+				t.Helper()
+				if got := gjson.GetBytes(body, "input").String(); got != "hello" {
+					t.Fatalf("input = %q, want hello", got)
+				}
+				if got := gjson.GetBytes(body, "encoding_format").String(); got != "base64" {
+					t.Fatalf("encoding_format = %q, want base64", got)
+				}
+				if got := gjson.GetBytes(body, "dimensions").Int(); got != 256 {
+					t.Fatalf("dimensions = %d, want 256", got)
+				}
+				if got := gjson.GetBytes(body, "input_type").String(); got != "query" {
+					t.Fatalf("input_type = %q, want query", got)
+				}
+				if got := gjson.GetBytes(body, "user").String(); got != "u-1" {
+					t.Fatalf("user = %q, want u-1", got)
+				}
+			},
+		},
+		{
+			name: "string array input",
+			body: `{"model":"public-embedding","input":["hello","world"],"input_type":"passage"}`,
+			want: func(t *testing.T, body []byte) {
+				t.Helper()
+				if got := gjson.GetBytes(body, "input.0").String(); got != "hello" {
+					t.Fatalf("input.0 = %q, want hello", got)
+				}
+				if got := gjson.GetBytes(body, "input.1").String(); got != "world" {
+					t.Fatalf("input.1 = %q, want world", got)
+				}
+				if got := gjson.GetBytes(body, "input_type").String(); got != "passage" {
+					t.Fatalf("input_type = %q, want passage", got)
+				}
+			},
+		},
+		{
+			name: "token array input",
+			body: `{"model":"public-embedding","input":[1,2,3]}`,
+			want: func(t *testing.T, body []byte) {
+				t.Helper()
+				if got := gjson.GetBytes(body, "input.2").Int(); got != 3 {
+					t.Fatalf("input.2 = %d, want 3", got)
+				}
+			},
+		},
+		{
+			name: "token array batch input",
+			body: `{"model":"public-embedding","input":[[1,2],[3,4]]}`,
+			want: func(t *testing.T, body []byte) {
+				t.Helper()
+				if got := gjson.GetBytes(body, "input.1.1").Int(); got != 4 {
+					t.Fatalf("input.1.1 = %d, want 4", got)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBody = nil
+			req := httptest.NewRequest(http.MethodPost, "/openai/embeddings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			gw.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if got := gjson.GetBytes(gotBody, "model").String(); got != "upstream-embedding" {
+				t.Fatalf("upstream model = %q, want upstream-embedding", got)
+			}
+			tc.want(t, gotBody)
+		})
+	}
+}
+
 func TestGatewayRouteExplicitServiceProtocolsExposeMultipleEndpoints(t *testing.T) {
 	t.Parallel()
 

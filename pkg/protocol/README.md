@@ -26,7 +26,7 @@ protocol/
 - 定义 LLM 协议公共类型（`Event`、`ToolCallInfo`）
 - 提供 SSE 流解析和重放功能
 - 定义 `StreamParser` 接口供各协议实现
-- 提供 OpenAI-compatible Embeddings API 的请求/响应类型
+- 提供 OpenAI-compatible Embeddings API 的请求/响应类型；请求只强制 `model` 与 `input`，支持字符串、字符串数组、token 数组、token 数组列表，并保留 `encoding_format`、`dimensions`、`user`、`input_type` 等额外字段供 gateway 原样代理
 - 提供 OpenAI `responses_to_chat` 所需的无状态 `Responses -> Chat` 请求转换，以及 `Chat -> Responses` 响应/SSE 转换
 - 提供 `anthropic_to_chat` 所需的受控 `Messages -> Chat` 请求转换，以及 `Chat -> Messages` 响应/SSE 转换
 - `responses_to_chat` 转换器只接受受控的 stateless 子集；不支持的 Responses 专有字段、未知 input item、非 `function` tools 会直接报错；兼容的 `function` tool 会保留 `strict`，`max_output_tokens` 会映射到 `max_completion_tokens`，Responses 风格 `tool_choice` 会被规范化为 Chat 风格对象，`function_call_output.output` 支持字符串和任意 JSON 值
