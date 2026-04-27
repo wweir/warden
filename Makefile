@@ -73,9 +73,9 @@ run: build
 
 install: build
 	@if [ "${UNAME_S}" = "Linux" ] && [ "$$(id -u)" -ne 0 ]; then \
-		sudo ${LOCAL_BINARY} -i; \
+		sudo ${LOCAL_BINARY} -i -y; \
 	else \
-		${LOCAL_BINARY} -i; \
+		${LOCAL_BINARY} -i -y; \
 	fi
 
 clean:

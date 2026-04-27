@@ -7,6 +7,7 @@
 - Copies the current binary to platform-managed locations.
 - Writes supervisor definitions for systemd, launchd, or Windows Task Scheduler.
 - Creates the minimal managed bootstrap config when no config exists.
+- Supports non-interactive `-y` installs that start or restart the managed service while preserving the local-only exposure default unless `--expose` is set.
 - Preserves platform-specific install behavior behind one `InstallService` API.
 
 ## Boundary

@@ -53,6 +53,7 @@ type modeFlags struct {
 	install           bool
 	reload            bool
 	nonInteractive    bool
+	assumeYes         bool
 	startAfterInstall *bool
 	exposeExternally  *bool
 }
@@ -207,6 +208,7 @@ func main() {
 	flag.Bool("i", false, "install as managed service")
 	flag.Bool("r", false, "reload running service")
 	flag.Bool("non-interactive", false, "install without interactive prompts")
+	flag.Bool("y", false, "install without prompts and start or restart the managed service")
 	flag.Bool("start", false, "start service after install")
 	flag.Bool("no-start", false, "do not start service after install")
 	flag.Bool("expose", false, "for managed install, bind bootstrap config to all network interfaces")
@@ -311,6 +313,11 @@ func parseModeFlags(args []string) modeFlags {
 			flags.install = false
 		case "-r=false":
 			flags.reload = false
+		case "-y", "-y=true":
+			flags.assumeYes = true
+			flags.nonInteractive = true
+		case "-y=false":
+			flags.assumeYes = false
 		case "--non-interactive", "--non-interactive=true":
 			flags.nonInteractive = true
 		case "--non-interactive=false":
@@ -333,11 +340,15 @@ func parseModeFlags(args []string) modeFlags {
 }
 
 func buildInstallOptions(mode modeFlags) install.Options {
+	startAfterInstall := mode.startAfterInstall
+	if mode.assumeYes && startAfterInstall == nil {
+		startAfterInstall = boolPtr(true)
+	}
 	opts := install.Options{
-		StartAfterInstall: mode.startAfterInstall,
+		StartAfterInstall: startAfterInstall,
 		ExposeExternally:  mode.exposeExternally,
 	}
-	if !mode.nonInteractive {
+	if !mode.nonInteractive && !mode.assumeYes {
 		opts.Confirm = stdinConfirm
 	}
 	return opts

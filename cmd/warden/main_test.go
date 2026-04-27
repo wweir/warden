@@ -269,6 +269,7 @@ func TestParseModeFlags(t *testing.T) {
 		install           bool
 		reload            bool
 		nonInteractive    bool
+		assumeYes         bool
 		startAfterInstall *bool
 		exposeExternally  *bool
 	}{
@@ -278,6 +279,7 @@ func TestParseModeFlags(t *testing.T) {
 		{name: "explicit false", args: []string{"-i=true", "-r=false"}, install: true, reload: false},
 		{name: "config arg ignored", args: []string{"-c", "warden.yaml", "-r"}, reload: true},
 		{name: "non interactive start", args: []string{"-i", "--non-interactive", "--start"}, install: true, nonInteractive: true, startAfterInstall: boolPtr(true)},
+		{name: "assume yes", args: []string{"-i", "-y"}, install: true, nonInteractive: true, assumeYes: true},
 		{name: "expose", args: []string{"-i", "--expose"}, install: true, exposeExternally: boolPtr(true)},
 		{name: "local only wins", args: []string{"-i", "--expose", "--local-only"}, install: true, exposeExternally: boolPtr(false)},
 		{name: "no start wins", args: []string{"-i", "--start", "--no-start"}, install: true, startAfterInstall: boolPtr(false)},
@@ -286,8 +288,8 @@ func TestParseModeFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseModeFlags(tt.args)
-			if got.install != tt.install || got.reload != tt.reload || got.nonInteractive != tt.nonInteractive {
-				t.Fatalf("parseModeFlags(%v) = %+v, want install=%v reload=%v nonInteractive=%v", tt.args, got, tt.install, tt.reload, tt.nonInteractive)
+			if got.install != tt.install || got.reload != tt.reload || got.nonInteractive != tt.nonInteractive || got.assumeYes != tt.assumeYes {
+				t.Fatalf("parseModeFlags(%v) = %+v, want install=%v reload=%v nonInteractive=%v assumeYes=%v", tt.args, got, tt.install, tt.reload, tt.nonInteractive, tt.assumeYes)
 			}
 			if !equalBoolPtr(got.startAfterInstall, tt.startAfterInstall) {
 				t.Fatalf("parseModeFlags(%v) startAfterInstall = %v, want %v", tt.args, got.startAfterInstall, tt.startAfterInstall)
@@ -322,6 +324,26 @@ func TestBuildInstallOptions(t *testing.T) {
 	}
 	if opts.ExposeExternally == nil || !*opts.ExposeExternally {
 		t.Fatalf("ExposeExternally = %v, want true", opts.ExposeExternally)
+	}
+
+	opts = buildInstallOptions(modeFlags{assumeYes: true})
+	if opts.Confirm != nil {
+		t.Fatal("Confirm should be nil for assume-yes install")
+	}
+	if opts.StartAfterInstall == nil || !*opts.StartAfterInstall {
+		t.Fatalf("StartAfterInstall = %v, want true for assume-yes install", opts.StartAfterInstall)
+	}
+	if opts.ExposeExternally != nil {
+		t.Fatalf("ExposeExternally = %v, want nil for assume-yes install", opts.ExposeExternally)
+	}
+
+	start = false
+	opts = buildInstallOptions(modeFlags{
+		assumeYes:         true,
+		startAfterInstall: &start,
+	})
+	if opts.StartAfterInstall == nil || *opts.StartAfterInstall {
+		t.Fatalf("StartAfterInstall = %v, want explicit false to override assume-yes", opts.StartAfterInstall)
 	}
 }
 

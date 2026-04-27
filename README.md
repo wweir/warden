@@ -96,7 +96,7 @@ make build
   安装器会把二进制落到平台约定的托管路径，并在目标配置文件已存在时先做校验
   目标配置不存在时，安装器会生成可启动的 bootstrap 配置，但不写入 provider / route
   交互安装会明确提示是否对外提供服务：默认仅监听 `127.0.0.1:9832`，后台入口是 `http://localhost:9832/_admin/`，并启用用户名 `admin`、密码 `admin` 的本机管理后台；选择对外提供服务后改为监听 `:9832`，但不写入 `admin_password`，管理后台保持禁用直到手动设置强密码
-  非交互安装默认仅监听本机；可显式传入 `--expose` 或 `--local-only`
+  `make install` 会以 `warden -i -y` 执行安装，跳过交互确认并启动或重启托管服务；`-y` 不隐式开启外部监听，非交互安装默认仅监听本机，可显式传入 `--expose` 或 `--local-only`
   Linux 上 `make install` 会在需要时自动调用 `sudo`；macOS 上通常使用 `sudo make install`；Windows 上请在提升权限的终端执行
 
 #### 2. 准备配置
@@ -366,7 +366,7 @@ Common targets:
 - `make test`: build web assets, run `go vet`, run `go test`
 - `make build`: build the local binary
 - `make package`: build release archives
-- `make install`: run the managed install flow. It writes the binary to the platform-managed path, validates an existing target config before install, and creates a bootable bootstrap config when the target config is missing. Interactive installs explicitly ask whether Warden should be exposed externally: the default bootstrap config binds to `127.0.0.1:9832` and serves the admin UI at `http://localhost:9832/_admin/`; choosing external exposure binds to `:9832`. Local-only bootstrap config keeps the admin UI enabled with username `admin` and a bootstrap `admin_password` in the config file; external bootstrap config leaves the admin UI disabled until a strong `admin_password` is set manually. The bootstrap config does not include provider or route defaults, and non-interactive installs default to local-only unless `--expose` is provided.
+- `make install`: run the managed install flow through `warden -i -y`. It writes the binary to the platform-managed path, validates an existing target config before install, and creates a bootable bootstrap config when the target config is missing. Interactive installs explicitly ask whether Warden should be exposed externally: the default bootstrap config binds to `127.0.0.1:9832` and serves the admin UI at `http://localhost:9832/_admin/`; choosing external exposure binds to `:9832`. Local-only bootstrap config keeps the admin UI enabled with username `admin` and a bootstrap `admin_password` in the config file; external bootstrap config leaves the admin UI disabled until a strong `admin_password` is set manually. The bootstrap config does not include provider or route defaults. `-y` skips install prompts and starts or restarts the managed service, but it does not implicitly enable external exposure; non-interactive installs default to local-only unless `--expose` is provided.
 
 #### 2. Prepare Config
 
