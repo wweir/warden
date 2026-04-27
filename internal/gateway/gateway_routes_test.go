@@ -72,6 +72,9 @@ func TestGatewayModelsExposeObservedWildcardMatch(t *testing.T) {
 	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="gpt-4.1-mini").id`).String(); got != "gpt-4.1-mini" {
 		t.Fatalf("models body = %s, want observed wildcard model", modelsRec.Body.String())
 	}
+	if got := gjson.Get(modelsRec.Body.String(), `models.#(slug=="gpt-4.1-mini").slug`).String(); got != "gpt-4.1-mini" {
+		t.Fatalf("models body = %s, want Codex-compatible models field", modelsRec.Body.String())
+	}
 	if got := gjson.Get(modelsRec.Body.String(), `data.#(id=="gpt-4.1-mini").owned_by`).String(); got != "/openai" {
 		t.Fatalf("owned_by = %q, want /openai", got)
 	}
