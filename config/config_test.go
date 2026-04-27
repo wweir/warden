@@ -596,6 +596,35 @@ func TestValidateRouteConfigExplicitModelSections(t *testing.T) {
 	}
 }
 
+func TestRouteWildcardModelMatchesSlashSeparatedModelIDs(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+		},
+		Route: map[string]*RouteConfig{
+			"/test": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*":      testWildcardModel(RouteProtocolChat, "openai"),
+					"*:free": testWildcardModel(RouteProtocolChat, "openai"),
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	route := cfg.Route["/test"]
+	if got := route.MatchModel("nvidia/llama-3.1-8b-instruct"); got == nil || got.Pattern != "*" {
+		t.Fatalf("MatchModel(nvidia/llama-3.1-8b-instruct) pattern = %#v, want *", got)
+	}
+	if got := route.MatchModel("openrouter/model:free"); got == nil || got.Pattern != "*:free" {
+		t.Fatalf("MatchModel(openrouter/model:free) pattern = %#v, want *:free", got)
+	}
+}
+
 func TestValidateRouteConfigPromptEnabledExplicitFalseDisablesInjection(t *testing.T) {
 	disabled := false
 	cfg := &ConfigStruct{

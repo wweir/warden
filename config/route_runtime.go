@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path"
 	"slices"
 	"strings"
 )
@@ -223,8 +222,7 @@ func (r *RouteConfig) MatchModel(model string) *CompiledRouteModel {
 
 	var matched *CompiledRouteModel
 	for _, candidate := range r.wildcards {
-		ok, err := path.Match(candidate.Pattern, model)
-		if err != nil || !ok {
+		if !matchWildcardModelPattern(candidate.Pattern, model) {
 			continue
 		}
 		if matched == nil || comparePatternSpecificity(candidate.Specificity, matched.Specificity) > 0 {
@@ -232,6 +230,17 @@ func (r *RouteConfig) MatchModel(model string) *CompiledRouteModel {
 		}
 	}
 	return matched
+}
+
+// MatchWildcardModel reports whether a compiled wildcard model pattern matches the complete model ID.
+func (r *RouteConfig) MatchWildcardModel(pattern, model string) bool {
+	for _, wildcard := range r.wildcards {
+		if wildcard.Pattern != pattern {
+			continue
+		}
+		return matchWildcardModelPattern(pattern, model)
+	}
+	return false
 }
 
 func (r *RouteConfig) PublicModels() []string {
@@ -296,6 +305,44 @@ func buildPatternSpecificity(pattern string) routePatternSpecificity {
 
 func hasWildcardPattern(model string) bool {
 	return strings.ContainsRune(model, '*')
+}
+
+func matchWildcardModelPattern(pattern, model string) bool {
+	type state struct {
+		i int
+		j int
+	}
+	seen := map[state]bool{}
+	var visit func(i, j int) bool
+	visit = func(i, j int) bool {
+		st := state{i: i, j: j}
+		if seen[st] {
+			return false
+		}
+		seen[st] = true
+
+		for i < len(pattern) && j < len(model) && pattern[i] != '*' {
+			if pattern[i] != model[j] {
+				return false
+			}
+			i++
+			j++
+		}
+		if i == len(pattern) {
+			return j == len(model)
+		}
+		if pattern[i] != '*' {
+			return false
+		}
+		if visit(i+1, j) {
+			return true
+		}
+		if j < len(model) && visit(i, j+1) {
+			return true
+		}
+		return false
+	}
+	return visit(0, 0)
 }
 
 func wildcardPatternsConflict(a, b string) bool {

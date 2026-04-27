@@ -1077,6 +1077,8 @@ func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
 			"data": []map[string]any{
 				{"id": "gpt-4o", "object": "model", "owned_by": "openai"},
 				{"id": "gpt-4.1-mini", "object": "model", "owned_by": "openai"},
+				{"id": "openai/gpt-oss-20b", "object": "model", "owned_by": "openai"},
+				{"id": "meta/llama-3.1-8b-instruct:free", "object": "model", "owned_by": "openai"},
 				{"id": "claude-sonnet-4.5", "object": "model", "owned_by": "anthropic"},
 			},
 		})
@@ -1097,7 +1099,9 @@ func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
 					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 				WildcardModels: map[string]*config.WildcardRouteModelConfig{
-					"gpt-*": wildcardModel(config.RouteProtocolChat, "openai"),
+					"gpt-*":  wildcardModel(config.RouteProtocolChat, "openai"),
+					"*":      wildcardModel(config.RouteProtocolChat, "openai"),
+					"*:free": wildcardModel(config.RouteProtocolChat, "openai"),
 				},
 			},
 		},
@@ -1111,7 +1115,7 @@ func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(gw.selector.ProviderModels("openai")) == 3 {
+		if len(gw.selector.ProviderModels("openai")) == 5 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1134,14 +1138,18 @@ func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal route detail: %v", err)
 	}
-	if len(payload.WildcardModels) != 1 {
-		t.Fatalf("wildcard_models len = %d, want 1", len(payload.WildcardModels))
+	matches := make(map[string][]string, len(payload.WildcardModels))
+	for _, wildcard := range payload.WildcardModels {
+		matches[wildcard.Pattern] = wildcard.MatchedModels
 	}
-	if got := payload.WildcardModels[0].Pattern; got != "gpt-*" {
-		t.Fatalf("pattern = %q, want gpt-*", got)
+	if got := matches["gpt-*"]; !sameStrings(got, []string{"gpt-4.1-mini"}) {
+		t.Fatalf("gpt-* matched_models = %v, want [gpt-4.1-mini]", got)
 	}
-	if got := payload.WildcardModels[0].MatchedModels; !sameStrings(got, []string{"gpt-4.1-mini"}) {
-		t.Fatalf("matched_models = %v, want [gpt-4.1-mini]", got)
+	if got := matches["*"]; !sameStrings(got, []string{"claude-sonnet-4.5", "openai/gpt-oss-20b"}) {
+		t.Fatalf("* matched_models = %v, want [claude-sonnet-4.5 openai/gpt-oss-20b]", got)
+	}
+	if got := matches["*:free"]; !sameStrings(got, []string{"meta/llama-3.1-8b-instruct:free"}) {
+		t.Fatalf("*:free matched_models = %v, want [meta/llama-3.1-8b-instruct:free]", got)
 	}
 }
 

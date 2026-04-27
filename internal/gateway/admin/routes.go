@@ -3,7 +3,6 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
-	"path"
 	"slices"
 
 	"github.com/julienschmidt/httprouter"
@@ -103,8 +102,7 @@ func (h *Handler) routeWildcardMatches(route *config.RouteConfig) map[string][]s
 		if matched == nil || !matched.Wildcard || matched.Pattern == "" {
 			continue
 		}
-		ok, err := path.Match(matched.Pattern, id)
-		if err != nil || !ok {
+		if !route.MatchWildcardModel(matched.Pattern, id) {
 			continue
 		}
 		if seen[matched.Pattern] == nil {

@@ -68,6 +68,7 @@
 - `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时用于让同一路由暴露多个服务接口，且必须包含 `route.protocol`；显式声明的每个接口都必须至少有一个 route upstream/provider 支持，否则配置校验失败
 - `route.exact_models.<name>` 直接声明 `upstreams`
 - `route.wildcard_models.<pattern>` 直接声明 `providers`
+- `route.wildcard_models.<pattern>` 的 `*` 匹配完整模型 ID，包括 `vendor/model` 和 `vendor/model:free` 这类包含 `/` 的上游模型名
 - provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_* + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
 - OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols: [chat]`
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`

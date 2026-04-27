@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -129,8 +128,8 @@ func (s *Selector) Models(route *config.RouteConfig) []json.RawMessage {
 				if id == "" || seen[id] {
 					continue
 				}
-				matched, err := path.Match(wildcard.Pattern, id)
-				if err != nil || !matched {
+				matched := route.MatchModel(id)
+				if matched == nil || matched != wildcard {
 					continue
 				}
 				seen[id] = true
