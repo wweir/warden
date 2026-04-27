@@ -96,6 +96,16 @@ func (g *Gateway) handleRelayInference(
 
 			_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
 			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			observepkg.RecordInferenceLog(
+				completedLogParams,
+				rawResp,
+				errMsg,
+				spec.streamAssembler,
+				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, rawResp),
+				g.RecordTokenMetrics,
+				blockVerdicts,
+				g.recordAndBroadcast,
+			)
 			runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 				if len(asyncVerdicts) == 0 {
 					return
@@ -111,16 +121,6 @@ func (g *Gateway) handleRelayInference(
 					g.recordAndBroadcast,
 				)
 			})
-			observepkg.RecordInferenceLog(
-				completedLogParams,
-				rawResp,
-				errMsg,
-				spec.streamAssembler,
-				observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, rawResp),
-				g.RecordTokenMetrics,
-				blockVerdicts,
-				g.recordAndBroadcast,
-			)
 			return true
 		}
 
@@ -147,6 +147,7 @@ func (g *Gateway) handleRelayInference(
 		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
 		spec.writeNonStream(w, respBody)
 		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {
 				return
@@ -162,7 +163,6 @@ func (g *Gateway) handleRelayInference(
 				g.recordAndBroadcast,
 			)
 		})
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }

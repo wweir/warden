@@ -178,6 +178,7 @@ func (g *Gateway) handleChatBridge(
 		}
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
 		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {
 				return
@@ -193,7 +194,6 @@ func (g *Gateway) handleChatBridge(
 				g.recordAndBroadcast,
 			)
 		})
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return
 	}
 }

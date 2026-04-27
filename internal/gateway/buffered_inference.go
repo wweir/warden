@@ -140,6 +140,7 @@ func (g *Gateway) handleBufferedInference(
 
 		spec.writeNonStream(w, respBody)
 		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {
 				return
@@ -155,7 +156,6 @@ func (g *Gateway) handleBufferedInference(
 				g.recordAndBroadcast,
 			)
 		})
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		return true
 	}
 }
@@ -171,6 +171,16 @@ func (g *Gateway) finishBufferedNonStreamFallback(r *http.Request, session *infe
 
 func (g *Gateway) recordBufferedStreamResponse(session *inferenceSession, spec bufferedInferenceSpec, logParams observepkg.InferenceLogParams, respBody []byte, errMsg string, blockVerdicts []toolhook.HookVerdict, runAsync asyncHookFn) {
 	completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+	observepkg.RecordInferenceLog(
+		completedLogParams,
+		respBody,
+		errMsg,
+		spec.streamAssembler(session.provider.Protocol),
+		observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
+		g.RecordTokenMetrics,
+		blockVerdicts,
+		g.recordAndBroadcast,
+	)
 	runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 		if len(asyncVerdicts) == 0 {
 			return
@@ -186,20 +196,20 @@ func (g *Gateway) recordBufferedStreamResponse(session *inferenceSession, spec b
 			g.recordAndBroadcast,
 		)
 	})
-	observepkg.RecordInferenceLog(
-		completedLogParams,
-		respBody,
-		errMsg,
-		spec.streamAssembler(session.provider.Protocol),
-		observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
-		g.RecordTokenMetrics,
-		blockVerdicts,
-		g.recordAndBroadcast,
-	)
 }
 
 func (g *Gateway) recordBufferedNonStreamFallback(session *inferenceSession, logParams observepkg.InferenceLogParams, respBody []byte, blockVerdicts []toolhook.HookVerdict, runAsync asyncHookFn) {
 	completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+	observepkg.RecordInferenceLog(
+		completedLogParams,
+		respBody,
+		"",
+		nil,
+		observeJSONTokenUsage(session.serviceProtocol, respBody),
+		g.RecordTokenMetrics,
+		blockVerdicts,
+		g.recordAndBroadcast,
+	)
 	runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 		if len(asyncVerdicts) == 0 {
 			return
@@ -215,16 +225,6 @@ func (g *Gateway) recordBufferedNonStreamFallback(session *inferenceSession, log
 			g.recordAndBroadcast,
 		)
 	})
-	observepkg.RecordInferenceLog(
-		completedLogParams,
-		respBody,
-		"",
-		nil,
-		observeJSONTokenUsage(session.serviceProtocol, respBody),
-		g.RecordTokenMetrics,
-		blockVerdicts,
-		g.recordAndBroadcast,
-	)
 }
 
 func canBufferedSpecRelayStream(spec bufferedInferenceSpec, providerProtocol string) bool {
