@@ -11,7 +11,6 @@
 - Records wildcard route-model hits as soon as a concrete target is selected, so route `/models` can expose matched models even when the upstream request later fails.
 - Guards model discovery pagination against empty or repeated cursors so a broken upstream cannot trap startup/background refresh in an endless `/models` loop.
 - Stores admin-facing protocol probe state.
-- Exposes shared provider auth-header injection for gateway upstream calls.
 - Classifies wrapped downstream cancellation/deadline errors as non-retryable so request termination does not masquerade as a network failover signal.
 
 ## File Layout
@@ -25,3 +24,4 @@
 ## Boundary
 
 `selector` decides provider availability and target choice. It does not own HTTP routing, protocol conversion, request logging, or admin response assembly.
+Provider outbound authentication headers live in `internal/providerauth`.

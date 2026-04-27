@@ -11,20 +11,19 @@
 - Converts Prometheus cumulative counters into rolling dashboard time series for the admin UI.
 - Bridges stateless OpenAI `responses` requests to upstream `chat/completions` when a provider enables `responses_to_chat`, with explicit subset validation instead of mock passthrough.
 - Bridges Anthropic `messages` requests to upstream OpenAI `chat/completions` when a provider enables `anthropic_to_chat`, again using explicit subset validation instead of raw passthrough.
-- Keeps stream bridges live: `responses_to_chat` and `anthropic_to_chat` relay upstream SSE incrementally instead of buffering the whole body before writing downstream.
+- Keeps supported stream paths live: OpenAI-compatible `chat`, native `responses`, `responses_to_chat`, and `anthropic_to_chat` relay upstream SSE incrementally instead of buffering the whole body before writing downstream; OpenAI-compatible providers that ignore `stream=true` and return plain JSON fall back to the non-stream response path.
 - Logs inspectable upstream response bodies; transparent proxy logs decompress `gzip`/`br`/`zstd` bodies before persistence when possible.
 - Keeps failover trail on request logs, so a single successful client request still shows intermediate upstream switches.
 - Delegates the admin HTTP surface, embedded SPA wiring, provider protocol probes, and tool-hook suggestion aggregation to `internal/gateway/admin` instead of keeping admin-only logic in the root package.
 - Delegates shared recovery/CORS/client-auth middleware to `internal/gateway/httpmw`.
-- Delegates log sink construction and request-attempt logging helpers to `internal/gateway/logging`.
-- Delegates inference log assembly, stream normalization, and observed tool-hook dispatch to `internal/gateway/observe`.
-- Delegates transparent proxy request handling, proxy-specific provider selection, and proxy response log assembly to `internal/gateway/proxy`.
+- Delegates inference log assembly, stream response normalization, and observed tool-hook dispatch to `internal/gateway/observe`.
+- Delegates transparent proxy request handling and proxy-specific provider selection to `internal/gateway/proxy`.
 - Delegates request-scoped context metadata helpers to `internal/gateway/requestctx`.
-- Delegates admin-facing runtime metrics/API-key snapshot assembly to `internal/gateway/snapshot`.
 - Delegates live SSE relay and protocol stream conversion to `internal/gateway/bridge`.
-- Delegates shared inference target selection, auth retry, and failover state to `internal/gateway/inference`.
+- Delegates shared inference target selection, request service-protocol classification, auth retry, and failover state to `internal/gateway/inference`.
 - Delegates protocol/transport adaptation helpers and upstream HTTP execution to `internal/gateway/upstream`.
-- Delegates Prometheus collector ownership, metric label shaping, and dashboard telemetry primitives to `internal/gateway/telemetry`, while the root package keeps middleware wiring and admin-facing snapshot assembly.
+- Delegates Prometheus collector ownership, metric label shaping, dashboard telemetry primitives, and admin-facing snapshot assembly to `internal/gateway/telemetry`, while the root package keeps middleware wiring.
+- Keeps black-box gateway HTTP tests in `internal/gateway/integration` so the root package only carries tests that need unexported gateway internals.
 - Compiles route config into a deterministic longest-prefix binding table so transparent proxy fallback does not depend on Go map iteration when route prefixes overlap.
 
 ## Route-Centric Runtime
@@ -59,16 +58,14 @@
 ## Key Interfaces
 
 - `Gateway`: owns runtime dependencies, route registration, graceful shutdown, and admin handlers.
-- `internal/gateway/proxy`: owns transparent proxy handling plus shared helpers for proxy protocol classification and SSE-to-object log assembly.
+- `internal/gateway/proxy`: owns transparent proxy handling and proxy-specific provider selection.
 - `internal/gateway/httpmw`: owns shared HTTP middleware for panic recovery, CORS, and client API key auth.
-- `internal/gateway/logging`: owns log sink construction and lightweight request-attempt logging helpers.
-- `internal/gateway/observe`: owns inference-observation helpers for request logs, stream assembly, tool-call extraction, and route hook dispatch.
+- `internal/gateway/observe`: owns inference-observation helpers for request logs, SSE-to-object log assembly, tool-call extraction, and route hook dispatch.
 - `internal/gateway/bridge`: owns SSE relay and live protocol stream conversion between chat / responses / messages surfaces.
-- `internal/gateway/inference`: owns route-model matching plus per-request auth retry / failover lifecycle state.
+- `internal/gateway/inference`: owns route-model matching, request service-protocol classification, and per-request auth retry / failover lifecycle state.
 - `internal/gateway/admin`: owns the admin HTTP surface plus admin-only probe/suggestion helpers, while `gateway` injects selector/broadcaster plus the few runtime callbacks that still need root state.
 - `internal/gateway/admin` now keeps router/auth wiring separate from config/status/provider/route/API-key handlers, so admin-only changes stay localized instead of growing one monolithic entry file.
 - `internal/gateway/requestctx`: owns request-context helpers for original client requests, route hooks, and authenticated API key labels.
-- `internal/gateway/snapshot`: owns admin-facing snapshot assembly for dashboard metrics and API key usage payloads.
 - `internal/gateway/tokenusage`: owns protocol-aware token usage observation for JSON and SSE responses.
 - `internal/gateway/upstream`: owns protocol endpoint mapping, upstream request execution, body conversion, encoding negotiation, and forwarded-header sanitization.
 - `internal/gateway/telemetry`: owns Prometheus collectors, metric helpers, dashboard rolling store, and last-request output-rate freshness tracking.
@@ -79,17 +76,23 @@
 - Shared inference session helpers centralize current provider/target refresh, per-attempt log params, pending-log emission, and metric-label refresh after failover so chat / responses / messages handlers no longer duplicate the same lifecycle scaffolding.
 - Request-scoped retry paths short-circuit when the client request context is already canceled or expired, so wrapped disconnect/deadline errors do not spin in hot retry loops after the downstream is gone.
 - Chat-bridge helpers also centralize the shared `responses_to_chat` / `anthropic_to_chat` retry loop, pre-stream vs in-stream failure accounting, and final response logging so the two bridge paths stop carrying near-identical control flow.
-- Buffered inference helpers now also centralize the common `chat` / native `responses` request loop: upstream request preparation, retry/failover handling, success-path tool hook dispatch, and final log writing no longer live in two separate copies.
+- Shared inference helpers centralize the common `chat` / native `responses` request loop: upstream request preparation, retry/failover handling, live SSE relay when possible, non-stream JSON fallback, success-path tool hook dispatch, and final log writing no longer live in two separate copies.
 - Buffered / relay helpers preserve protocol-path switching across failover: if a request starts on a native provider and retries onto a bridge-capable provider, control flow re-enters the correct `responses_to_chat` or `anthropic_to_chat` path instead of staying pinned to the old execution branch.
 - Success-path `post` hooks keep route-scoped context values but detach from downstream request cancellation, so audit-only async hooks run in background after the handler returns; request logs keep only synchronous block verdicts, while streaming paths degrade block hooks to async audits because live responses cannot be rewritten. Each hook remains bounded by its own timeout.
-- Dashboard and API key snapshots stay in the root package as admin callbacks, but Prometheus collector ownership, rolling time-series state, and last-request throughput freshness state now live in `internal/gateway/telemetry`.
-- Gateway root no longer keeps one-line snapshot wrapper methods that only forwarded to `internal/gateway/snapshot`; callback wiring now points at the snapshot package directly.
+- Dashboard and API key snapshots stay in `internal/gateway/telemetry` as admin callbacks, alongside Prometheus collector ownership, rolling time-series state, and last-request throughput freshness state.
+- Gateway root no longer keeps one-line snapshot wrapper methods; callback wiring now points at telemetry snapshot helpers directly.
 - Inference request logging is assembled through shared helpers, so chat/responses/proxy paths keep the same `reqlog.Record` shape and stream-to-object logging behavior.
 - Token usage observation is extracted before metrics/logging fan-out, so route/provider/API-key counters, throughput, and request logs all consume the same normalized observation result.
 - Streaming inference requests publish a pending admin-log event early and overwrite it with the final record on completion, so the logs SSE feed does not wait for long streams to finish before surfacing the request.
 - Stream logs persist partial SSE payloads plus an error string when a live bridge is truncated after headers, so admin logs can distinguish upstream mid-stream failure from clean completion; Responses stream tool hooks also recover function calls from incremental events when `response.completed` never arrives.
 - Exact token counters and throughput only advance when usage observation is `exact`; separate `*_token_observations_total` counters expose `exact|partial|missing` coverage by route/provider/API key. Exact token counters keep existing `prompt` / `completion` buckets and additionally expose `cache` when the provider reports cache-specific token details.
 - Admin SSE handlers explicitly disable proxy buffering and the logs stream sends an immediate comment frame plus keepalive heartbeats, so the admin UI is less likely to see delayed SSE delivery behind reverse proxies.
+
+## Test Layout
+
+- Root `internal/gateway/*_test.go` files cover gateway internals that need same-package access, such as selector refresh hooks, inference helpers, and stream accounting state.
+- `internal/gateway/integration` contains black-box HTTP gateway tests that only use exported gateway APIs.
+- Subpackage tests live with the package they primarily verify, for example `admin`, `telemetry`, `upstream`, `observe`, and `inference`.
 
 ## Admin Telemetry Flow
 

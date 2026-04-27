@@ -7,12 +7,12 @@
 | 文件 | 职责 |
 |------|------|
 | `types.go` | 核心类型（`Record`、`Step`、`Logger` 接口） |
-| `fingerprint.go` | `BuildFingerprint` 及其 JSON 提取、文本归一化、哈希辅助函数 |
+| `fingerprint/` | 请求体 fingerprint 提取、文本归一化、哈希辅助函数 |
 | `record.go` | `GenerateID`、`Record.Sanitize`、JSON 包装辅助函数 |
 | `file.go` | `FileLogger`：每条记录写入独立 JSON 文件 |
 | `http.go` | `HTTPLogger`：异步推送日志到 HTTP 端点，支持模板渲染 |
 | `broadcast.go` | `Broadcaster`：内存广播器，SSE 推送 + 环形缓冲 |
-| `internal/gateway/logger.go` | `newLogger`/`multiLogger`：按配置构建多后端 Logger，`reqlog` 包本身只定义接口和后端实现 |
+| `internal/gateway/logging.go` | `newLogger`/`multiLogger`：按配置构建多后端 Logger，`reqlog` 包本身只定义接口和后端实现 |
 
 ## 核心类型
 
@@ -108,20 +108,7 @@ func GenerateID() string
 
 生成 8 字符十六进制随机 ID，用于标识单次请求。
 
-### BuildFingerprint
-
-```go
-func BuildFingerprint(rawBody json.RawMessage) string
-```
-
-从请求体构建会话指纹，用于在日志中识别连续对话。使用 gjson 轻量解析，不做完整反序列化。
-
-**格式**：`{sys_hash}{fsm_chain}`
-
-- `sys_hash`：所有 system prompt 文本拼接后的 FNV-32a hash，6 位十六进制
-- `fsm_chain`：每轮用户/助手输入的 hash，宽度依序递减（6→5→4→3→2→2→…），无分隔符
-
-**会话连续性**：指纹本身只表达 system prompt 与对话步骤序列，不包含 model / route。管理端在日志页中会先用显式 `previous_response_id -> response.id` 续接；没有显式续接时，再把同 route 下且 `sys_hash` 相同、并满足“较早记录指纹是较新记录指纹严格前缀”的请求保守归并为同一会话。
+请求体 fingerprint 构建位于 `internal/reqlog/fingerprint`。`reqlog` 只持有记录结构、输出后端和 SSE 广播。
 
 **稳定性保证**：
 - 过滤 `x-anthropic-billing-header:` 行（billing token 变化不影响指纹）

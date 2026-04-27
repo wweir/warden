@@ -5,7 +5,7 @@
 `internal/gateway/observe` owns inference-observation helpers shared by multiple gateway handlers:
 
 - Request log parameter assembly and pending/final log publication.
-- Stream log assembly helpers.
+- Stream log assembly and fallback formatting.
 - Tool-call extraction from Chat / Responses / Anthropic payloads.
 - Route-scoped tool-hook execution: `RunBlockToolHooks` (synchronous, can reject) and `RunAsyncToolHooks` (audit-only).
 - Response body injection: `InjectChatBlockVerdicts`, `InjectResponsesBlockVerdicts`, `InjectAnthropicBlockVerdicts` remove rejected tool calls from non-stream responses.
@@ -14,5 +14,5 @@
 
 ## Boundary
 
-- The package parses responses and builds log records, but does not own HTTP routing.
+- The package parses responses and builds log records, but does not own HTTP routing or proxy transport.
 - Runtime-owned side effects such as metric recording and log emission are injected by callback.

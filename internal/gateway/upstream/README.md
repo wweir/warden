@@ -9,6 +9,7 @@
 - Marshals and unmarshals OpenAI / Anthropic request and response bodies.
 - Negotiates `Accept-Encoding`, normalizes `Content-Encoding`, and decodes compressed bodies.
 - Sanitizes forwarded proxy headers before requests leave the gateway.
+- Uses `internal/providerauth` for provider authentication and configured static headers.
 - Normalizes upstream HTTP errors before handlers decide whether to retry or fail over.
 
 The package is intentionally stateless. `gateway` and `internal/gateway/inference` keep request lifecycle decisions, selector interaction, logging, and metrics ownership.
