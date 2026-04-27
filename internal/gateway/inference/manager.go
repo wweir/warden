@@ -31,6 +31,7 @@ type Manager struct {
 	current     *ResolvedTarget
 	excluded    []string
 	authRetried map[string]bool
+	sameRetried map[string]bool
 	failovers   []reqlog.Failover
 }
 
@@ -59,6 +60,7 @@ func NewManager(
 		onFailover:       onFailover,
 		current:          current,
 		authRetried:      map[string]bool{},
+		sameRetried:      map[string]bool{},
 	}, nil
 }
 
@@ -84,6 +86,11 @@ func (m *Manager) HandleError(err error) bool {
 		return false
 	}
 	if m.selector.CountAvailableProviders(m.cfg, m.serviceProtocol, m.current.Model, m.requestedModel) <= 1 {
+		key := m.current.Target.Key + "|" + m.serviceProtocol
+		if m.sameRetried[key] {
+			return false
+		}
+		m.sameRetried[key] = true
 		slog.Warn("Retrying only available provider despite auto suppression", "provider", m.current.Provider.Name, "route", m.route.Prefix, "endpoint", m.endpoint, "error", err)
 		return true
 	}

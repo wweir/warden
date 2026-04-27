@@ -53,7 +53,7 @@ func newSingleProviderManager(t *testing.T) *Manager {
 	return manager
 }
 
-func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
+func TestManagerHandleErrorRetriesOnlyAvailableProviderOnce(t *testing.T) {
 	t.Parallel()
 
 	manager := newSingleProviderManager(t)
@@ -72,6 +72,22 @@ func TestManagerHandleErrorRetriesOnlyAvailableProvider(t *testing.T) {
 	}
 	if len(manager.Failovers()) != 0 {
 		t.Fatalf("failovers len = %d, want 0", len(manager.Failovers()))
+	}
+
+	retried = manager.HandleError(&sel.UpstreamError{Code: 500, Body: `{"error":{"type":"server_error","message":"boom"}}`})
+	if retried {
+		t.Fatal("HandleError() second retry = true, want false")
+	}
+}
+
+func TestManagerHandleErrorDoesNotRetryBadRequestValidation(t *testing.T) {
+	t.Parallel()
+
+	manager := newSingleProviderManager(t)
+
+	retried := manager.HandleError(&sel.UpstreamError{Code: 400, Body: `{"error":"'input_type' parameter is required for asymmetric models"}`})
+	if retried {
+		t.Fatal("HandleError() = true, want false for non-retryable request validation error")
 	}
 }
 

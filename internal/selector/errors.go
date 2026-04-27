@@ -33,21 +33,22 @@ func (e *UpstreamError) IsAuthError() bool {
 // IsRetryable determines whether this error warrants failover to another provider.
 //
 // Retryable by HTTP status code:
-//   - 400: bad request — some providers reject valid requests (e.g. unsupported params), another may accept
-//   - 401: unauthorized — credentials/model entitlements may differ across providers
-//   - 403: forbidden — provider may reject specific models/keys, another provider may accept
-//   - 404: endpoint not found — provider does not support this API (e.g. /responses)
-//   - 429: rate limit / quota exhausted — different provider may have capacity
+//   - 401: credentials/model entitlements may differ across providers
+//   - 403: provider may reject specific models/keys, another provider may accept
+//   - 404: endpoint not found or model missing on this provider
+//   - 429: rate limit / quota exhausted
 //   - 500+: server errors, overloaded (including 502/503/504, Cloudflare 520-524, Anthropic 529)
 //
-// Retryable by response body content (for 4xx that are actually proxy/capacity issues):
+// Retryable by response body content:
 //   - Non-JSON body (HTML error pages from nginx/Cloudflare) on any error status
 //   - Anthropic: overloaded_error, api_error, rate_limit_error
 //   - OpenAI-compatible: server_error, rate_limit_error, insufficient_quota, model_not_found
 //   - Vendor-specific 401s that indicate provider/model access mismatch: key_model_access_denied
+//
+// Plain 400 request validation errors are not retryable. They usually require
+// client-side request changes, for example provider-specific embeddings fields.
 func (e *UpstreamError) IsRetryable() bool {
-	// 5xx, 429, 404, 403, 401 and 400 are always retryable
-	if e.Code >= 500 || e.Code == 400 || e.Code == 401 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
+	if e.Code >= 500 || e.Code == 401 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
 		return true
 	}
 
@@ -60,7 +61,7 @@ func (e *UpstreamError) IsRetryable() bool {
 		return true
 	}
 
-	// parse JSON error body for provider-specific retryable error types
+	// Parse JSON error body for provider-specific retryable error types.
 	return IsRetryableByBody(body)
 }
 
@@ -153,7 +154,8 @@ func IsRetryableError(err error) bool {
 	}
 
 	// UpstreamError: use its IsRetryable method
-	if ue, ok := err.(*UpstreamError); ok {
+	var ue *UpstreamError
+	if errors.As(err, &ue) {
 		return ue.IsRetryable()
 	}
 

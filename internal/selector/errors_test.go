@@ -45,7 +45,7 @@ func TestIsRetryableError_UpstreamRetryable(t *testing.T) {
 		{429, true},
 		{404, true},
 		{403, true},
-		{400, true},
+		{400, false},
 		{401, true},
 		{422, false},
 	}
@@ -110,6 +110,26 @@ func TestIsRetryableError_OpenAIModelNotFound(t *testing.T) {
 	}
 	if !IsRetryableError(err) {
 		t.Error("IsRetryableError(OpenAI model_not_found) = false, want true")
+	}
+}
+
+func TestIsRetryableError_BadRequestModelNotFound(t *testing.T) {
+	err := &UpstreamError{
+		Code: 400,
+		Body: `{"error":{"type":"invalid_request_error","code":"model_not_found","message":"The model does not exist"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(400 model_not_found) = false, want true")
+	}
+}
+
+func TestIsRetryableError_BadRequestValidation(t *testing.T) {
+	err := &UpstreamError{
+		Code: 400,
+		Body: `{"error":"'input_type' parameter is required for asymmetric models"}`,
+	}
+	if IsRetryableError(err) {
+		t.Error("IsRetryableError(400 input_type validation error) = true, want false")
 	}
 }
 
