@@ -221,12 +221,12 @@ func sendAnthropicProbe(ctx context.Context, provCfg *config.ProviderConfig, mod
 }
 
 func sendResponsesProbe(ctx context.Context, provCfg *config.ProviderConfig, model, previousResponseID string) error {
-	_, _, err := sendResponsesProbeRaw(ctx, provCfg, model, previousResponseID)
+	_, _, err := sendResponsesProbeRaw(ctx, provCfg, model, previousResponseID, false)
 	return err
 }
 
 func sendResponsesProbeAndExtractID(ctx context.Context, provCfg *config.ProviderConfig, model string) (string, error) {
-	body, _, err := sendResponsesProbeRaw(ctx, provCfg, model, "")
+	body, _, err := sendResponsesProbeRaw(ctx, provCfg, model, "", true)
 	if err != nil {
 		return "", err
 	}
@@ -237,7 +237,7 @@ func sendResponsesProbeAndExtractID(ctx context.Context, provCfg *config.Provide
 	return id, nil
 }
 
-func sendResponsesProbeRaw(ctx context.Context, provCfg *config.ProviderConfig, model, previousResponseID string) ([]byte, time.Duration, error) {
+func sendResponsesProbeRaw(ctx context.Context, provCfg *config.ProviderConfig, model, previousResponseID string, store bool) ([]byte, time.Duration, error) {
 	if provCfg.Protocol != "openai" {
 		return nil, 0, fmt.Errorf("provider family does not support responses probe")
 	}
@@ -245,7 +245,7 @@ func sendResponsesProbeRaw(ctx context.Context, provCfg *config.ProviderConfig, 
 		"model":             model,
 		"input":             "ping",
 		"max_output_tokens": 1,
-		"store":             false,
+		"store":             store,
 	}
 	if previousResponseID != "" {
 		payload["previous_response_id"] = previousResponseID
