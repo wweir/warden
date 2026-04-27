@@ -1248,16 +1248,30 @@ function applyPresetByID(presetID) {
   const preset = providerPresets.value.find((item) => item.id === presetID);
   if (!preset) return;
 
+  const current = providerConfig.value || createEmptyProviderConfig();
+  const previousPreset = currentPreset.value;
   const next = createEmptyProviderConfig();
   next.family = preset.family || "";
   next.backend = preset.backend || "";
   next.backend_provider = preset.backend_provider || "";
-  next.url = preset.default_url || "";
-  next.config_dir = preset.default_config_dir || "";
+  next.url = presetFieldValue(
+    current.url,
+    previousPreset?.default_url,
+    preset.default_url,
+  );
+  next.config_dir = presetFieldValue(
+    current.config_dir,
+    previousPreset?.default_config_dir,
+    preset.default_config_dir,
+  );
+  next.models = [...(current.models || [])];
+  next.headers = cloneData(current.headers || {});
+  next.proxy = current.proxy || "";
+  next.timeout = current.timeout || "";
+  next.api_key = current.api_key || "";
   providerConfig.value = next;
   selectedPresetId.value = preset.id;
   showAPIKey.value = false;
-  apiKeyTouched.value = false;
   if (preset.service_protocol_template) {
     applyServiceProtocolTemplateByID(preset.service_protocol_template);
   } else {
@@ -1269,11 +1283,20 @@ function applyAccessPresetByID(presetID) {
   const preset = providerPresets.value.find((item) => item.id === presetID);
   if (!preset) return;
 
+  const previousPreset = currentPreset.value;
   providerConfig.value.family = preset.family || "";
   providerConfig.value.backend = preset.backend || "";
   providerConfig.value.backend_provider = preset.backend_provider || "";
-  providerConfig.value.url = preset.default_url || providerConfig.value.url || "";
-  providerConfig.value.config_dir = preset.default_config_dir || "";
+  providerConfig.value.url = presetFieldValue(
+    providerConfig.value.url,
+    previousPreset?.default_url,
+    preset.default_url,
+  );
+  providerConfig.value.config_dir = presetFieldValue(
+    providerConfig.value.config_dir,
+    previousPreset?.default_config_dir,
+    preset.default_config_dir,
+  );
   selectedPresetId.value = preset.id;
   if (preset.service_protocol_template) {
     applyServiceProtocolTemplateByID(preset.service_protocol_template);
@@ -1292,6 +1315,15 @@ function handleAccessTypeChange(presetID) {
     return;
   }
   applyAccessPresetByID(presetID);
+}
+
+function presetFieldValue(currentValue, previousDefault, nextDefault) {
+  const current = String(currentValue || "").trim();
+  const prev = String(previousDefault || "").trim();
+  const next = String(nextDefault || "").trim();
+  if (!current) return next;
+  if (prev && current === prev) return next;
+  return currentValue || "";
 }
 
 function handleServiceTemplateChange(templateID) {

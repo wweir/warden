@@ -818,6 +818,12 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal provider form meta: %v", err)
 	}
+	if len(payload.Presets) == 0 {
+		t.Fatal("provider presets are empty")
+	}
+	if payload.Presets[0].ID != "openai-compatible" {
+		t.Fatalf("first preset = %q, want openai-compatible", payload.Presets[0].ID)
+	}
 
 	var codexPreset *struct {
 		ID                      string `json:"id"`
