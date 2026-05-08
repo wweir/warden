@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 func testExactModel(protocol string, upstreams ...*RouteUpstreamConfig) *ExactRouteModelConfig {
@@ -221,9 +219,10 @@ func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 }
 
 func TestValidateLogTargetRejectsNilEntry(t *testing.T) {
-	cfg := &ConfigStruct{}
-	if err := yaml.Unmarshal([]byte("log:\n  targets:\n    - null\n"), cfg); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	cfg := &ConfigStruct{
+		Log: &LogConfig{
+			Targets: []*LogTarget{nil},
+		},
 	}
 
 	err := cfg.Validate()
@@ -1042,6 +1041,16 @@ func TestValidateCLIProxyBackendRequiresProviderAndServiceProtocols(t *testing.T
 	}
 }
 
+func TestValidateEmbeddedCLIProxyDefaultsAuthDirToEtcWarden(t *testing.T) {
+	cfg := &ConfigStruct{CLIProxy: &CLIProxyConfig{}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.CLIProxy.AuthDir != DefaultCLIProxyAuthDir {
+		t.Fatalf("cliproxy auth_dir = %q, want %q", cfg.CLIProxy.AuthDir, DefaultCLIProxyAuthDir)
+	}
+}
+
 func TestValidateEmbeddedCLIProxyConfig(t *testing.T) {
 	cfg := &ConfigStruct{
 		CLIProxy: &CLIProxyConfig{
@@ -1533,6 +1542,184 @@ func TestValidateAcceptsRouteAPIKeys(t *testing.T) {
 					"gpt-4o": {
 						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
 					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateProviderAPIKeyCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *ProviderConfig
+		wantErr  string
+	}{
+		{
+			name: "openai command",
+			provider: &ProviderConfig{
+				Family:               ProviderProtocolOpenAI,
+				URL:                  "https://api.openai.com/v1",
+				APIKeyCommand:        "printf token",
+				APIKeyCommandTimeout: "2s",
+				APIKeyCommandTTL:     "10m",
+			},
+		},
+		{
+			name: "anthropic command",
+			provider: &ProviderConfig{
+				Family:        ProviderProtocolAnthropic,
+				URL:           "https://api.anthropic.com/v1",
+				APIKeyCommand: "printf token",
+			},
+		},
+		{
+			name: "static and command conflict",
+			provider: &ProviderConfig{
+				Family:        ProviderProtocolOpenAI,
+				URL:           "https://api.openai.com/v1",
+				APIKey:        "static",
+				APIKeyCommand: "printf token",
+			},
+			wantErr: "api_key and api_key_command are mutually exclusive",
+		},
+		{
+			name: "invalid timeout",
+			provider: &ProviderConfig{
+				Family:               ProviderProtocolOpenAI,
+				URL:                  "https://api.openai.com/v1",
+				APIKeyCommand:        "printf token",
+				APIKeyCommandTimeout: "soon",
+			},
+			wantErr: "invalid api_key_command_timeout",
+		},
+		{
+			name: "zero timeout",
+			provider: &ProviderConfig{
+				Family:               ProviderProtocolOpenAI,
+				URL:                  "https://api.openai.com/v1",
+				APIKeyCommand:        "printf token",
+				APIKeyCommandTimeout: "0s",
+			},
+			wantErr: "api_key_command_timeout must be > 0",
+		},
+		{
+			name: "negative timeout",
+			provider: &ProviderConfig{
+				Family:               ProviderProtocolOpenAI,
+				URL:                  "https://api.openai.com/v1",
+				APIKeyCommand:        "printf token",
+				APIKeyCommandTimeout: "-1s",
+			},
+			wantErr: "api_key_command_timeout must be > 0",
+		},
+		{
+			name: "invalid ttl",
+			provider: &ProviderConfig{
+				Family:           ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKeyCommand:    "printf token",
+				APIKeyCommandTTL: "later",
+			},
+			wantErr: "invalid api_key_command_ttl",
+		},
+		{
+			name: "negative ttl",
+			provider: &ProviderConfig{
+				Family:           ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKeyCommand:    "printf token",
+				APIKeyCommandTTL: "-1s",
+			},
+			wantErr: "api_key_command_ttl must be >= 0",
+		},
+		{
+			name: "cliproxy rejects command",
+			provider: &ProviderConfig{
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				ServiceProtocols: []string{RouteProtocolChat},
+				APIKeyCommand:    "printf token",
+			},
+			wantErr: "api_key_command is not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ConfigStruct{
+				Provider: map[string]*ProviderConfig{"primary": tt.provider},
+				Route: map[string]*RouteConfig{
+					"/chat": {
+						Protocol: RouteProtocolChat,
+						WildcardModels: map[string]*WildcardRouteModelConfig{
+							"*": {Providers: []string{"primary"}},
+						},
+					},
+				},
+			}
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidateProviderAPIKeyCommandDoesNotChangeServiceProtocols(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"primary": {
+				Family:           ProviderProtocolOpenAI,
+				URL:              "https://api.openai.com/v1",
+				APIKeyCommand:    "printf token",
+				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"primary"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	got := SupportedServiceProtocols(cfg.Provider["primary"])
+	want := []string{RouteProtocolChat, ServiceProtocolEmbeddings}
+	if !slices.Equal(got, want) {
+		t.Fatalf("SupportedServiceProtocols() = %v, want %v", got, want)
+	}
+}
+
+func TestValidateCopilotAPIKeyCommandSkipsConfigDirCredentialCheck(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"copilot": {
+				Family:        ProviderProtocolCopilot,
+				APIKeyCommand: "printf token",
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"copilot"}},
 				},
 			},
 		},

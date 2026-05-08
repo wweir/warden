@@ -82,12 +82,12 @@ func (h *Handler) HandleAPIKeysCreate(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	yamlData, err := marshalConfigYAML(candidate)
+	configData, err := h.marshalConfigFile(candidate)
 	if err != nil {
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.writeConfigFile(yamlData); err != nil {
+	if err := h.writeConfigFile(configData); err != nil {
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest
@@ -165,12 +165,12 @@ func (h *Handler) HandleAPIKeysDelete(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	yamlData, err := marshalConfigYAML(candidate)
+	configData, err := h.marshalConfigFile(candidate)
 	if err != nil {
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.writeConfigFile(yamlData); err != nil {
+	if err := h.writeConfigFile(configData); err != nil {
 		status := http.StatusInternalServerError
 		if err == errNoConfigPath {
 			status = http.StatusBadRequest

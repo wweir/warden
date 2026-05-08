@@ -13,7 +13,7 @@ import (
 const (
 	windowsTaskName   = "Warden"
 	windowsBinaryPath = `C:\Program Files\Warden\warden.exe`
-	windowsConfigPath = `C:\ProgramData\Warden\warden.yaml`
+	windowsConfigPath = `C:\ProgramData\Warden\warden.toml`
 	windowsLogPath    = `C:\ProgramData\Warden\logs\warden.log`
 	windowsScriptPath = `C:\Program Files\Warden\warden-task.cmd`
 )
@@ -40,7 +40,9 @@ func InstallService(opts Options) error {
 		return err
 	}
 
-	ensureManagedBootstrapConfig(windowsConfigPath, opts)
+	if _, err := ensureManagedBootstrapConfig(windowsConfigPath, opts); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(windowsScriptPath), 0o755); err != nil {
 		return fmt.Errorf("create task script dir: %w", err)

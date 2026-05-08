@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 
+	"github.com/BurntSushi/toml"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
-	"gopkg.in/yaml.v3"
 )
+
+const configFileMode = 0o600
 
 func (h *Handler) HandleAdminConfigSource(w http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
@@ -68,19 +71,18 @@ func (h *Handler) HandleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 			InjectSecrets(currentMap, h.cfg)
 			SanitizeConfigJSON(newMap, currentMap)
 		}
-		DropOAuthProviderAPIKey(newMap)
 		NormalizeSecretConfigJSON(newMap)
 		NormalizeProviderConfigJSON(newMap)
 		NormalizePromptConfigJSON(newMap)
 	}
 
-	yamlData, err := yaml.Marshal(cfgMap)
+	configData, err := marshalConfigMap(cfgMap)
 	if err != nil {
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if err = h.writeConfigFile(yamlData); err != nil {
+	if err = h.writeConfigFile(configData); err != nil {
 		if errors.Is(err, errNoConfigPath) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -102,7 +104,7 @@ var (
 	errConfigChangedExternally = errors.New("config file changed externally, please reload")
 )
 
-func (h *Handler) writeConfigFile(yamlData []byte) error {
+func (h *Handler) writeConfigFile(configData []byte) error {
 	configPath := h.configPathValue()
 	if configPath == "" {
 		return errNoConfigPath
@@ -115,10 +117,13 @@ func (h *Handler) writeConfigFile(yamlData []byte) error {
 			}
 		}
 	}
-	if err := os.WriteFile(configPath, yamlData, 0o644); err != nil {
+	if err := os.WriteFile(configPath, configData, configFileMode); err != nil {
 		return err
 	}
-	h.setConfigHash(fmt.Sprintf("%x", sha256.Sum256(yamlData)))
+	if err := os.Chmod(configPath, configFileMode); err != nil {
+		return err
+	}
+	h.setConfigHash(fmt.Sprintf("%x", sha256.Sum256(configData)))
 	return nil
 }
 
@@ -154,7 +159,45 @@ func cloneConfig(cfg *config.ConfigStruct) (*config.ConfigStruct, error) {
 	return &cloned, nil
 }
 
-func marshalConfigYAML(cfg *config.ConfigStruct) ([]byte, error) {
+func marshalConfigMap(cfgMap any) ([]byte, error) {
+	normalizeTOMLNumbers(cfgMap)
+	tomlData, err := toml.Marshal(cfgMap)
+	if err != nil {
+		return nil, fmt.Errorf("encode toml config: %w", err)
+	}
+	return tomlData, nil
+}
+
+func normalizeTOMLNumbers(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if normalized, ok := normalizeTOMLNumberValue(child); ok {
+				typed[key] = normalized
+				continue
+			}
+			normalizeTOMLNumbers(child)
+		}
+	case []any:
+		for i, child := range typed {
+			if normalized, ok := normalizeTOMLNumberValue(child); ok {
+				typed[i] = normalized
+				continue
+			}
+			normalizeTOMLNumbers(child)
+		}
+	}
+}
+
+func normalizeTOMLNumberValue(value any) (any, bool) {
+	number, ok := value.(float64)
+	if !ok || math.Trunc(number) != number {
+		return nil, false
+	}
+	return int64(number), true
+}
+
+func marshalConfigFile(cfg *config.ConfigStruct) ([]byte, error) {
 	currentData, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal runtime config: %w", err)
@@ -166,18 +209,17 @@ func marshalConfigYAML(cfg *config.ConfigStruct) ([]byte, error) {
 	}
 
 	InjectSecrets(cfgMap, cfg)
-	DropOAuthProviderAPIKey(cfgMap)
 	NormalizeSecretConfigJSON(cfgMap)
 	NormalizeProviderConfigJSON(cfgMap)
 	NormalizePromptConfigJSON(cfgMap)
 
-	yamlData, err := yaml.Marshal(cfgMap)
-	if err != nil {
-		return nil, fmt.Errorf("encode config: %w", err)
-	}
-	return yamlData, nil
+	return marshalConfigMap(cfgMap)
 }
 
-func (h *Handler) marshalRuntimeConfigYAML() ([]byte, error) {
-	return marshalConfigYAML(h.cfg)
+func (h *Handler) marshalConfigFile(cfg *config.ConfigStruct) ([]byte, error) {
+	return marshalConfigFile(cfg)
+}
+
+func (h *Handler) marshalRuntimeConfigFile() ([]byte, error) {
+	return h.marshalConfigFile(h.cfg)
 }

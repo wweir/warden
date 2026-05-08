@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-viper/mapstructure/v2"
-	"gopkg.in/yaml.v3"
 )
 
 // SecretString is a string that may be stored as base64 in config files.
@@ -66,20 +65,6 @@ func (s *SecretString) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	return s.UnmarshalText([]byte(raw))
-}
-
-// MarshalYAML implements yaml.Marshaler.
-func (s SecretString) MarshalYAML() (any, error) {
-	return s.Encoded(), nil
-}
-
-// UnmarshalYAML implements yaml.Unmarshaler.
-func (s *SecretString) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == 0 || node.Tag == "!!null" {
-		*s = ""
-		return nil
-	}
-	return s.UnmarshalText([]byte(node.Value))
 }
 
 // Value returns the underlying string value.

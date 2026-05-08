@@ -7,22 +7,34 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/wweir/warden/config"
 )
 
 // ConfirmFunc prompts the user for yes/no confirmation.
 type ConfirmFunc func(label string) bool
 
+// PasswordPromptFunc prompts the user for a sensitive password value.
+type PasswordPromptFunc func(label string) (string, bool)
+
 const windowsManagedRestartExitCode = 75
 
 const (
-	managedLocalAddr    = "127.0.0.1:9832"
-	managedExternalAddr = ":9832"
+	managedLocalAddr     = "127.0.0.1:9832"
+	managedExternalAddr  = ":9832"
+	defaultAdminPassword = "admin"
+	managedConfigMode    = 0o600
 )
 
+const minimumManagedAdminPasswordLength = 12
+
 type Options struct {
-	Confirm           ConfirmFunc
-	StartAfterInstall *bool
-	ExposeExternally  *bool
+	Confirm             ConfirmFunc
+	AdminPassword       *string
+	AdminPasswordPrompt PasswordPromptFunc
+	StartAfterInstall   *bool
+	ExposeExternally    *bool
 }
 
 func ManagedConfigPath() string {
@@ -47,7 +59,8 @@ func ShouldExposeManagedService(opts Options) bool {
 		return opts.Confirm(`Bootstrap config can listen only on localhost (safer default) or on all network interfaces.
 Choose "yes" only when clients on other machines must connect directly to this host.
 External exposure binds Warden to port 9832 on all interfaces.
-The external bootstrap config keeps the admin UI disabled until you set a strong admin_password.
+If a new config is created, interactive install prompts for a strong admin password.
+Non-interactive external bootstrap keeps the admin UI disabled until you set admin_password.
 Expose Warden on all network interfaces?`)
 	}
 	return false
@@ -79,20 +92,16 @@ func copyBinary(srcPath, targetPath string) error {
 	return nil
 }
 
-func managedBootstrapConfig(exposeExternally bool) string {
+func managedBootstrapConfig(exposeExternally bool, adminPassword string) string {
 	addr := managedLocalAddr
-	adminBlock := `# Admin UI (local only): http://localhost:9832/_admin/
-# Username is "admin"; password comes from admin_password.
-# Change this password before exposing Warden beyond localhost.
-admin_password: "admin"`
+	adminBlock := disabledAdminBlock(exposeExternally)
+	if adminPassword != "" {
+		adminBlock = enabledAdminBlock(exposeExternally, adminPassword)
+	}
 	if exposeExternally {
 		addr = managedExternalAddr
-		adminBlock = `# Admin UI stays disabled in the external bootstrap config.
-# Set a strong admin_password before enabling remote admin access.
-# Example:
-# admin_password: "replace-with-a-strong-secret"`
 	}
-	return fmt.Sprintf(`addr: %q
+	return fmt.Sprintf(`addr = %q
 
 %s
 
@@ -100,32 +109,103 @@ admin_password: "admin"`
 `, addr, adminBlock)
 }
 
-func ensureManagedBootstrapConfig(configPath string, opts Options) bool {
+func enabledAdminBlock(exposeExternally bool, adminPassword string) string {
+	url := "http://localhost:9832/_admin/"
+	exposureNote := "# Change this password before exposing Warden beyond trusted local access."
+	if exposeExternally {
+		url = "http://<host>:9832/_admin/"
+		exposureNote = "# This admin UI is reachable from the network; use only a strong private password."
+	}
+	return fmt.Sprintf(`# Admin UI: %s
+# Username is "admin"; password was set during installation.
+%s
+admin_password = %q`, url, exposureNote, config.EncodeSecret(adminPassword))
+}
+
+func disabledAdminBlock(exposeExternally bool) string {
+	if exposeExternally {
+		return `# Admin UI stays disabled in the external non-interactive bootstrap config.
+# Set a strong admin_password before enabling remote admin access.
+# Example:
+# admin_password = "replace-with-a-strong-secret"`
+	}
+	return `# Admin UI stays disabled until admin_password is set.
+# Example:
+# admin_password = "replace-with-a-strong-secret"`
+}
+
+func resolveManagedAdminPassword(exposeExternally bool, opts Options) (string, error) {
+	if opts.AdminPassword != nil {
+		if err := ValidateManagedAdminPassword(*opts.AdminPassword); err != nil {
+			return "", err
+		}
+		return *opts.AdminPassword, nil
+	}
+
+	if opts.AdminPasswordPrompt != nil {
+		password, ok := opts.AdminPasswordPrompt("Enter admin password for Warden Admin UI")
+		if !ok {
+			return "", fmt.Errorf("admin password prompt was canceled")
+		}
+		if err := ValidateManagedAdminPassword(password); err != nil {
+			return "", err
+		}
+		return password, nil
+	}
+
+	if exposeExternally {
+		return "", nil
+	}
+	return defaultAdminPassword, nil
+}
+
+// ValidateManagedAdminPassword checks the managed install admin password policy.
+func ValidateManagedAdminPassword(password string) error {
+	if strings.TrimSpace(password) == "" {
+		return fmt.Errorf("admin password cannot be empty")
+	}
+	if utf8.RuneCountInString(password) < minimumManagedAdminPasswordLength {
+		return fmt.Errorf("admin password must be at least %d characters", minimumManagedAdminPasswordLength)
+	}
+	return nil
+}
+
+func ensureManagedBootstrapConfig(configPath string, opts Options) (bool, error) {
 	if _, err := os.Stat(configPath); err == nil {
-		return false
+		return false, nil
 	} else if !os.IsNotExist(err) {
-		fmt.Printf("  Warning: inspect default config path failed: %v\n", err)
-		return false
+		return false, fmt.Errorf("inspect default config path: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		fmt.Printf("  Warning: create config dir failed: %v\n", err)
-		return false
+		return false, fmt.Errorf("create config dir: %w", err)
 	}
 	exposeExternally := ShouldExposeManagedService(opts)
-	if err := os.WriteFile(configPath, []byte(managedBootstrapConfig(exposeExternally)), 0o644); err != nil {
-		fmt.Printf("  Warning: write default config failed: %v\n", err)
-		return false
+	adminPassword, err := resolveManagedAdminPassword(exposeExternally, opts)
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(configPath, []byte(managedBootstrapConfig(exposeExternally, adminPassword)), managedConfigMode); err != nil {
+		return false, fmt.Errorf("write default config: %w", err)
 	}
 	fmt.Printf("  Created default config: %s\n", configPath)
 	if exposeExternally {
 		fmt.Println("  Bootstrap config listens on all network interfaces via port 9832")
-		fmt.Println("  Admin UI is disabled until admin_password is set in the config")
+		if adminPassword == "" {
+			fmt.Println("  Admin UI is disabled until admin_password is set in the config")
+		} else {
+			fmt.Println(`  Admin UI username is "admin"; use the password entered during installation`)
+			fmt.Println("  Admin UI is reachable on exposed interfaces; keep this password strong and private")
+		}
 	} else {
 		fmt.Println("  Bootstrap config listens on localhost only: http://localhost:9832/_admin/")
-		fmt.Println(`  Admin UI username is "admin"; update admin_password before exposing Warden`)
+		if opts.AdminPasswordPrompt != nil || opts.AdminPassword != nil {
+			fmt.Println(`  Admin UI username is "admin"; use the password entered during installation`)
+		} else {
+			fmt.Println(`  Admin UI username is "admin"; update admin_password before exposing Warden`)
+		}
 	}
-	return true
+	return true, nil
 }
 
 func fileExists(path string) bool {

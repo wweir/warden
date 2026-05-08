@@ -12,7 +12,7 @@ import (
 const (
 	linuxServiceName = "warden"
 	linuxBinaryPath  = "/usr/local/bin/warden"
-	linuxConfigPath  = "/etc/warden.yaml"
+	linuxConfigPath  = "/etc/warden/warden.toml"
 	linuxServicePath = "/etc/systemd/system/warden.service"
 )
 
@@ -62,7 +62,9 @@ WantedBy=multi-user.target
 	}
 	fmt.Printf("  Service file installed: %s\n", linuxServicePath)
 
-	ensureManagedBootstrapConfig(linuxConfigPath, opts)
+	if _, err := ensureManagedBootstrapConfig(linuxConfigPath, opts); err != nil {
+		return err
+	}
 
 	if err := runSystemctl("daemon-reload"); err != nil {
 		return err

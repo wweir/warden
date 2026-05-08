@@ -1,0 +1,19 @@
+addr = ":9832"
+
+# Admin UI is available at http://localhost:9832/_admin/ when this is set.
+# Empty or omitted admin_password disables the admin UI.
+# admin_password = "your-secret-password"
+
+[provider.openai]
+family = "openai"
+url = "https://api.openai.com/v1"
+api_key = "${OPENAI_API_KEY}"
+timeout = "120s"
+
+[route."/openai"]
+protocol = "chat"
+
+[route."/openai".exact_models."gpt-4o"]
+[[route."/openai".exact_models."gpt-4o".upstreams]]
+provider = "openai"
+model = "gpt-4o"

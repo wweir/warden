@@ -13,7 +13,7 @@ import (
 const (
 	darwinLaunchdLabel = "com.wweir.warden"
 	darwinBinaryPath   = "/usr/local/bin/warden"
-	darwinConfigPath   = "/usr/local/etc/warden.yaml"
+	darwinConfigPath   = "/usr/local/etc/warden/warden.toml"
 	darwinStdoutPath   = "/usr/local/var/log/warden.log"
 	darwinStderrPath   = "/usr/local/var/log/warden.err.log"
 	darwinLaunchdPlist = "/Library/LaunchDaemons/com.wweir.warden.plist"
@@ -53,7 +53,9 @@ func InstallService(opts Options) error {
 	}
 	fmt.Printf("  launchd plist installed: %s\n", darwinLaunchdPlist)
 
-	ensureManagedBootstrapConfig(darwinConfigPath, opts)
+	if _, err := ensureManagedBootstrapConfig(darwinConfigPath, opts); err != nil {
+		return err
+	}
 
 	if isUpdate {
 		return finishDarwinUpdate(opts)

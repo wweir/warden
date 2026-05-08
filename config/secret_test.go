@@ -3,9 +3,9 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
-	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/BurntSushi/toml"
+	"testing"
 )
 
 func TestSecretString_MarshalUnmarshal(t *testing.T) {
@@ -112,37 +112,37 @@ func TestSecretString_JSONRoundTripSupportsPlaintextAndBase64(t *testing.T) {
 	}
 }
 
-func TestSecretString_YAMLRoundTripSupportsPlaintextAndBase64(t *testing.T) {
+func TestSecretString_TOMLRoundTripSupportsPlaintextAndBase64(t *testing.T) {
 	type secretHolder struct {
-		APIKey SecretString `yaml:"api_key"`
+		APIKey SecretString `toml:"api_key"`
 	}
 
 	tests := []struct {
 		name      string
-		inputYAML string
+		inputTOML string
 		wantValue string
 	}{
-		{name: "plaintext", inputYAML: "api_key: plain-secret\n", wantValue: "plain-secret"},
-		{name: "base64", inputYAML: "api_key: " + EncodeSecret("plain-secret") + "\n", wantValue: "plain-secret"},
+		{name: "plaintext", inputTOML: "api_key = \"plain-secret\"\n", wantValue: "plain-secret"},
+		{name: "base64", inputTOML: "api_key = \"" + EncodeSecret("plain-secret") + "\"\n", wantValue: "plain-secret"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var holder secretHolder
-			if err := yaml.Unmarshal([]byte(tt.inputYAML), &holder); err != nil {
-				t.Fatalf("yaml.Unmarshal() error = %v", err)
+			if err := toml.Unmarshal([]byte(tt.inputTOML), &holder); err != nil {
+				t.Fatalf("toml.Unmarshal() error = %v", err)
 			}
 			if holder.APIKey.Value() != tt.wantValue {
 				t.Fatalf("APIKey.Value() = %q, want %q", holder.APIKey.Value(), tt.wantValue)
 			}
 
-			data, err := yaml.Marshal(secretHolder{APIKey: holder.APIKey})
+			data, err := toml.Marshal(secretHolder{APIKey: holder.APIKey})
 			if err != nil {
-				t.Fatalf("yaml.Marshal() error = %v", err)
+				t.Fatalf("toml.Marshal() error = %v", err)
 			}
 			var payload map[string]string
-			if err := yaml.Unmarshal(data, &payload); err != nil {
-				t.Fatalf("yaml.Unmarshal() roundtrip error = %v", err)
+			if err := toml.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("toml.Unmarshal() roundtrip error = %v", err)
 			}
 			if got := payload["api_key"]; got != EncodeSecret(tt.wantValue) {
 				t.Fatalf("marshaled api_key = %q, want %q", got, EncodeSecret(tt.wantValue))

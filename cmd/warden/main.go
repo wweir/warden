@@ -20,13 +20,14 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/sower-proxy/feconf"
-	_ "github.com/sower-proxy/feconf/decoder/yaml"
+	_ "github.com/sower-proxy/feconf/decoder/toml"
 	_ "github.com/sower-proxy/feconf/reader/file"
 	_ "github.com/sower-proxy/feconf/reader/http"
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/cliproxybridge"
 	"github.com/wweir/warden/internal/gateway"
 	"github.com/wweir/warden/internal/install"
+	"golang.org/x/term"
 )
 
 var Version, BuildTime string
@@ -36,9 +37,9 @@ const managedRestartExitCode = 75
 var pidFile = pidFilePath()
 
 var configCandidates = []string{
-	"warden.yaml", "warden.yml",
-	"config/warden.yaml", "config/warden.yml",
-	"/etc/warden.yaml", "/etc/warden.yml",
+	"warden.toml",
+	"config/warden.toml",
+	config.DefaultConfigPath,
 }
 
 type processExitError struct {
@@ -213,8 +214,14 @@ func main() {
 	flag.Bool("no-start", false, "do not start service after install")
 	flag.Bool("expose", false, "for managed install, bind bootstrap config to all network interfaces")
 	flag.Bool("local-only", false, "for managed install, bind bootstrap config to localhost only")
+	flag.Usage = printUsage
 
 	configureLogging()
+
+	if hasHelpFlag(os.Args[1:]) {
+		flag.Usage()
+		return
+	}
 
 	mode := parseModeFlags(os.Args[1:])
 
@@ -350,6 +357,7 @@ func buildInstallOptions(mode modeFlags) install.Options {
 	}
 	if !mode.nonInteractive && !mode.assumeYes {
 		opts.Confirm = stdinConfirm
+		opts.AdminPasswordPrompt = stdinAdminPassword
 	}
 	return opts
 }
@@ -472,6 +480,68 @@ func stdinConfirm(label string) bool {
 	return answer == "y" || answer == "yes"
 }
 
+// stdinAdminPassword prompts for the admin password without echo when stdin is a terminal.
+func stdinAdminPassword(label string) (string, bool) {
+	var reader *bufio.Reader
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		reader = bufio.NewReader(os.Stdin)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		password, ok := readPasswordLineWithReader(label+": ", reader)
+		if !ok {
+			return "", false
+		}
+		if strings.TrimSpace(password) == "" {
+			fmt.Println("Admin password cannot be empty.")
+			continue
+		}
+
+		confirmed, ok := readPasswordLineWithReader("Confirm admin password: ", reader)
+		if !ok {
+			return "", false
+		}
+		if password != confirmed {
+			fmt.Println("Admin passwords do not match.")
+			continue
+		}
+		if err := install.ValidateManagedAdminPassword(password); err != nil {
+			fmt.Println(err.Error())
+			continue
+		}
+		return password, true
+	}
+	return "", false
+}
+
+func readPasswordLine(label string) (string, bool) {
+	return readPasswordLineWithReader(label, nil)
+}
+
+func readPasswordLineWithReader(label string, reader *bufio.Reader) (string, bool) {
+	fmt.Print(label)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		data, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return "", false
+		}
+		return string(data), true
+	}
+
+	if reader == nil {
+		reader = bufio.NewReader(os.Stdin)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", false
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" && errors.Is(err, io.EOF) {
+		return "", false
+	}
+	return line, true
+}
+
 // writePidFile writes the current process PID to the pid file.
 // If a pid file already exists, it checks whether that process is still running:
 // - If running: returns an error suggesting to use the reload feature
@@ -494,6 +564,45 @@ func writePidFile() error {
 
 	pid := os.Getpid()
 	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", pid)), 0644)
+}
+
+func printUsage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintf(out, "Usage: %s [options]\n\n", programName())
+	fmt.Fprintln(out, "Options:")
+	flag.CommandLine.PrintDefaults()
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Usage examples:")
+	fmt.Fprintf(out, "  %s -c /etc/warden/warden.toml\n", programName())
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  CUDA-backed local OpenAI-compatible provider:")
+	fmt.Fprintln(out, `  [provider.ollama]`)
+	fmt.Fprintln(out, `  family = "openai"`)
+	fmt.Fprintln(out, `  url = "http://127.0.0.1:11434/v1"`)
+	fmt.Fprintln(out, `  service_protocols = ["chat"]`)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, `  [route."/ollama"]`)
+	fmt.Fprintln(out, `  protocol = "chat"`)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, `  [route."/ollama".wildcard_models."*"]`)
+	fmt.Fprintln(out, `  providers = ["ollama"]`)
+}
+
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "-h", "--help", "-help":
+			return true
+		}
+	}
+	return false
+}
+
+func programName() string {
+	if len(os.Args) > 0 && strings.TrimSpace(os.Args[0]) != "" {
+		return os.Args[0]
+	}
+	return "warden"
 }
 
 // removePidFile removes the pid file.

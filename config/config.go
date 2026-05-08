@@ -14,7 +14,13 @@ import (
 	"github.com/wweir/warden/pkg/provider"
 )
 
-//go:embed warden.example.yaml
+const (
+	DefaultConfigDir       = "/etc/warden"
+	DefaultConfigPath      = DefaultConfigDir + "/warden.toml"
+	DefaultCLIProxyAuthDir = DefaultConfigDir
+)
+
+//go:embed warden.example.toml
 var ExampleConfig string
 
 type ConfigStruct struct {
@@ -86,48 +92,49 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name             string            `json:"-"` // populated from map key
-	Disabled         bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
-	URL              string            `json:"url" usage:"Upstream LLM base URL"`
-	Family           string            `json:"family" usage:"Required provider adapter family: openai, anthropic, copilot"`
-	Protocol         string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
-	Backend          string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
-	BackendProvider  string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
-	ServiceProtocols []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty uses adapter defaults"`
-	APIKey           SecretString      `json:"api_key" usage:"API key for authentication"`
-	ConfigDir        string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
-	Timeout          string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
-	Proxy            string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers          map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models           []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat  bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
-	AnthropicToChat  bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
+	Name                 string            `json:"-"` // populated from map key
+	Disabled             bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
+	URL                  string            `json:"url" usage:"Upstream LLM base URL"`
+	Family               string            `json:"family" usage:"Required provider adapter family: openai, anthropic, copilot"`
+	Protocol             string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
+	Backend              string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
+	BackendProvider      string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
+	ServiceProtocols     []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty uses adapter defaults"`
+	APIKey               SecretString      `json:"api_key" usage:"API key for authentication"`
+	APIKeyCommand        string            `json:"api_key_command" usage:"Shell command that prints an API key to stdout"`
+	APIKeyCommandTimeout string            `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
+	APIKeyCommandTTL     string            `json:"api_key_command_ttl" usage:"Cache TTL for api_key_command output, default 5m; 0s disables cache"`
+	ConfigDir            string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
+	Timeout              string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Proxy                string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers              map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models               []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	ResponsesToChat      bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
+	AnthropicToChat      bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
+
+	apiKeyCommandMu    sync.Mutex
+	apiKeyCommandCache providerAPIKeyCommandCache
+}
+
+type providerAPIKeyCommandCache struct {
+	Command   string
+	Token     string
+	ExpiresAt time.Time
 }
 
 // GetAPIKey returns the effective API key for authentication.
-// For copilot protocol, reads from local OAuth credentials file if api_key is not set.
 func (b *ProviderConfig) GetAPIKey(ctx context.Context) string {
-	if b.APIKey.Value() != "" {
-		return b.APIKey.Value()
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if p := provider.Get(b.Protocol); p != nil {
-		token, _ := p.GetAccessToken(ctx, b.ConfigDir)
-		return token
-	}
-	return ""
+	token, _ := b.ResolveAPIKey(ctx)
+	return token
 }
 
-// InvalidateAuth clears the cached OAuth credentials for copilot providers,
-// forcing a re-read from disk on the next GetAPIKey call.
-// No-op for providers with a static api_key.
+// InvalidateAuth clears cached dynamic provider credentials.
 func (b *ProviderConfig) InvalidateAuth() {
-	if b.APIKey.Value() != "" {
+	b.clearAPIKeyCommandCache()
+	if b == nil || b.APIKey.Value() != "" {
 		return
 	}
 	if p := provider.Get(b.Protocol); p != nil {

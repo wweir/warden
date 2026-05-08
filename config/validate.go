@@ -125,7 +125,7 @@ func (c *ConfigStruct) validateCLIProxyConfig() error {
 	c.CLIProxy.AuthDir = strings.TrimSpace(c.CLIProxy.AuthDir)
 	c.CLIProxy.Proxy = strings.TrimSpace(c.CLIProxy.Proxy)
 	if c.CLIProxy.AuthDir == "" {
-		c.CLIProxy.AuthDir = "~/.cli-proxy-api"
+		c.CLIProxy.AuthDir = DefaultCLIProxyAuthDir
 	}
 	authDir, err := expandHomeDir(c.CLIProxy.AuthDir)
 	if err != nil {
@@ -231,6 +231,31 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		if prov.Protocol == "qwen" {
 			return NewValidationError("provider %s: family %q is no longer supported; use family %q with a Qwen-compatible endpoint instead", name, prov.Protocol, ProviderProtocolOpenAI)
 		}
+		prov.APIKeyCommand = strings.TrimSpace(prov.APIKeyCommand)
+		prov.APIKeyCommandTimeout = strings.TrimSpace(prov.APIKeyCommandTimeout)
+		prov.APIKeyCommandTTL = strings.TrimSpace(prov.APIKeyCommandTTL)
+		if prov.APIKey.Value() != "" && prov.APIKeyCommand != "" {
+			return NewValidationError("provider %s: api_key and api_key_command are mutually exclusive", name)
+		}
+		if prov.APIKeyCommandTimeout != "" {
+			timeout, err := time.ParseDuration(prov.APIKeyCommandTimeout)
+			if err != nil {
+				return NewValidationError("provider %s: invalid api_key_command_timeout %s: %v", name, prov.APIKeyCommandTimeout, err)
+			}
+			if timeout <= 0 {
+				return NewValidationError("provider %s: api_key_command_timeout must be > 0", name)
+			}
+		}
+		if prov.APIKeyCommandTTL != "" {
+			ttl, err := time.ParseDuration(prov.APIKeyCommandTTL)
+			if err != nil {
+				return NewValidationError("provider %s: invalid api_key_command_ttl %s: %v", name, prov.APIKeyCommandTTL, err)
+			}
+			if ttl < 0 {
+				return NewValidationError("provider %s: api_key_command_ttl must be >= 0", name)
+			}
+		}
+
 		prov.Backend = normalizeProviderBackend(prov.Backend)
 		prov.BackendProvider = normalizeProviderBackend(prov.BackendProvider)
 		if prov.Backend == "" && prov.BackendProvider != "" {
@@ -239,6 +264,9 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		switch prov.Backend {
 		case "":
 		case ProviderBackendCLIProxy:
+			if prov.APIKeyCommand != "" {
+				return NewValidationError("provider %s: api_key_command is not supported for backend %q", name, prov.Backend)
+			}
 			if prov.Protocol != ProviderProtocolOpenAI {
 				return NewValidationError("provider %s: backend %q requires family 'openai', got %q", name, prov.Backend, prov.Protocol)
 			}
@@ -281,7 +309,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		switch prov.Protocol {
 		case ProviderProtocolOpenAI, ProviderProtocolAnthropic:
 		case ProviderProtocolCopilot:
-			if prov.APIKey.Value() == "" {
+			if prov.APIKey.Value() == "" && prov.APIKeyCommand == "" {
 				if p := provider.Get(prov.Protocol); p != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), providerCredCheckTimeout)
 					err := p.CheckCredsReadable(ctx, prov.ConfigDir)

@@ -113,23 +113,47 @@ func SanitizeConfigJSON(newCfg map[string]any, currentCfg map[string]any) {
 			}
 		}
 	}
+
+	preserveProviderSecrets(newCfg, currentCfg)
 }
 
-// DropOAuthProviderAPIKey removes api_key from providers that use OAuth credentials
-// (copilot), since they authenticate via config_dir and should not store an api_key.
-func DropOAuthProviderAPIKey(cfgMap map[string]any) {
-	providerMap, _ := cfgMap["provider"].(map[string]any)
-	for _, v := range providerMap {
-		pm, ok := v.(map[string]any)
+func preserveProviderSecrets(newCfg map[string]any, currentCfg map[string]any) {
+	newProviders, ok := newCfg["provider"].(map[string]any)
+	if !ok {
+		return
+	}
+	currentProviders, _ := currentCfg["provider"].(map[string]any)
+	for name, raw := range newProviders {
+		newProvider, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		proto, _ := pm["protocol"].(string)
-		family, _ := pm["family"].(string)
-		if proto == "copilot" || family == "copilot" {
-			delete(pm, "api_key")
+		currentProvider, _ := currentProviders[name].(map[string]any)
+		if currentProvider == nil {
+			continue
 		}
+		preserveProviderAPIKey(newProvider, currentProvider)
 	}
+}
+
+func preserveProviderAPIKey(newProvider map[string]any, currentProvider map[string]any) {
+	currentAPIKey, _ := currentProvider["api_key"].(string)
+	if strings.TrimSpace(currentAPIKey) == "" {
+		return
+	}
+
+	if _, hasAPIKey := newProvider["api_key"]; hasAPIKey {
+		return
+	}
+
+	if command, ok := newProvider["api_key_command"].(string); ok && strings.TrimSpace(command) != "" {
+		return
+	}
+	if configDir, ok := newProvider["config_dir"].(string); ok && strings.TrimSpace(configDir) != "" {
+		return
+	}
+
+	newProvider["api_key"] = currentAPIKey
 }
 
 func NormalizeSecretConfigJSON(cfgMap map[string]any) {
@@ -182,7 +206,7 @@ func NormalizeProviderConfigJSON(cfgMap map[string]any) {
 
 // NormalizePromptConfigJSON removes storage-only false prompt flags.
 // Runtime behavior treats missing prompt_enabled + empty system_prompt as disabled,
-// so writing explicit false only creates a more fragile YAML representation.
+// so writing explicit false only creates a noisier TOML representation.
 func NormalizePromptConfigJSON(cfgMap map[string]any) {
 	NormalizePromptConfigValue(cfgMap)
 }
