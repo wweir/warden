@@ -172,6 +172,14 @@ function lastUserPreview(log) {
 		return "";
 	}
 
+	if (req.type === "provider_event") {
+		const eventName = typeof req.event === "string" ? req.event : "event";
+		const providerName = typeof req.provider === "string" ? req.provider : "";
+		const preview = truncate([eventName, providerName].filter(Boolean).join(" · "), 40);
+		previewCache.set(log, preview);
+		return preview;
+	}
+
 	let lastMsg = null;
 	if (Array.isArray(req.messages)) {
 		const users = req.messages.filter((m) => {

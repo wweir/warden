@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/wweir/warden/config"
 	adminpkg "github.com/wweir/warden/internal/gateway/admin"
 	sel "github.com/wweir/warden/internal/selector"
-	"gopkg.in/yaml.v3"
 )
 
 func TestNormalizePromptConfigJSONDropsDisabledFalseFlagsWithoutPrompt(t *testing.T) {
@@ -215,6 +216,12 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 				Protocol: "openai",
 				APIKey:   config.SecretString("provider-secret"),
 			},
+			"copilot": {
+				URL:       "https://api.githubcopilot.com",
+				Protocol:  "copilot",
+				ConfigDir: filepath.Join(t.TempDir(), "copilot"),
+				APIKey:    config.SecretString("copilot-secret"),
+			},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
@@ -232,23 +239,23 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 		t.Fatalf("validate config: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(cfg)
+	tomlData, err := toml.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("toml.Marshal() error = %v", err)
 	}
 
-	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	if _, err := file.Write(yamlData); err != nil {
+	if _, err := file.Write(tomlData); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	hash := sha256.Sum256(yamlData)
+	hash := sha256.Sum256(tomlData)
 	gw := NewGateway(cfg, file.Name(), "")
 	gw.configHash = fmt.Sprintf("%x", hash)
 	t.Cleanup(gw.Close)
@@ -274,8 +281,8 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 	}
 
 	var parsed map[string]any
-	if err := yaml.Unmarshal(saved, &parsed); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	if err := toml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("toml.Unmarshal() error = %v", err)
 	}
 
 	if got := parsed["admin_password"]; got != config.EncodeSecret("admin-secret") {
@@ -289,6 +296,212 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 	providerCfg := providers["openai"].(map[string]any)
 	if got := providerCfg["api_key"]; got != config.EncodeSecret("provider-secret") {
 		t.Fatalf("provider api_key = %v, want %q", got, config.EncodeSecret("provider-secret"))
+	}
+	copilotCfg := providers["copilot"].(map[string]any)
+	if got := copilotCfg["api_key"]; got != config.EncodeSecret("copilot-secret") {
+		t.Fatalf("copilot api_key = %v, want %q", got, config.EncodeSecret("copilot-secret"))
+	}
+}
+
+func TestHandleAdminConfigPutPreservesProviderAPIKeyWhenFieldOmitted(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-secret"),
+				Models:   []string{"gpt-4o"},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	tomlData, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("toml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(tomlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(tomlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	payload := map[string]any{
+		"addr": ":8080",
+		"provider": map[string]any{
+			"openai": map[string]any{
+				"url":      "https://api.openai.com/v1",
+				"protocol": "openai",
+				"models":   []any{"gpt-4o", "gpt-4.1"},
+			},
+		},
+		"route": map[string]any{
+			"/openai": map[string]any{
+				"protocol": "chat",
+				"exact_models": map[string]any{
+					"gpt-4o": map[string]any{
+						"upstreams": []any{
+							map[string]any{
+								"provider": "openai",
+								"model":    "gpt-4o",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/_admin/api/config", strings.NewReader(string(body)))
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	gw.adminHandler().HandleAdminConfigPut(putRec, putReq, nil)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d, body=%q", putRec.Code, http.StatusOK, putRec.Body.String())
+	}
+
+	saved, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := toml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("toml.Unmarshal() error = %v", err)
+	}
+
+	providerCfg := parsed["provider"].(map[string]any)["openai"].(map[string]any)
+	if got := providerCfg["api_key"]; got != config.EncodeSecret("provider-secret") {
+		t.Fatalf("provider api_key = %v, want %q", got, config.EncodeSecret("provider-secret"))
+	}
+
+	models := providerCfg["models"].([]any)
+	if len(models) != 2 || models[1] != "gpt-4.1" {
+		t.Fatalf("provider models = %#v, want updated models preserved with api_key", models)
+	}
+}
+
+func TestHandleAdminConfigPutClearsProviderAPIKeyWhenExplicitlyEmpty(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":8080",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      "https://api.openai.com/v1",
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-secret"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	tomlData, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("toml.Marshal() error = %v", err)
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	if _, err := file.Write(tomlData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	hash := sha256.Sum256(tomlData)
+	gw := NewGateway(cfg, file.Name(), "")
+	gw.configHash = fmt.Sprintf("%x", hash)
+	t.Cleanup(gw.Close)
+
+	payload := map[string]any{
+		"addr": ":8080",
+		"provider": map[string]any{
+			"openai": map[string]any{
+				"url":      "https://api.openai.com/v1",
+				"protocol": "openai",
+				"api_key":  "",
+			},
+		},
+		"route": map[string]any{
+			"/openai": map[string]any{
+				"protocol": "chat",
+				"exact_models": map[string]any{
+					"gpt-4o": map[string]any{
+						"upstreams": []any{
+							map[string]any{
+								"provider": "openai",
+								"model":    "gpt-4o",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/_admin/api/config", strings.NewReader(string(body)))
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	gw.adminHandler().HandleAdminConfigPut(putRec, putReq, nil)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d, body=%q", putRec.Code, http.StatusOK, putRec.Body.String())
+	}
+
+	saved, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := toml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("toml.Unmarshal() error = %v", err)
+	}
+
+	providerCfg := parsed["provider"].(map[string]any)["openai"].(map[string]any)
+	if got, exists := providerCfg["api_key"]; exists && got != "" {
+		t.Fatalf("provider api_key = %v, want omitted or empty after explicit clear", got)
 	}
 }
 
@@ -314,23 +527,23 @@ func TestHandleAPIKeysCreatePersistsRouteAPIKey(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(cfg)
+	tomlData, err := toml.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("toml.Marshal() error = %v", err)
 	}
 
-	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	if _, err := file.Write(yamlData); err != nil {
+	if _, err := file.Write(tomlData); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	hash := sha256.Sum256(yamlData)
+	hash := sha256.Sum256(tomlData)
 	gw := NewGateway(cfg, file.Name(), "")
 	gw.configHash = fmt.Sprintf("%x", hash)
 	t.Cleanup(gw.Close)
@@ -358,18 +571,18 @@ func TestHandleAPIKeysCreatePersistsRouteAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if strings.Contains(string(saved), "exactmodels:") {
-		t.Fatalf("saved YAML should use json-tag keys, got %q", string(saved))
+	if strings.Contains(string(saved), "exactmodels") {
+		t.Fatalf("saved TOML should use json-tag keys, got %q", string(saved))
 	}
-	if strings.Contains(string(saved), "adminpassword:") {
-		t.Fatalf("saved YAML should not contain yaml.v3 default field names, got %q", string(saved))
+	if strings.Contains(string(saved), "adminpassword") {
+		t.Fatalf("saved TOML should not contain Go field names, got %q", string(saved))
 	}
-	if !strings.Contains(string(saved), "exact_models:") || !strings.Contains(string(saved), "api_keys:") {
-		t.Fatalf("saved YAML missing expected config keys: %q", string(saved))
+	if !strings.Contains(string(saved), "exact_models") || !strings.Contains(string(saved), "api_keys") {
+		t.Fatalf("saved TOML missing expected config keys: %q", string(saved))
 	}
 	var parsed map[string]any
-	if err := yaml.Unmarshal(saved, &parsed); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	if err := toml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("toml.Unmarshal() error = %v", err)
 	}
 	routeMap, ok := parsed["route"].(map[string]any)
 	if !ok {
@@ -450,28 +663,28 @@ func TestHandleAPIKeysCreateDoesNotMutateRuntimeWhenConfigWriteConflicts(t *test
 		t.Fatalf("validate config: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(cfg)
+	tomlData, err := toml.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("toml.Marshal() error = %v", err)
 	}
 
-	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	if _, err := file.Write(yamlData); err != nil {
+	if _, err := file.Write(tomlData); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	hash := sha256.Sum256(yamlData)
+	hash := sha256.Sum256(tomlData)
 	gw := NewGateway(cfg, file.Name(), "")
 	gw.configHash = fmt.Sprintf("%x", hash)
 	t.Cleanup(gw.Close)
 
-	if err := os.WriteFile(file.Name(), []byte("changed: true\n"), 0o644); err != nil {
+	if err := os.WriteFile(file.Name(), []byte("changed = true\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
@@ -513,23 +726,23 @@ func TestHandleAPIKeysDeletePersistsRouteAPIKeyRemoval(t *testing.T) {
 		t.Fatalf("validate config: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(cfg)
+	tomlData, err := toml.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("toml.Marshal() error = %v", err)
 	}
 
-	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	if _, err := file.Write(yamlData); err != nil {
+	if _, err := file.Write(tomlData); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	hash := sha256.Sum256(yamlData)
+	hash := sha256.Sum256(tomlData)
 	gw := NewGateway(cfg, file.Name(), "")
 	gw.configHash = fmt.Sprintf("%x", hash)
 	t.Cleanup(gw.Close)
@@ -552,8 +765,8 @@ func TestHandleAPIKeysDeletePersistsRouteAPIKeyRemoval(t *testing.T) {
 	}
 
 	var parsed map[string]any
-	if err := yaml.Unmarshal(saved, &parsed); err != nil {
-		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	if err := toml.Unmarshal(saved, &parsed); err != nil {
+		t.Fatalf("toml.Unmarshal() error = %v", err)
 	}
 	openaiRoute := parsed["route"].(map[string]any)["/openai"].(map[string]any)
 	apiKeys, exists := openaiRoute["api_keys"]
@@ -587,28 +800,28 @@ func TestHandleAPIKeysDeleteDoesNotMutateRuntimeWhenConfigWriteConflicts(t *test
 		t.Fatalf("validate config: %v", err)
 	}
 
-	yamlData, err := yaml.Marshal(cfg)
+	tomlData, err := toml.Marshal(cfg)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("toml.Marshal() error = %v", err)
 	}
 
-	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.yaml")
+	file, err := os.CreateTemp(t.TempDir(), "warden-config-*.toml")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	if _, err := file.Write(yamlData); err != nil {
+	if _, err := file.Write(tomlData); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	hash := sha256.Sum256(yamlData)
+	hash := sha256.Sum256(tomlData)
 	gw := NewGateway(cfg, file.Name(), "")
 	gw.configHash = fmt.Sprintf("%x", hash)
 	t.Cleanup(gw.Close)
 
-	if err := os.WriteFile(file.Name(), []byte("changed: true\n"), 0o644); err != nil {
+	if err := os.WriteFile(file.Name(), []byte("changed = true\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 

@@ -186,6 +186,24 @@
                 </div>
               </template>
 
+              <template v-if="authSourceOptions.length > 0">
+                <label>{{ $t("providerDetail.authSource") }}</label>
+                <div class="field-stack">
+                  <select v-model="authMode" class="form-input">
+                    <option
+                      v-for="option in authSourceOptions"
+                      :key="option.id"
+                      :value="option.id"
+                    >
+                      {{ option.title }}
+                    </option>
+                  </select>
+                  <p v-if="authSourceHint" class="hint">
+                    {{ authSourceHint }}
+                  </p>
+                </div>
+              </template>
+
               <template v-if="authMode === 'api_key'">
                 <label>api_key</label>
                 <div class="secret-field">
@@ -222,6 +240,32 @@
                     }}
                   </span>
                 </div>
+              </template>
+
+              <template v-else-if="authMode === 'command'">
+                <label>api_key_command</label>
+                <div class="field-stack">
+                  <input
+                    v-model="providerConfig.api_key_command"
+                    class="form-input"
+                    :placeholder="$t('providerDetail.apiKeyCommandPlaceholder')"
+                  />
+                  <p class="hint">{{ $t("providerDetail.apiKeyCommandHint") }}</p>
+                </div>
+
+                <label>{{ $t("providerDetail.apiKeyCommandTimeout") }}</label>
+                <input
+                  v-model="providerConfig.api_key_command_timeout"
+                  class="form-input"
+                  placeholder="5s"
+                />
+
+                <label>{{ $t("providerDetail.apiKeyCommandTTL") }}</label>
+                <input
+                  v-model="providerConfig.api_key_command_ttl"
+                  class="form-input"
+                  placeholder="5m"
+                />
               </template>
 
               <template v-else-if="authMode === 'config_dir'">
@@ -552,14 +596,8 @@
                 <td>{{ $t("providerDetail.cliproxyAuthNote") }}</td>
               </tr>
               <tr v-else>
-                <td>{{ $t("providerDetail.apiKey") }}</td>
-                <td>
-                  {{
-                    detail.has_api_key
-                      ? $t("common.configured")
-                      : $t("common.notSet")
-                  }}
-                </td>
+                <td>{{ $t("providerDetail.authSourceRuntime") }}</td>
+                <td>{{ runtimeAuthSourceTitle }}</td>
               </tr>
             </table>
 
@@ -782,6 +820,7 @@ const providerName = ref("");
 const providerConfig = ref(createEmptyProviderConfig());
 const selectedPresetId = ref("");
 const selectedServiceTemplateId = ref(CUSTOM_SERVICE_TEMPLATE);
+const selectedAuthSource = ref("");
 const error = ref("");
 const message = ref("");
 const checking = ref(false);
@@ -816,6 +855,7 @@ watch(
     providerConfig.value.backend_provider,
     providerConfig.value.url,
     providerConfig.value.config_dir,
+    providerConfig.value.api_key_command,
     providerConfig.value.service_protocols,
     providerConfig.value.anthropic_to_chat,
   ],
@@ -981,6 +1021,10 @@ const runtimeAccessTypeTitle = computed(() => {
   return preset?.title || detail.value.family || detail.value.protocol || "-";
 });
 
+const runtimeAuthSourceTitle = computed(() =>
+  authSourceTitle(detail.value?.auth_source || inferAuthSource(detail.value)),
+);
+
 const effectiveServiceProtocols = computed(() => {
   const configured = normalizeServiceProtocols(
     providerConfig.value.service_protocols,
@@ -1018,17 +1062,54 @@ const providerUrlHint = computed(() =>
   isCLIProxyBackend.value ? t("providerDetail.cliproxyEndpointHint") : "",
 );
 
-const authMode = computed(() => {
+const authSourceOptions = computed(() => {
+  const family = providerFamily(providerConfig.value);
+  if (!family) return [];
   if (providerBackend(providerConfig.value) === "cliproxy") {
-    return "none";
+    return [{ id: "none", title: authSourceTitle("none") }];
   }
-  switch (providerFamily(providerConfig.value)) {
-    case "copilot":
-      return "config_dir";
-    case "":
-      return "";
+  if (family === "copilot") {
+    return [
+      { id: "config_dir", title: authSourceTitle("config_dir") },
+      { id: "api_key", title: authSourceTitle("api_key") },
+      { id: "command", title: authSourceTitle("command") },
+      { id: "none", title: authSourceTitle("none") },
+    ];
+  }
+  return [
+    { id: "api_key", title: authSourceTitle("api_key") },
+    { id: "command", title: authSourceTitle("command") },
+    { id: "none", title: authSourceTitle("none") },
+  ];
+});
+
+const authMode = computed({
+  get() {
+    const available = authSourceOptions.value.map((option) => option.id);
+    if (available.includes(selectedAuthSource.value)) {
+      return selectedAuthSource.value;
+    }
+    const inferred = inferAuthSource(providerConfig.value);
+    if (available.includes(inferred)) {
+      return inferred;
+    }
+    return available[0] || "";
+  },
+  set(value) {
+    selectedAuthSource.value = value;
+  },
+});
+
+const authSourceHint = computed(() => {
+  switch (authMode.value) {
+    case "command":
+      return t("providerDetail.apiKeyCommandSecurityHint");
+    case "config_dir":
+      return t("providerDetail.configDirAuthHint");
+    case "none":
+      return t("providerDetail.noAuthHint");
     default:
-      return "api_key";
+      return "";
   }
 });
 
@@ -1082,6 +1163,9 @@ function createEmptyProviderConfig() {
     config_dir: "",
     headers: {},
     api_key: "",
+    api_key_command: "",
+    api_key_command_timeout: "",
+    api_key_command_ttl: "",
   };
 }
 
@@ -1101,6 +1185,71 @@ function providerFamily(provider) {
 
 function providerBackend(provider) {
   return normalizeText(provider?.backend);
+}
+
+function inferAuthSource(provider) {
+  if (!providerFamily(provider)) return "";
+  if (providerBackend(provider) === "cliproxy") return "none";
+  if (String(provider?.api_key_command || "").trim()) return "command";
+  if (provider?.api_key) return "api_key";
+  if (providerFamily(provider) === "copilot") return "config_dir";
+  return "api_key";
+}
+
+function authSourceTitle(source) {
+  switch (source) {
+    case "api_key":
+      return t("providerDetail.authSourceStatic");
+    case "command":
+      return t("providerDetail.authSourceCommand");
+    case "config_dir":
+      return t("providerDetail.authSourceConfigDir");
+    case "none":
+      return t("providerDetail.authSourceNone");
+    default:
+      return source || "-";
+  }
+}
+
+function applyProviderAuthSource(provider, source) {
+  delete provider.api_key_command;
+  delete provider.api_key_command_timeout;
+  delete provider.api_key_command_ttl;
+  delete provider.config_dir;
+
+  switch (source) {
+    case "api_key":
+      if (!apiKeyTouched.value) {
+        if (provider.api_key === REDACTED) {
+          provider.api_key = REDACTED;
+          return;
+        }
+        delete provider.api_key;
+        return;
+      }
+      provider.api_key = String(provider.api_key || "");
+      return;
+    case "command":
+      delete provider.api_key;
+      provider.api_key_command = String(providerConfig.value.api_key_command || "").trim();
+      if (String(providerConfig.value.api_key_command_timeout || "").trim()) {
+        provider.api_key_command_timeout = String(
+          providerConfig.value.api_key_command_timeout,
+        ).trim();
+      }
+      if (String(providerConfig.value.api_key_command_ttl || "").trim()) {
+        provider.api_key_command_ttl = String(
+          providerConfig.value.api_key_command_ttl,
+        ).trim();
+      }
+      return;
+    case "config_dir":
+      delete provider.api_key;
+      provider.config_dir = providerConfig.value.config_dir || "";
+      return;
+    default:
+      delete provider.api_key;
+  }
 }
 
 function normalizeServiceProtocols(protocols) {
@@ -1269,8 +1418,12 @@ function applyPresetByID(presetID) {
   next.proxy = current.proxy || "";
   next.timeout = current.timeout || "";
   next.api_key = current.api_key || "";
+  next.api_key_command = current.api_key_command || "";
+  next.api_key_command_timeout = current.api_key_command_timeout || "";
+  next.api_key_command_ttl = current.api_key_command_ttl || "";
   providerConfig.value = next;
   selectedPresetId.value = preset.id;
+  selectedAuthSource.value = inferAuthSource(next);
   showAPIKey.value = false;
   if (preset.service_protocol_template) {
     applyServiceProtocolTemplateByID(preset.service_protocol_template);
@@ -1298,6 +1451,7 @@ function applyAccessPresetByID(presetID) {
     preset.default_config_dir,
   );
   selectedPresetId.value = preset.id;
+  selectedAuthSource.value = inferAuthSource(providerConfig.value);
   if (preset.service_protocol_template) {
     applyServiceProtocolTemplateByID(preset.service_protocol_template);
   } else {
@@ -1480,6 +1634,7 @@ async function load() {
         headers: cloneData(provider.headers || {}),
       };
       selectedPresetId.value = inferPresetID(providerConfig.value);
+      selectedAuthSource.value = inferAuthSource(providerConfig.value);
       syncSelectedServiceTemplate();
       detail.value = await fetchProviderDetail(props.name);
       if (!selectedProbeModel.value && discoveredModelIds.value.length > 0) {
@@ -1551,6 +1706,14 @@ async function apply() {
       error.value = t("providerDetail.urlRequired");
       return;
     }
+    const selectedAuthMode = authMode.value;
+    if (
+      selectedAuthMode === "command" &&
+      !String(providerConfig.value.api_key_command || "").trim()
+    ) {
+      error.value = t("providerDetail.apiKeyCommandRequired");
+      return;
+    }
     const backend =
       family === "openai" ? providerBackend(providerConfig.value) : "";
     if (backend === "cliproxy") {
@@ -1592,9 +1755,7 @@ async function apply() {
       delete nextProviderConfig.service_protocols;
     }
     delete nextProviderConfig.protocol;
-    if (!apiKeyTouched.value) {
-      delete nextProviderConfig.api_key;
-    }
+    applyProviderAuthSource(nextProviderConfig, selectedAuthMode);
     nextConfig.provider[name] = nextProviderConfig;
 
     const cleaned = cleanConfig(nextConfig);

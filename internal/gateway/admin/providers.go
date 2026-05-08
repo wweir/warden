@@ -153,13 +153,34 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"display_protocols":     status.DisplayProtocols,
 		"last_protocol_probe":   status.LastProtocolProbe,
 		"timeout":               provCfg.Timeout,
+		"auth_source":           providerAuthSource(provCfg),
 		"has_api_key":           provCfg.APIKey.Value() != "",
+		"has_api_key_command":   strings.TrimSpace(provCfg.APIKeyCommand) != "",
 		"responses_to_chat":     provCfg.ResponsesToChat,
 		"anthropic_to_chat":     provCfg.AnthropicToChat,
 		"models":                models,
 		"model_protocol_probes": h.selector.ModelProtocolProbes(name),
 		"status":                status,
 	})
+}
+
+func providerAuthSource(provCfg *config.ProviderConfig) string {
+	if provCfg == nil {
+		return "none"
+	}
+	if provCfg.Backend == config.ProviderBackendCLIProxy {
+		return "none"
+	}
+	if strings.TrimSpace(provCfg.APIKeyCommand) != "" {
+		return "command"
+	}
+	if provCfg.APIKey.Value() != "" {
+		return "api_key"
+	}
+	if provCfg.Protocol == config.ProviderProtocolCopilot {
+		return "config_dir"
+	}
+	return "none"
 }
 
 func (h *Handler) HandleProviderSuppress(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -192,10 +213,10 @@ func (h *Handler) HandleProviderSuppress(w http.ResponseWriter, r *http.Request,
 	// Persist disabled state to config file
 	prov.Disabled = body.Suppress
 	var warning string
-	yamlData, err := h.marshalRuntimeConfigYAML()
+	configData, err := h.marshalRuntimeConfigFile()
 	if err != nil {
 		warning = "runtime state updated but config persist failed: " + err.Error()
-	} else if err := h.writeConfigFile(yamlData); err != nil {
+	} else if err := h.writeConfigFile(configData); err != nil {
 		warning = "runtime state updated but config persist failed: " + err.Error()
 	}
 
