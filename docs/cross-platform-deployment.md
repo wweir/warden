@@ -53,8 +53,8 @@ Linux 是当前一等支持平台。
 
 - 使用 `make build` 或 `make package`
 - 使用 `make install` 或 `sudo ./bin/warden -i` 安装到 `systemd`
-- 配置文件使用 `/etc/warden.yaml`
-- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`，并启用用户名 `admin`、密码 `admin` 的本机管理后台；若选择对外提供服务，则监听 `:9832`，但不写入 `admin_password`，管理后台保持禁用直到手动设置强密码
+- 配置文件使用 `/etc/warden/warden.toml`
+- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务，并在需要创建配置时要求输入并确认 admin 密码，再写入 bootstrap 配置。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`；若选择对外提供服务，则监听 `:9832`，并使用安装时输入的强密码启用管理后台
 - `make install` 会调用 `warden -i -y`，跳过安装确认并启动或重启服务；`-y` 不会隐式选择对外监听
 - bootstrap 配置默认不写入 provider / route，避免服务启动依赖外部账号、网络或 OAuth 凭证
 
@@ -74,7 +74,7 @@ macOS 的正确支持方式是：
 推荐目录：
 
 - Binary: `/usr/local/bin/warden` 或 `/opt/homebrew/bin/warden`
-- Config: `/usr/local/etc/warden.yaml`
+- Config: `/usr/local/etc/warden/warden.toml`
 - Logs: `/usr/local/var/log/warden.log`
 
 内置安装器会做这些事：
@@ -83,7 +83,7 @@ macOS 的正确支持方式是：
 - 配置 `RunAtLoad=true`
 - 配置 `KeepAlive=true`
 - 把 stdout/stderr 重定向到固定日志文件
-- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`，并启用用户名 `admin`、密码 `admin` 的本机管理后台；若选择对外提供服务，则监听 `:9832`，但不写入 `admin_password`，管理后台保持禁用直到手动设置强密码
+- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务，并在需要创建配置时要求输入并确认 admin 密码，再写入 bootstrap 配置。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`；若选择对外提供服务，则监听 `:9832`，并使用安装时输入的强密码启用管理后台
 - `-y` 可用于跳过安装确认并启动或重启托管服务；它不隐式选择对外监听
 - bootstrap 配置默认不写入 provider / route
 
@@ -99,7 +99,7 @@ Windows 要区分开发运行和生产托管。
 
 开发运行：
 
-- 直接执行 `warden.exe -c C:\path\to\warden.yaml`
+- 直接执行 `warden.exe -c C:\path\to\warden.toml`
 
 生产托管：
 
@@ -109,7 +109,7 @@ Windows 要区分开发运行和生产托管。
 推荐目录：
 
 - Binary: `C:\Program Files\Warden\warden.exe`
-- Config: `C:\ProgramData\Warden\warden.yaml`
+- Config: `C:\ProgramData\Warden\warden.toml`
 - Logs: `C:\ProgramData\Warden\logs\warden.log`
 
 内置安装器会做这些事：
@@ -119,7 +119,7 @@ Windows 要区分开发运行和生产托管。
 - Action: 通过任务包装脚本启动 `warden.exe -c ...`
 - 包装脚本在受控重启退出码上立即拉起新实例；只在异常退出后延迟 5 秒重试
 - stdout/stderr: 重定向到固定日志文件
-- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`，并启用用户名 `admin`、密码 `admin` 的本机管理后台；若选择对外提供服务，则监听 `:9832`，但不写入 `admin_password`，管理后台保持禁用直到手动设置强密码
+- 首次安装只会在配置不存在时生成最小 bootstrap 配置；交互安装会明确询问是否对外提供服务，并在需要创建配置时要求输入并确认 admin 密码，再写入 bootstrap 配置。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`；若选择对外提供服务，则监听 `:9832`，并使用安装时输入的强密码启用管理后台
 - `-y` 可用于跳过安装确认并启动或重启托管任务；它不隐式选择对外监听
 - bootstrap 配置默认不写入 provider / route
 

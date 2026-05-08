@@ -28,7 +28,7 @@
 对实现最关键的决策：
 
 - `copilot` 不再默认支持任何 `responses*`
-- OpenAI-compatible 第三方上游（例如 Ollama）不再拥有独立 family，而是归入 `openai`；若只支持聊天接口，必须显式配置 `service_protocols: [chat]`
+- OpenAI-compatible 第三方上游（例如 Ollama）不再拥有独立 family，而是归入 `openai`；若只支持聊天接口，必须显式配置 `service_protocols = ["chat"]`
 - `openai` provider 的 `anthropic` 能力不是原生 `/messages`，而是 `anthropic_to_chat` 的受控桥接能力
 - provider 级轻量探测只用于展示，不作为路由运行时真相
 
@@ -36,19 +36,17 @@
 
 每个 route 必须先锁定唯一协议：
 
-```yaml
-route:
-  /openai:
-    protocol: chat
-    exact_models:
-      gpt-4o:
-        upstreams:
-          - provider: openai
-            model: gpt-4o
-    wildcard_models:
-      "gpt-*":
-        providers:
-          - openai
+```toml
+[route."/openai"]
+protocol = "chat"
+
+[route."/openai".exact_models.gpt-4o]
+[[route."/openai".exact_models.gpt-4o.upstreams]]
+provider = "openai"
+model = "gpt-4o"
+
+[route."/openai".wildcard_models."gpt-*"]
+providers = ["openai"]
 ```
 
 约束：

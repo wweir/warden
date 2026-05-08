@@ -8,14 +8,13 @@ This integration deliberately does not add `codex`, `gemini`, or `claude-cli` as
 
 Use `family: openai` for the Warden provider and point `url` at the local cliproxy `/v1` endpoint. In embedded mode this URL is still required because it is the internal HTTP boundary Warden uses to start, probe, and call the in-process CLIProxyAPI service; it is not a second external model service.
 
-```yaml
-provider:
-  codex:
-    family: "openai"
-    backend: "cliproxy"
-    backend_provider: "codex"
-    url: "http://127.0.0.1:18741/v1"
-    service_protocols: ["chat"]
+```toml
+[provider.codex]
+family = "openai"
+backend = "cliproxy"
+backend_provider = "codex"
+url = "http://127.0.0.1:18741/v1"
+service_protocols = ["chat"]
 ```
 
 `backend` and `backend_provider` are metadata fields. They document that the OpenAI-compatible upstream is backed by cliproxy and which cliproxy provider is expected to serve it. They do not change Warden's request path by themselves.
@@ -26,25 +25,34 @@ The built-in admin presets for `cliproxy-codex`, `cliproxy-claude`, and `cliprox
 
 Warden can also start cliproxy in-process:
 
-```yaml
-cliproxy:
-  enabled: true
-  auth_dir: "~/.cli-proxy-api"
+```toml
+[cliproxy]
+enabled = true
+# Default when omitted: /etc/warden
+auth_dir = "/etc/warden"
 
-provider:
-  codex:
-    family: "openai"
-    backend: "cliproxy"
-    backend_provider: "codex"
-    url: "http://127.0.0.1:18741/v1"
-    service_protocols: ["chat"]
+[provider.codex]
+family = "openai"
+backend = "cliproxy"
+backend_provider = "codex"
+url = "http://127.0.0.1:18741/v1"
+service_protocols = ["chat"]
 ```
 
-When `cliproxy.enabled` is true, Warden builds a minimal SDK config for `github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy`, starts it before the main gateway listener, waits for `/healthz`, and shuts it down before process restart or exit.
+When `cliproxy.enabled` is true, Warden defaults `cliproxy.auth_dir` to `/etc/warden` when omitted, then builds a minimal SDK config for `github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy`, starts it before the main gateway listener, waits for `/healthz`, and shuts it down before process restart or exit.
 
 The embedded service endpoint is derived from the first `backend: cliproxy` provider URL. All cliproxy-backed providers must point to the same `http://loopback:port/v1` endpoint because Warden starts one embedded cliproxy service per process.
 
-Warden generates a runtime cliproxy config file for the SDK watcher. This avoids passing the Warden YAML file into cliproxy's watcher, because the two projects use different config schemas.
+Warden main config is TOML-only. The embedded cliproxy bridge still generates a temporary YAML runtime file for CLIProxyAPI's SDK watcher because the SDK reads its own YAML schema. That file is internal process state, not a Warden user config, and must not be edited as `/etc/warden/warden.toml`.
+
+Embedded cliproxy is started with Warden-owned feature-hiding defaults:
+
+- Codex OAuth requests receive pinned cliproxy header defaults for `User-Agent` and websocket beta features instead of inheriting arbitrary client values.
+- Claude requests receive pinned CLI header defaults and `stabilize-device-profile: true`, so CLIProxyAPI pins OS/arch and uses its device-profile stabilization path.
+- Embedded CLIProxyAPI response header passthrough is kept disabled, so upstream/provider headers are not blindly copied through cliproxy.
+- Before Warden forwards a request to a `backend: cliproxy` provider, it strips client-supplied CLI fingerprint headers, OpenAI/Anthropic SDK feature headers, Codex turn metadata, and Warden-generated forwarding headers. Provider-level static `headers` are still applied afterwards, so explicit operator overrides remain possible.
+
+This is not full TLS fingerprint emulation. Warden still delegates upstream execution and outbound transport behavior to CLIProxyAPI.
 
 ## Validation Rules
 

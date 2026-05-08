@@ -19,12 +19,11 @@
 
 新增 provider 级布尔开关：
 
-```yaml
-provider:
-  openai:
-    family: openai
-    url: "https://api.openai.com/v1"
-    anthropic_to_chat: true
+```toml
+[provider.openai]
+family = "openai"
+url = "https://api.openai.com/v1"
+anthropic_to_chat = true
 ```
 
 约束：

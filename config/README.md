@@ -34,6 +34,7 @@
 - `validate.go`：配置校验与规范化逻辑
 - `route_runtime.go`：route 模型编译、通配符匹配、协议能力判断
 - `secret.go`：`SecretString` 的安全序列化与显示
+- `warden.example.toml`：默认 TOML 示例配置
 
 ## Validation Rules
 
@@ -45,8 +46,12 @@
 - `provider.*.family` 必填；`provider.*.protocol` 只保留为兼容别名，不能与 `family` 冲突
 - `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
 - `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`；该 URL 是 Warden 访问内嵌/本地 cliproxy 的 endpoint，不代表还要外接一个模型服务
+- `cliproxy.auth_dir` 留空时默认使用 `/etc/warden`，与托管安装默认主配置 `/etc/warden/warden.toml` 共享目录，便于集中放置多账号授权 JSON
+- `backend: cliproxy` 的请求会默认移除客户端 CLI/SDK 指纹头、Codex turn metadata 和 Warden 生成的 forwarding 头；嵌入式 cliproxy 会写入 Codex/Claude 默认头，关闭 CLIProxyAPI response header passthrough，并启用 Claude device-profile stabilization。显式配置在 `provider.*.headers` 中的静态头仍会在清理后注入
 - `~` 路径在校验阶段统一展开
-- `copilot` 在未设置 `api_key` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
+- `provider.*.api_key_command` 允许通过一行 shell 命令提供 provider API Key：Linux/macOS 使用 `sh -c`，Windows 使用 `cmd /C`。命令 stdout trim 后必须是非空单行；默认 `api_key_command_timeout = "5s"` 且必须大于 0；默认 `api_key_command_ttl = "5m"`，`api_key_command_ttl = "0s"` 表示每次请求都执行。
+- `provider.*.api_key_command` 与 `provider.*.api_key` 互斥；`Validate()` 只校验互斥关系和 duration 字段，不执行命令。该字段等同 RCE 级 operator-only 配置，命令以 Warden 服务用户身份执行。`backend: cliproxy` 不支持该字段。
+- `copilot` 在未设置 `api_key` 或 `api_key_command` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
 - `route.<prefix>.api_keys` 是该路由自己的客户端访问密钥集合；为空时该路由不做客户端鉴权
 - 同一路由下的 `api_keys` 明文值必须唯一；否则按 key 名聚合的日志和指标归因会失去确定性
 - 顶层 `api_keys` 已废弃；校验阶段会直接报错，避免旧配置被静默放行为公开路由
@@ -70,10 +75,26 @@
 - `route.wildcard_models.<pattern>` 直接声明 `providers`
 - `route.wildcard_models.<pattern>` 的 `*` 匹配完整模型 ID，包括 `vendor/model` 和 `vendor/model:free` 这类包含 `/` 的上游模型名
 - provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_* + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
-- OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols: [chat]`
+- OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols = ["chat"]`
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
 - `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
-- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only；但这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
+- cliproxy 默认隐匿逻辑只覆盖 Warden 到 cliproxy 的 HTTP 头和嵌入式 SDK 配置；TLS 指纹、OAuth token 刷新、provider 原生执行和上游连接仍由 CLIProxyAPI 负责
+- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；认证来源选择器只写回 `api_key`、`api_key_command` 或 `config_dir` 等既有字段，不新增 provider type。cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only，并固定使用 CLIProxyAPI auth_dir；这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
+
+动态命令认证示例：
+
+```toml
+[provider.openai_cmd]
+family = "openai"
+url = "https://api.openai.com/v1"
+api_key_command = "op read 'op://LLM/OpenAI/api_key'"
+api_key_command_timeout = "5s"
+api_key_command_ttl = "10m"
+service_protocols = ["chat", "responses_stateless", "responses_stateful", "embeddings"]
+```
+
+`api_key_command` 只改变鉴权来源；provider 可用协议仍由 `family`、`service_protocols` 和 `anthropic_to_chat` 决定。
+
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
 - `responses_stateless` 明确拒绝 `previous_response_id`
 - `responses_stateful` 接受 `previous_response_id`，但会禁用 failover，并绕过 `responses_to_chat`
@@ -90,4 +111,4 @@
 - [validate.go](./validate.go)
 - [route_runtime.go](./route_runtime.go)
 - [secret.go](./secret.go)
-- [warden.example.yaml](./warden.example.yaml)
+- [warden.example.toml](./warden.example.toml)

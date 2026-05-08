@@ -29,7 +29,9 @@
    - `family`、`backend`、`backend_provider` 不再作为独立的高级字段重复暴露；只有选择“自定义接入”时才在常用配置区展开
 
 3. Common Config First
-   - 创建页把接入类型、名称、URL、认证和可用接口收敛到一个常用配置区
+   - 创建页把接入类型、名称、URL、认证来源和可用接口收敛到一个常用配置区
+   - 认证来源是显式选择：静态 API Key、命令、无认证；Copilot 额外提供配置目录。命令认证只写回 `api_key_command` / timeout / TTL，不引入新的 provider type，也不改变 provider family 或可用协议。
+   - 命令认证在 UI 中标记为受信任 operator-only 配置，因为它会以 Warden 服务用户身份执行 shell 命令；cliproxy 托管预设不展示命令认证，仍由 CLIProxyAPI auth_dir 管理本地 CLI 凭证。
    - 静态模型基线和高级字段直接展示，避免隐藏可保存配置项；运行时诊断仍然独立于保存配置的主表单
    - 普通用户先完成常用配置即可；高级字段只保留网络和 HTTP 头等低频字段，并默认可见
 
@@ -52,12 +54,12 @@ admin 后端新增只读元数据接口 `GET /_admin/api/providers/form-meta`，
 
 ## Non-Goals
 
-- 不修改 `config.ProviderConfig` 持久化结构
-- 不引入新的 YAML 顶层字段，例如 `provider.kind` 或 `provider.template`
+- 不引入新的 provider family/protocol 或 `provider.kind`；命令认证是鉴权来源字段，不是 provider 类型
+- 不引入新的 TOML 顶层字段，例如 `provider.kind` 或 `provider.template`
 - 不让后端在保存时静默猜测用户意图；最终写回的仍然是完整、显式的 provider 配置
 
 ## Compatibility Boundary
 
-- 旧 YAML 继续可读可写
+- 不保留 YAML 配置读写路径；配置真相只写回 TOML。
 - 旧 provider 编辑页继续支持直接编辑原始字段
 - 新建页的 preset 和 capability template 只是输入辅助层，不能成为运行时真相
