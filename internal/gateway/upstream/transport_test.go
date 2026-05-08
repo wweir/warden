@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/providerauth"
 	"github.com/wweir/warden/internal/selector"
 )
 
@@ -80,6 +81,61 @@ func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
 	}
 }
 
+func TestSendRequestSanitizesCLIProxyFeatureHeaders(t *testing.T) {
+	t.Parallel()
+
+	var gotHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		Backend:  config.ProviderBackendCLIProxy,
+		APIKey:   config.SecretString("provider-token"),
+	}
+
+	clientReq := httptest.NewRequest(http.MethodPost, "http://gateway.local/openai/chat/completions", nil)
+	clientReq.Header.Set("User-Agent", "codex-cli")
+	clientReq.Header.Set("X-Codex-Beta-Features", "client-feature")
+	clientReq.Header.Set("X-OpenAI-Client-User-Agent", "openai-client")
+	clientReq.Header.Set("X-Forwarded-For", "1.2.3.4")
+	clientReq.Header.Set("X-Warden-Trace", "trace-123")
+	clientReq.RemoteAddr = "10.10.1.23:53001"
+	clientReq.Host = "gateway.local:8080"
+
+	_, _, err := SendRequest(context.Background(), clientReq, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	if err != nil {
+		t.Fatalf("SendRequest() error = %v", err)
+	}
+
+	for _, headerName := range []string{
+		"X-Codex-Beta-Features",
+		"X-OpenAI-Client-User-Agent",
+		"X-Forwarded-For",
+		"X-Forwarded-Host",
+		"X-Forwarded-Proto",
+		"X-Real-Ip",
+	} {
+		if got := gotHeaders.Get(headerName); got != "" {
+			t.Fatalf("%s should be removed for cliproxy provider, got %q", headerName, got)
+		}
+	}
+	if got := gotHeaders.Get("User-Agent"); got == "codex-cli" {
+		t.Fatalf("User-Agent should not forward client fingerprint, got %q", got)
+	}
+	if gotHeaders.Get("Authorization") != "Bearer provider-token" {
+		t.Fatalf("Authorization = %q", gotHeaders.Get("Authorization"))
+	}
+	if gotHeaders.Get("X-Warden-Trace") != "trace-123" {
+		t.Fatalf("X-Warden-Trace = %q", gotHeaders.Get("X-Warden-Trace"))
+	}
+}
+
 func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 	t.Parallel()
 
@@ -105,6 +161,32 @@ func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 
 	if gotAuthorization != "Bearer provider-token" {
 		t.Fatalf("Authorization = %q", gotAuthorization)
+	}
+}
+
+func TestSendRequestSanitizesProviderAuthErrors(t *testing.T) {
+	t.Parallel()
+
+	provCfg := &config.ProviderConfig{
+		Name:          "secret-provider",
+		URL:           "https://upstream.example.test",
+		Protocol:      "openai",
+		APIKeyCommand: "exit 7",
+	}
+
+	_, _, err := SendRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{}`), false)
+	var upErr *selector.UpstreamError
+	if !errors.As(err, &upErr) {
+		t.Fatalf("error = %v, want UpstreamError", err)
+	}
+	if upErr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", upErr.Code, http.StatusUnauthorized)
+	}
+	if upErr.Body != providerauth.ClientAuthFailureBody {
+		t.Fatalf("body = %q, want sanitized auth failure", upErr.Body)
+	}
+	if strings.Contains(upErr.Body, provCfg.Name) {
+		t.Fatalf("body leaked provider name: %q", upErr.Body)
 	}
 }
 

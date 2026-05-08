@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/reqlog"
 )
 
 const (
@@ -69,8 +70,9 @@ type ModelProtocolProbe struct {
 // Selector selects the best provider for a request based on config order,
 // model matching, and failure suppression.
 type Selector struct {
-	mu     sync.RWMutex
-	states map[string]*providerState
+	mu            sync.RWMutex
+	states        map[string]*providerState
+	eventReporter func(reqlog.Record)
 }
 
 // RouteTarget is the resolved upstream target for one public model request.
@@ -117,6 +119,12 @@ func NewSelector(cfg *config.ConfigStruct) *Selector {
 	return &Selector{
 		states: states,
 	}
+}
+
+func (s *Selector) SetEventReporter(report func(reqlog.Record)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eventReporter = report
 }
 
 func (s *providerState) recordOutcome(success bool, latencyMs int64, errorSource string) {

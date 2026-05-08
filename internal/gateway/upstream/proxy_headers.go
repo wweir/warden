@@ -32,6 +32,48 @@ var upstreamOverrideHeaders = []string{
 	"X-Real-Ip",
 }
 
+var cliProxyFeatureHeaders = []string{
+	"User-Agent",
+	"Forwarded",
+	"X-Forwarded-For",
+	"X-Forwarded-Host",
+	"X-Forwarded-Proto",
+	"X-Real-Ip",
+	"X-Codex-Beta-Features",
+	"X-Codex-Turn-Metadata",
+	"X-Client-Request-Id",
+	"Version",
+	"Session_id",
+	"Anthropic-Beta",
+	"Anthropic-Dangerous-Direct-Browser-Access",
+	"Anthropic-Version",
+	"Originator",
+	"OpenAI-Beta",
+	"OpenAI-Organization",
+	"OpenAI-Project",
+	"X-App",
+	"X-Claude-Code-Session-Id",
+	"X-Stainless-Arch",
+	"X-Stainless-Lang",
+	"X-Stainless-Os",
+	"X-Stainless-Package-Version",
+	"X-Stainless-Retry-Count",
+	"X-Stainless-Runtime",
+	"X-Stainless-Runtime-Version",
+	"X-Stainless-Timeout",
+}
+
+var cliProxyFeatureHeaderPrefixes = []string{
+	"Cf-",
+	"Openai-",
+	"Sec-",
+	"X-Anthropic-",
+	"X-Codex-",
+	"X-Forwarded-",
+	"X-Openai-",
+	"X-Stainless-",
+}
+
 func BuildProxyRequestHeaders(in *http.Request, inferenceEndpoint bool) http.Header {
 	headers := BuildForwardedRequestHeaders(in)
 
@@ -48,6 +90,20 @@ func BuildForwardedRequestHeaders(in *http.Request) http.Header {
 	sanitizeProxyRequestHeaders(headers)
 	setForwardedHeaders(headers, in)
 	return headers
+}
+
+func SanitizeCLIProxyRequestHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	for _, headerName := range cliProxyFeatureHeaders {
+		headers.Del(headerName)
+	}
+	for headerName := range headers {
+		if hasAnyHeaderPrefix(headerName, cliProxyFeatureHeaderPrefixes) {
+			headers.Del(headerName)
+		}
+	}
 }
 
 func RemoveClientCredentialHeaders(headers http.Header) {
@@ -107,6 +163,16 @@ func removeUpstreamOverrideHeaders(headers http.Header) {
 	for _, headerName := range upstreamOverrideHeaders {
 		headers.Del(headerName)
 	}
+}
+
+func hasAnyHeaderPrefix(headerName string, prefixes []string) bool {
+	canonical := textproto.CanonicalMIMEHeaderKey(headerName)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(canonical, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestScheme(in *http.Request) string {

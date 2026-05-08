@@ -13,7 +13,7 @@ require (
 	github.com/lmittmann/tint v1.1.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/router-for-me/CLIProxyAPI/v6 v6.9.34
+	github.com/router-for-me/CLIProxyAPI/v6 v6.9.40
 	github.com/sower-proxy/deferlog/v2 v2.1.3
 	github.com/sower-proxy/feconf v0.5.1
 	github.com/tidwall/gjson v1.18.0

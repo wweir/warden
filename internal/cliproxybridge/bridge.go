@@ -20,10 +20,19 @@ import (
 )
 
 const (
-	defaultAuthDir      = "~/.cli-proxy-api"
 	startTimeout        = 10 * time.Second
 	healthProbeInterval = 100 * time.Millisecond
 	healthProbeTimeout  = 300 * time.Millisecond
+
+	defaultCodexUserAgent             = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
+	defaultCodexBetaFeatures          = "multi_agent"
+	defaultClaudeUserAgent            = "claude-cli/2.1.63 (external, cli)"
+	defaultClaudePackageVersion       = "0.74.0"
+	defaultClaudeRuntimeVersion       = "v24.3.0"
+	defaultClaudeOS                   = "MacOS"
+	defaultClaudeArch                 = "arm64"
+	defaultClaudeTimeout              = "600"
+	defaultClaudeStabilizeDeviceState = true
 )
 
 type Bridge struct {
@@ -46,7 +55,7 @@ func New(cfg *config.ConfigStruct) (*Bridge, error) {
 
 	authDir := strings.TrimSpace(cfg.CLIProxy.AuthDir)
 	if authDir == "" {
-		authDir = defaultAuthDir
+		authDir = config.DefaultCLIProxyAuthDir
 	}
 	if strings.HasPrefix(authDir, "~/") {
 		home, err := os.UserHomeDir()
@@ -70,6 +79,7 @@ func New(cfg *config.ConfigStruct) (*Bridge, error) {
 	clipCfg.Pprof.Enable = false
 	clipCfg.RemoteManagement.AllowRemote = false
 	clipCfg.RemoteManagement.DisableControlPanel = true
+	applyFeatureHidingDefaults(clipCfg)
 
 	configPath, err := writeRuntimeConfig(clipCfg)
 	if err != nil {
@@ -91,6 +101,23 @@ func New(cfg *config.ConfigStruct) (*Bridge, error) {
 		configPath: configPath,
 		errCh:      make(chan error, 1),
 	}, nil
+}
+
+func applyFeatureHidingDefaults(cfg *sdkconfig.Config) {
+	if cfg == nil {
+		return
+	}
+	cfg.CodexHeaderDefaults.UserAgent = defaultCodexUserAgent
+	cfg.CodexHeaderDefaults.BetaFeatures = defaultCodexBetaFeatures
+	cfg.SDKConfig.PassthroughHeaders = false
+	cfg.ClaudeHeaderDefaults.UserAgent = defaultClaudeUserAgent
+	cfg.ClaudeHeaderDefaults.PackageVersion = defaultClaudePackageVersion
+	cfg.ClaudeHeaderDefaults.RuntimeVersion = defaultClaudeRuntimeVersion
+	cfg.ClaudeHeaderDefaults.OS = defaultClaudeOS
+	cfg.ClaudeHeaderDefaults.Arch = defaultClaudeArch
+	cfg.ClaudeHeaderDefaults.Timeout = defaultClaudeTimeout
+	stabilize := defaultClaudeStabilizeDeviceState
+	cfg.ClaudeHeaderDefaults.StabilizeDeviceProfile = &stabilize
 }
 
 func ShouldStart(cfg *config.ConfigStruct) bool {

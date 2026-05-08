@@ -135,7 +135,32 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			return
 		}
 		proxyReq.Header = upstreampkg.BuildProxyRequestHeaders(r, allowFailover)
-		providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg)
+		if provCfg.Backend == config.ProviderBackendCLIProxy {
+			upstreampkg.SanitizeCLIProxyRequestHeaders(proxyReq.Header)
+		}
+		if err := providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg); err != nil {
+			upErr := &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
+			if allowFailover {
+				h.deps.Selector.RecordOutcome(provCfg.Name, upErr, 0)
+			}
+			if r.Context().Err() != nil {
+				return
+			}
+			if manager == nil && inferencepkg.TryAuthRetry(upErr, provCfg, authRetried) {
+				continue
+			}
+			if manager != nil && manager.HandleError(upErr) {
+				current := manager.Current()
+				provCfg = current.Provider
+				target = current.Target
+				if h.deps.ApplyMetricHeaders != nil {
+					metricLabels = h.deps.ApplyMetricHeaders(w, r, route, serviceProtocol, endpoint, provCfg.Name, target)
+				}
+				continue
+			}
+			upstreampkg.WriteUpstreamAwareError(w, upErr)
+			return
+		}
 
 		upstreamStart := time.Now()
 		resp, err := provCfg.HTTPClient(0).Do(proxyReq)

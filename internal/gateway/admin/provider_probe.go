@@ -110,7 +110,9 @@ func lightProbeEndpoint(ctx context.Context, provCfg *config.ProviderConfig, end
 	if err != nil {
 		return false, err
 	}
-	providerauth.SetHeaders(ctx, req.Header, provCfg)
+	if err := providerauth.SetHeaders(ctx, req.Header, provCfg); err != nil {
+		return false, err
+	}
 	resp, err := provCfg.HTTPClient(providerProbeTimeout).Do(req)
 	if err != nil {
 		return false, err

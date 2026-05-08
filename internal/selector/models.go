@@ -14,6 +14,7 @@ import (
 
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/providerauth"
+	"github.com/wweir/warden/internal/reqlog"
 )
 
 const modelsEndpointPath = "/models"
@@ -32,6 +33,7 @@ func (s *Selector) RefreshModels(ctx context.Context, cfg *config.ConfigStruct) 
 
 			fetched, fetchedRaw, err := FetchModels(ctx, provCfg)
 			if err != nil {
+				s.reportProviderEvent(name, provCfg, modelsEndpointPath, err)
 				if len(provCfg.Models) == 0 {
 					slog.Warn("Models discovery failed, model filter disabled for this provider; set 'models' in config to suppress",
 						"provider", name, "error", err)
@@ -68,6 +70,35 @@ func (s *Selector) RefreshModels(ctx context.Context, cfg *config.ConfigStruct) 
 		}(name, provCfg)
 	}
 	wg.Wait()
+}
+
+func (s *Selector) reportProviderEvent(name string, provCfg *config.ProviderConfig, endpoint string, err error) {
+	if err == nil || provCfg == nil || !strings.Contains(err.Error(), "api key command failed") {
+		return
+	}
+
+	s.mu.RLock()
+	report := s.eventReporter
+	s.mu.RUnlock()
+	if report == nil {
+		return
+	}
+
+	report(reqlog.Record{
+		Timestamp:  time.Now(),
+		RequestID:  "event_" + reqlog.GenerateID(),
+		Route:      "(system)",
+		Endpoint:   endpoint,
+		Model:      "(provider auth)",
+		Provider:   name,
+		UserAgent:  "warden/system",
+		DurationMs: 0,
+		Error:      err.Error(),
+		Request: json.RawMessage(fmt.Sprintf(
+			`{"type":"provider_event","provider":"%s","event":"api_key_command_failed","endpoint":"%s","url":"%s"}`,
+			name, endpoint, provCfg.URL,
+		)),
+	})
 }
 
 func (s *Selector) seedConfiguredModels(name string, provCfg *config.ProviderConfig) {
@@ -258,7 +289,9 @@ func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("create models request: %w", err)
 		}
-		providerauth.SetHeaders(ctx, req.Header, provCfg)
+		if err := providerauth.SetHeaders(ctx, req.Header, provCfg); err != nil {
+			return nil, nil, err
+		}
 
 		resp, err := client.Do(req)
 		if err != nil {

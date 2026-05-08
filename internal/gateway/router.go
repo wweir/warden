@@ -41,6 +41,7 @@ func NewGateway(cfg *config.ConfigStruct, configPath, configHash string) *Gatewa
 		ctx:                   ctx,
 		cancel:                cancel,
 	}
+	g.selector.SetEventReporter(g.recordAndBroadcast)
 	g.admin = g.adminHandler()
 
 	go g.selector.RefreshModels(ctx, cfg)

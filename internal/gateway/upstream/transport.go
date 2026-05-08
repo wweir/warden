@@ -56,12 +56,17 @@ func SendRequest(ctx context.Context, clientReq *http.Request, provCfg *config.P
 
 	if clientReq != nil {
 		httpReq.Header = BuildForwardedRequestHeaders(clientReq)
+		if provCfg.Backend == config.ProviderBackendCLIProxy {
+			SanitizeCLIProxyRequestHeaders(httpReq.Header)
+		}
 		// This path parses upstream payloads as JSON/SSE.
 		// Keep net/http default gzip handling instead of forwarding client compression preferences.
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	providerauth.SetHeaders(ctx, httpReq.Header, provCfg)
+	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
+		return nil, 0, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
+	}
 
 	client := provCfg.HTTPClient(0)
 	if isStreaming {
@@ -106,10 +111,15 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 
 	if clientReq != nil {
 		httpReq.Header = BuildForwardedRequestHeaders(clientReq)
+		if provCfg.Backend == config.ProviderBackendCLIProxy {
+			SanitizeCLIProxyRequestHeaders(httpReq.Header)
+		}
 		httpReq.Header.Del("Accept-Encoding")
 	}
 
-	providerauth.SetHeaders(ctx, httpReq.Header, provCfg)
+	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
+		return nil, 0, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
+	}
 
 	client := provCfg.HTTPClient(firstTokenTimeout)
 	upstreamStart := time.Now()

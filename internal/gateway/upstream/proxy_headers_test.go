@@ -111,3 +111,67 @@ func TestBuildProxyRequestHeadersNoAcceptEncodingAndHTTPS(t *testing.T) {
 		t.Fatalf("X-Forwarded-Host = %q", got.Get("X-Forwarded-Host"))
 	}
 }
+
+func TestSanitizeCLIProxyRequestHeadersRemovesFeatureHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{}
+	headers.Set("User-Agent", "curl/8.0")
+	headers.Set("X-Forwarded-For", "10.0.0.2")
+	headers.Set("X-Forwarded-Port", "9832")
+	headers.Set("X-Real-Ip", "10.0.0.2")
+	headers.Set("Cf-Connecting-Ip", "10.0.0.3")
+	headers.Set("Sec-Fetch-Site", "same-origin")
+	headers.Set("X-Stainless-Os", "Linux")
+	headers.Set("X-Stainless-Custom", "fingerprint")
+	headers.Set("X-Codex-Beta-Features", "client-feature")
+	headers.Set("X-Codex-Turn-Metadata", "metadata")
+	headers.Set("X-Client-Request-Id", "client-request")
+	headers.Set("Anthropic-Beta", "client-beta")
+	headers.Set("Anthropic-Version", "2023-06-01")
+	headers.Set("X-Anthropic-Client", "client")
+	headers.Set("OpenAI-Organization", "org")
+	headers.Set("X-OpenAI-Client-User-Agent", "openai-client")
+	headers.Set("Originator", "third-party")
+	headers.Set("X-Claude-Code-Session-Id", "session")
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept-Encoding", "zstd, br;q=0.9, gzip;q=0.8")
+	headers.Set("X-Warden-Trace", "keep")
+
+	SanitizeCLIProxyRequestHeaders(headers)
+
+	removedHeaders := []string{
+		"User-Agent",
+		"X-Forwarded-For",
+		"X-Forwarded-Port",
+		"X-Real-Ip",
+		"Cf-Connecting-Ip",
+		"Sec-Fetch-Site",
+		"X-Stainless-Os",
+		"X-Stainless-Custom",
+		"X-Codex-Beta-Features",
+		"X-Codex-Turn-Metadata",
+		"X-Client-Request-Id",
+		"Anthropic-Beta",
+		"Anthropic-Version",
+		"X-Anthropic-Client",
+		"OpenAI-Organization",
+		"X-OpenAI-Client-User-Agent",
+		"Originator",
+		"X-Claude-Code-Session-Id",
+	}
+	for _, headerName := range removedHeaders {
+		if got := headers.Get(headerName); got != "" {
+			t.Fatalf("%s should be removed, got %q", headerName, got)
+		}
+	}
+	if got := headers.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := headers.Get("Accept-Encoding"); got != "zstd, br;q=0.9, gzip;q=0.8" {
+		t.Fatalf("Accept-Encoding = %q", got)
+	}
+	if got := headers.Get("X-Warden-Trace"); got != "keep" {
+		t.Fatalf("X-Warden-Trace = %q", got)
+	}
+}

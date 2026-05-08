@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
+	"github.com/wweir/warden/internal/reqlog"
 )
 
 func testExactModel(protocol string, upstreams ...*config.RouteUpstreamConfig) *config.ExactRouteModelConfig {
@@ -253,6 +254,44 @@ func TestSelector_Models(t *testing.T) {
 	}
 	if entries["gpt-4.1-mini"].OwnedBy != "/test" {
 		t.Fatalf("gpt-4.1-mini owned_by = %q, want /test", entries["gpt-4.1-mini"].OwnedBy)
+	}
+}
+
+func TestRefreshModelsPublishesAPIKeyCommandFailures(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"broken": {
+				URL:           "https://api.example.com/v1",
+				Protocol:      "openai",
+				APIKeyCommand: "exit 1",
+			},
+		},
+		Route: map[string]*config.RouteConfig{},
+	}
+
+	s := NewSelector(cfg)
+	var records []reqlog.Record
+	s.SetEventReporter(func(rec reqlog.Record) {
+		records = append(records, rec)
+	})
+
+	s.RefreshModels(context.Background(), cfg)
+
+	if len(records) != 1 {
+		t.Fatalf("event records = %d, want 1", len(records))
+	}
+	rec := records[0]
+	if rec.Route != "(system)" {
+		t.Fatalf("route = %q, want (system)", rec.Route)
+	}
+	if rec.Provider != "broken" {
+		t.Fatalf("provider = %q, want broken", rec.Provider)
+	}
+	if !strings.Contains(rec.Error, "api key command failed") {
+		t.Fatalf("error = %q, want api key command failed", rec.Error)
+	}
+	if !strings.Contains(string(rec.Request), `"event":"api_key_command_failed"`) {
+		t.Fatalf("request = %s, want provider event payload", string(rec.Request))
 	}
 }
 
