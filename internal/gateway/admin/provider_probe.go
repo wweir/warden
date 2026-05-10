@@ -190,9 +190,6 @@ func sendChatProbe(ctx context.Context, provCfg *config.ProviderConfig, model st
 		Messages: []openai.Message{
 			{Role: "user", Content: "ping"},
 		},
-		Extra: map[string]json.RawMessage{
-			"max_tokens": json.RawMessage("1"),
-		},
 	}
 	body, err := upstreampkg.MarshalProtocolRequest(provCfg.Protocol, req)
 	if err != nil {

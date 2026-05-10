@@ -42,6 +42,7 @@ type Handler struct {
 	configPath         *string
 	configHash         *string
 	configMu           sync.Mutex
+	cliproxyAuthMu     sync.Mutex
 	selector           Selector
 	broadcaster        Broadcaster
 	reloadFn           func() error

@@ -81,6 +81,18 @@ func (h *Handler) RegisterRoutes(router *httprouter.Router) {
 	mux.HandleFunc("GET /api/providers/form-meta", func(w http.ResponseWriter, r *http.Request) {
 		h.HandleProviderFormMeta(w, r, nil)
 	})
+	mux.HandleFunc("GET /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
+		h.HandleCLIProxyAuthFilesList(w, r, nil)
+	})
+	mux.HandleFunc("POST /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
+		h.HandleCLIProxyAuthFileCreate(w, r, nil)
+	})
+	mux.HandleFunc("DELETE /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
+		h.HandleCLIProxyAuthFileDelete(w, r, nil)
+	})
+	mux.HandleFunc("POST /api/cliproxy/auth-files/verify", func(w http.ResponseWriter, r *http.Request) {
+		h.HandleCLIProxyAuthFileVerify(w, r, nil)
+	})
 	mux.HandleFunc("POST /api/providers/protocols/detect", func(w http.ResponseWriter, r *http.Request) {
 		h.HandleProviderProtocolDetect(w, r, nil)
 	})
