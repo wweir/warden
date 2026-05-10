@@ -201,86 +201,208 @@
                   <p v-if="authSourceHint" class="hint">
                     {{ authSourceHint }}
                   </p>
-                </div>
-              </template>
+                  <div class="auth-source-details">
+                    <template v-if="authMode === 'api_key'">
+                      <label class="auth-detail-label">api_key</label>
+                      <div class="secret-field">
+                        <input
+                          :type="showAPIKey ? 'text' : 'password'"
+                          :value="secretDisplay(providerConfig.api_key)"
+                          @input="
+                            apiKeyTouched = true;
+                            providerConfig.api_key = $event.target.value;
+                          "
+                          class="form-input"
+                          :placeholder="$t('providerDetail.apiKeyPlaceholder')"
+                        />
+                        <button
+                          class="btn-icon"
+                          @click="showAPIKey = !showAPIKey"
+                          type="button"
+                          :aria-label="$t('providerDetail.toggleApiKeyVisibility')"
+                        >
+                          {{ showAPIKey ? "🙈" : "👁" }}
+                        </button>
+                        <span
+                          :class="[
+                            'badge',
+                            isSecretConfigured(providerConfig.api_key)
+                              ? 'badge-ok'
+                              : 'badge-none',
+                          ]"
+                        >
+                          {{
+                            isSecretConfigured(providerConfig.api_key)
+                              ? $t("common.configured")
+                              : $t("common.notSet")
+                          }}
+                        </span>
+                      </div>
+                    </template>
 
-              <template v-if="authMode === 'api_key'">
-                <label>api_key</label>
-                <div class="secret-field">
-                  <input
-                    :type="showAPIKey ? 'text' : 'password'"
-                    :value="secretDisplay(providerConfig.api_key)"
-                    @input="
-                      apiKeyTouched = true;
-                      providerConfig.api_key = $event.target.value;
-                    "
-                    class="form-input"
-                    :placeholder="$t('providerDetail.apiKeyPlaceholder')"
-                  />
-                  <button
-                    class="btn-icon"
-                    @click="showAPIKey = !showAPIKey"
-                    type="button"
-                    :aria-label="$t('providerDetail.toggleApiKeyVisibility')"
-                  >
-                    {{ showAPIKey ? "🙈" : "👁" }}
-                  </button>
-                  <span
-                    :class="[
-                      'badge',
-                      isSecretConfigured(providerConfig.api_key)
-                        ? 'badge-ok'
-                        : 'badge-none',
-                    ]"
-                  >
-                    {{
-                      isSecretConfigured(providerConfig.api_key)
-                        ? $t("common.configured")
-                        : $t("common.notSet")
-                    }}
-                  </span>
-                </div>
-              </template>
+                    <template v-else-if="authMode === 'command'">
+                      <label class="auth-detail-label">api_key_command</label>
+                      <div class="field-stack">
+                        <input
+                          v-model="providerConfig.api_key_command"
+                          class="form-input"
+                          :placeholder="$t('providerDetail.apiKeyCommandPlaceholder')"
+                        />
+                        <p class="hint">{{ $t("providerDetail.apiKeyCommandHint") }}</p>
+                      </div>
+                      <div class="auth-command-grid">
+                        <div class="field-stack">
+                          <label class="auth-detail-label">{{ $t("providerDetail.apiKeyCommandTimeout") }}</label>
+                          <input
+                            v-model="providerConfig.api_key_command_timeout"
+                            class="form-input"
+                            placeholder="5s"
+                          />
+                        </div>
+                        <div class="field-stack">
+                          <label class="auth-detail-label">{{ $t("providerDetail.apiKeyCommandTTL") }}</label>
+                          <input
+                            v-model="providerConfig.api_key_command_ttl"
+                            class="form-input"
+                            placeholder="5m"
+                          />
+                        </div>
+                      </div>
+                    </template>
 
-              <template v-else-if="authMode === 'command'">
-                <label>api_key_command</label>
-                <div class="field-stack">
-                  <input
-                    v-model="providerConfig.api_key_command"
-                    class="form-input"
-                    :placeholder="$t('providerDetail.apiKeyCommandPlaceholder')"
-                  />
-                  <p class="hint">{{ $t("providerDetail.apiKeyCommandHint") }}</p>
-                </div>
+                    <template v-else-if="authMode === 'config_dir'">
+                      <label class="auth-detail-label">config_dir</label>
+                      <input
+                        v-model="providerConfig.config_dir"
+                        class="form-input"
+                        :placeholder="configDirPlaceholder"
+                      />
+                    </template>
 
-                <label>{{ $t("providerDetail.apiKeyCommandTimeout") }}</label>
-                <input
-                  v-model="providerConfig.api_key_command_timeout"
-                  class="form-input"
-                  placeholder="5s"
-                />
-
-                <label>{{ $t("providerDetail.apiKeyCommandTTL") }}</label>
-                <input
-                  v-model="providerConfig.api_key_command_ttl"
-                  class="form-input"
-                  placeholder="5m"
-                />
-              </template>
-
-              <template v-else-if="authMode === 'config_dir'">
-                <label>config_dir</label>
-                <input
-                  v-model="providerConfig.config_dir"
-                  class="form-input"
-                  :placeholder="configDirPlaceholder"
-                />
-              </template>
-
-              <template v-else>
-                <label>{{ $t("providerDetail.authSection") }}</label>
-                <div class="section-note">
-                  {{ authNote }}
+                    <template v-else>
+                      <div class="section-note">
+                        {{ authNote }}
+                      </div>
+                      <template v-if="isManagedCLIProxyAccess">
+                        <div class="custom-interface-editor cliproxy-auth-panel">
+                          <div class="custom-interface-head">
+                            <strong>{{ $t("providerDetail.cliproxyAuthImportSection") }}</strong>
+                            <p class="hint">
+                              {{ $t("providerDetail.cliproxyAuthImportDesc") }}
+                            </p>
+                            <p class="hint">
+                              {{ $t("providerDetail.cliproxyAuthDir") }}:
+                              <code>{{ cliproxyAuthDirLabel }}</code>
+                            </p>
+                          </div>
+                          <div class="cliproxy-auth-import">
+                            <label>{{ $t("providerDetail.cliproxyAuthPasteLabel") }}</label>
+                            <textarea
+                              v-model.trim="cliproxyAuthContent"
+                              class="form-input cliproxy-auth-textarea"
+                              :placeholder="$t('providerDetail.cliproxyAuthPastePlaceholder')"
+                            ></textarea>
+                            <div class="cliproxy-auth-file-row">
+                              <input
+                                ref="cliproxyAuthFileInput"
+                                type="file"
+                                class="form-input"
+                                accept=".json,application/json"
+                                @change="handleCliproxyAuthFileSelect"
+                              />
+                              <input
+                                v-model.trim="cliproxyAuthFilename"
+                                class="form-input"
+                                :placeholder="$t('providerDetail.cliproxyAuthFilenamePlaceholder')"
+                              />
+                            </div>
+                          </div>
+                          <div class="actions">
+                            <button
+                              class="btn btn-primary btn-sm"
+                              type="button"
+                              :disabled="cliproxyAuthImportDisabled"
+                              @click="importCliproxyAuth"
+                            >
+                              {{ $t("providerDetail.cliproxyAuthUpload") }}
+                            </button>
+                            <button class="btn btn-secondary btn-sm" type="button" @click="refreshCliproxyAuthFiles">
+                              {{ $t("providerDetail.cliproxyAuthRefresh") }}
+                            </button>
+                            <button class="btn btn-secondary btn-sm" type="button" @click="clearCliproxyAuthDraft">
+                              {{ $t("providerDetail.cliproxyAuthClear") }}
+                            </button>
+                          </div>
+                          <div class="auth-file-list">
+                            <div class="field-summary">
+                              <strong>{{ $t("providerDetail.cliproxyAuthFilesTitle") }}</strong>
+                            </div>
+                            <div v-if="cliproxyAuthFilesSummary.length > 0" class="auth-files-cards">
+                              <div v-for="file in cliproxyAuthFilesSummary" :key="file.filename" class="auth-file-card">
+                                <div class="auth-file-card-main">
+                                  <code class="auth-file-name">{{ file.filename }}</code>
+                                  <div class="auth-file-meta">
+                                    <span>{{ file.provider || "-" }}</span>
+                                    <span>{{ file.label || "-" }}</span>
+                                    <span>{{ file.sizeLabel }}</span>
+                                    <span>{{ formatTime(file.modified) }}</span>
+                                  </div>
+                                </div>
+                                <div class="auth-file-status">
+                                  <div>
+                                    <span class="badge" :class="file.validationClass">{{ file.validationLabel }}</span>
+                                    <span v-if="file.validation_message" class="validation-message">
+                                      {{ file.validation_message }}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span v-if="file.onlineResult" class="badge" :class="file.onlineClass">
+                                      {{ file.onlineLabel }}
+                                    </span>
+                                    <span v-if="file.onlineResult?.error" class="validation-message">
+                                      {{ file.onlineResult.error }}
+                                    </span>
+                                    <span v-else-if="file.onlineResult" class="validation-message">
+                                      {{ file.onlineResult.model }} / {{ file.onlineResult.latency_ms }}ms
+                                    </span>
+                                  </div>
+                                </div>
+                                <div class="auth-file-actions">
+                                  <button
+                                    class="btn btn-secondary btn-sm auth-file-action"
+                                    type="button"
+                                    :disabled="cliproxyAuthOnlineDisabled(file)"
+                                    @click="verifyCliproxyAuth(file)"
+                                  >
+                                    {{
+                                      cliproxyAuthVerifying[file.filename]
+                                        ? $t("providerDetail.cliproxyAuthOnlineChecking")
+                                        : $t("providerDetail.cliproxyAuthOnlineVerify")
+                                    }}
+                                  </button>
+                                  <button
+                                    class="btn btn-danger btn-sm auth-file-action"
+                                    type="button"
+                                    :disabled="cliproxyAuthDeleting[file.filename]"
+                                    @click="deleteCliproxyAuth(file)"
+                                  >
+                                    {{
+                                      cliproxyAuthDeleting[file.filename]
+                                        ? $t("providerDetail.cliproxyAuthDeleting")
+                                        : $t("common.delete")
+                                    }}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <div v-else class="section-note">
+                              {{ $t("providerDetail.cliproxyAuthFilesEmpty") }}
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                    </template>
+                  </div>
                 </div>
               </template>
 
@@ -592,8 +714,8 @@
                 </td>
               </tr>
               <tr v-if="detailIsManagedCLIProxy">
-                <td>{{ $t("providerDetail.authSection") }}</td>
-                <td>{{ $t("providerDetail.cliproxyAuthNote") }}</td>
+                <td>{{ $t("providerDetail.authSourceRuntime") }}</td>
+                <td>{{ $t("providerDetail.authSourceCLIProxyAuthDir") }}</td>
               </tr>
               <tr v-else>
                 <td>{{ $t("providerDetail.authSourceRuntime") }}</td>
@@ -784,9 +906,12 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import {
+  createCLIProxyAuthFile,
+  deleteCLIProxyAuthFile,
   detectProviderProtocols,
   fetchConfig,
   fetchConfigSource,
+  fetchCLIProxyAuthFiles,
   fetchProviderDetail,
   fetchProviderFormMeta,
   fetchStatus,
@@ -796,6 +921,7 @@ import {
   saveConfig,
   setProviderSuppress,
   validateConfig,
+  verifyCLIProxyAuthFile,
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
 import TagListEditor from "../components/TagListEditor.vue";
@@ -804,6 +930,7 @@ const { t } = useI18n();
 const router = useRouter();
 
 const REDACTED = "__REDACTED__";
+const CLEAR_API_KEY_MARKER = "__clear_api_key__";
 const CUSTOM_ACCESS_TYPE = "__custom_access__";
 const CUSTOM_SERVICE_TEMPLATE = "__custom__";
 
@@ -835,6 +962,14 @@ const configFileChanged = ref(false);
 const waitingAlive = ref(false);
 const waitingElapsed = ref(0);
 const detectingProtocols = ref(false);
+const cliproxyAuthFiles = ref([]);
+const cliproxyAuthLoading = ref(false);
+const cliproxyAuthContent = ref("");
+const cliproxyAuthFilename = ref("");
+const cliproxyAuthFileInput = ref(null);
+const cliproxyAuthVerifying = ref({});
+const cliproxyAuthDeleting = ref({});
+const cliproxyAuthOnlineResults = ref({});
 const selectedProbeModel = ref("");
 const selectedProbeProtocol = ref("chat");
 const protocolProbeResult = ref(null);
@@ -916,6 +1051,20 @@ const isCLIProxyBackend = computed(
 const isManagedCLIProxyAccess = computed(
   () => isCLIProxyBackend.value && !isCustomAccessType.value,
 );
+
+watch(
+  isManagedCLIProxyAccess,
+  async (enabled) => {
+    if (enabled) {
+      await refreshCliproxyAuthFiles();
+    } else {
+      cliproxyAuthFiles.value = [];
+      clearCliproxyAuthDraft();
+    }
+  },
+  { immediate: true },
+);
+
 const currentAccessTypeSummary = computed(() => {
   const current = accessTypeOptions.value.find(
     (option) => option.id === selectedAccessTypeId.value,
@@ -1066,7 +1215,7 @@ const authSourceOptions = computed(() => {
   const family = providerFamily(providerConfig.value);
   if (!family) return [];
   if (providerBackend(providerConfig.value) === "cliproxy") {
-    return [{ id: "none", title: authSourceTitle("none") }];
+    return [{ id: "none", title: t("providerDetail.authSourceCLIProxyAuthDir") }];
   }
   if (family === "copilot") {
     return [
@@ -1101,6 +1250,9 @@ const authMode = computed({
 });
 
 const authSourceHint = computed(() => {
+  if (isManagedCLIProxyAccess.value) {
+    return t("providerDetail.cliproxyAuthNote");
+  }
   switch (authMode.value) {
     case "command":
       return t("providerDetail.apiKeyCommandSecurityHint");
@@ -1113,6 +1265,23 @@ const authSourceHint = computed(() => {
   }
 });
 
+const cliproxyAuthDirLabel = computed(() => {
+  const dir = configDoc.value?.cliproxy?.auth_dir || "/etc/warden";
+  return dir;
+});
+
+const cliproxyAuthFilesSummary = computed(() =>
+  cliproxyAuthFiles.value.map((file) => ({
+    ...file,
+    sizeLabel: formatBytes(file.size),
+    validationLabel: cliproxyAuthValidationLabel(file.validation_status),
+    validationClass: cliproxyAuthValidationClass(file.validation_status),
+    onlineResult: cliproxyAuthOnlineResults.value[file.filename] || null,
+    onlineLabel: cliproxyAuthOnlineLabel(cliproxyAuthOnlineResults.value[file.filename]?.status),
+    onlineClass: cliproxyAuthOnlineClass(cliproxyAuthOnlineResults.value[file.filename]?.status),
+  })),
+);
+
 const configDirPlaceholder = computed(() => {
   if (currentPreset.value?.default_config_dir)
     return currentPreset.value.default_config_dir;
@@ -1123,6 +1292,13 @@ const configDirPlaceholder = computed(() => {
       return "";
   }
 });
+
+const cliproxyAuthImportDisabled = computed(
+  () =>
+    !isManagedCLIProxyAccess.value ||
+    cliproxyAuthLoading.value ||
+    !String(cliproxyAuthContent.value || "").trim(),
+);
 
 const serviceProtocolSuggestions = computed(() => {
   if (providerBackend(providerConfig.value) === "cliproxy") {
@@ -1246,6 +1422,10 @@ function applyProviderAuthSource(provider, source) {
     case "config_dir":
       delete provider.api_key;
       provider.config_dir = providerConfig.value.config_dir || "";
+      return;
+    case "none":
+      delete provider.api_key;
+      provider[CLEAR_API_KEY_MARKER] = true;
       return;
     default:
       delete provider.api_key;
@@ -1523,6 +1703,193 @@ function formatTime(timeValue) {
   return new Date(timeValue).toLocaleString();
 }
 
+function formatBytes(size) {
+  if (!Number.isFinite(size) || size < 0) return "-";
+  if (size < 1024) return `${size} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = size / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && value >= 1024; i += 1) {
+    value /= 1024;
+    unit = units[i];
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
+}
+
+function cliproxyAuthValidationLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "valid":
+      return t("providerDetail.cliproxyAuthValidationValid");
+    case "warning":
+      return t("providerDetail.cliproxyAuthValidationWarning");
+    case "invalid":
+      return t("providerDetail.cliproxyAuthValidationInvalid");
+    default:
+      return t("providerDetail.cliproxyAuthValidationUnknown");
+  }
+}
+
+function cliproxyAuthValidationClass(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "valid":
+      return "badge-ok";
+    case "warning":
+      return "badge-warn";
+    case "invalid":
+      return "badge-error";
+    default:
+      return "badge-muted";
+  }
+}
+
+function cliproxyAuthOnlineLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+      return t("providerDetail.cliproxyAuthOnlineOk");
+    case "error":
+      return t("providerDetail.cliproxyAuthOnlineError");
+    default:
+      return t("providerDetail.cliproxyAuthValidationUnknown");
+  }
+}
+
+function cliproxyAuthOnlineClass(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+      return "badge-ok";
+    case "error":
+      return "badge-error";
+    default:
+      return "badge-muted";
+  }
+}
+
+function cliproxyAuthOnlineDisabled(file) {
+  return (
+    props.create ||
+    !props.name ||
+    !isManagedCLIProxyAccess.value ||
+    cliproxyAuthVerifying.value[file.filename] ||
+    file.validation_status === "invalid"
+  );
+}
+
+async function refreshCliproxyAuthFiles() {
+  if (!isManagedCLIProxyAccess.value) return;
+  cliproxyAuthLoading.value = true;
+  error.value = "";
+  try {
+    const result = await fetchCLIProxyAuthFiles();
+    cliproxyAuthFiles.value = result.files || [];
+  } catch (e) {
+    error.value = e.message;
+  } finally {
+    cliproxyAuthLoading.value = false;
+  }
+}
+
+function clearCliproxyAuthDraft() {
+  cliproxyAuthContent.value = "";
+  cliproxyAuthFilename.value = "";
+  if (cliproxyAuthFileInput.value) {
+    cliproxyAuthFileInput.value.value = "";
+  }
+}
+
+function currentCliproxyAuthVerifyModel() {
+  if (selectedProbeModel.value) return selectedProbeModel.value;
+  return probeableModels.value[0] || "";
+}
+
+async function handleCliproxyAuthFileSelect(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  cliproxyAuthContent.value = await file.text();
+  if (!cliproxyAuthFilename.value) {
+    cliproxyAuthFilename.value = file.name;
+  }
+}
+
+async function importCliproxyAuth() {
+  error.value = "";
+  message.value = "";
+  const content = String(cliproxyAuthContent.value || "").trim();
+  if (!content) {
+    error.value = t("providerDetail.cliproxyAuthUploadFailed", { error: "content is required" });
+    return;
+  }
+  try {
+    const result = await createCLIProxyAuthFile(content, String(cliproxyAuthFilename.value || "").trim());
+    message.value = t("providerDetail.cliproxyAuthUploadSuccess", {
+      filename: result.file?.filename || "-",
+    });
+    clearCliproxyAuthDraft();
+    await refreshCliproxyAuthFiles();
+  } catch (e) {
+    error.value = t("providerDetail.cliproxyAuthUploadFailed", { error: e.message });
+  }
+}
+
+async function verifyCliproxyAuth(file) {
+  if (!file?.filename) return;
+  error.value = "";
+  message.value = "";
+  cliproxyAuthVerifying.value = {
+    ...cliproxyAuthVerifying.value,
+    [file.filename]: true,
+  };
+  try {
+    const result = await verifyCLIProxyAuthFile(
+      props.name,
+      file.filename,
+      currentCliproxyAuthVerifyModel(),
+    );
+    cliproxyAuthOnlineResults.value = {
+      ...cliproxyAuthOnlineResults.value,
+      [file.filename]: result,
+    };
+  } catch (e) {
+    cliproxyAuthOnlineResults.value = {
+      ...cliproxyAuthOnlineResults.value,
+      [file.filename]: {
+        status: "error",
+        error: e.message,
+      },
+    };
+  } finally {
+    cliproxyAuthVerifying.value = {
+      ...cliproxyAuthVerifying.value,
+      [file.filename]: false,
+    };
+  }
+}
+
+async function deleteCliproxyAuth(file) {
+  if (!file?.filename) return;
+  if (!window.confirm(t("providerDetail.cliproxyAuthDeleteConfirm", { filename: file.filename }))) return;
+  error.value = "";
+  message.value = "";
+  cliproxyAuthDeleting.value = {
+    ...cliproxyAuthDeleting.value,
+    [file.filename]: true,
+  };
+  try {
+    await deleteCLIProxyAuthFile(file.filename);
+    const nextResults = { ...cliproxyAuthOnlineResults.value };
+    delete nextResults[file.filename];
+    cliproxyAuthOnlineResults.value = nextResults;
+    message.value = t("providerDetail.cliproxyAuthDeleteSuccess", { filename: file.filename });
+    await refreshCliproxyAuthFiles();
+  } catch (e) {
+    error.value = t("providerDetail.cliproxyAuthDeleteFailed", { error: e.message });
+  } finally {
+    cliproxyAuthDeleting.value = {
+      ...cliproxyAuthDeleting.value,
+      [file.filename]: false,
+    };
+  }
+}
+
 function cleanConfig(obj) {
   if (obj === null || obj === undefined) return obj;
   if (Array.isArray(obj)) return obj;
@@ -1606,6 +1973,8 @@ async function load() {
     providerFormMeta.value = formMeta;
     showAPIKey.value = false;
     apiKeyTouched.value = false;
+    cliproxyAuthFiles.value = [];
+    clearCliproxyAuthDraft();
 
     if (props.create) {
       providerName.value = "";
@@ -2014,6 +2383,26 @@ async function unsuppressProvider() {
   gap: 6px;
 }
 
+.auth-source-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.auth-detail-label {
+  font-size: 12px;
+  color: var(--c-text-2);
+  font-family: var(--font-mono);
+}
+
+.auth-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .field-summary {
   display: flex;
   flex-wrap: wrap;
@@ -2050,6 +2439,100 @@ async function unsuppressProvider() {
   padding: 12px;
   border: 1px solid var(--c-border);
   border-radius: 8px;
+}
+
+.cliproxy-auth-panel {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.cliproxy-auth-import {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cliproxy-auth-file-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(180px, 1fr);
+  gap: 10px;
+}
+
+.cliproxy-auth-textarea {
+  min-height: 120px;
+  resize: vertical;
+  white-space: pre;
+  font-family: var(--font-mono);
+}
+
+.auth-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.auth-files-cards {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.auth-file-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.9fr) minmax(120px, auto);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface);
+}
+
+.auth-file-card-main,
+.auth-file-status {
+  min-width: 0;
+}
+
+.auth-file-name {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.auth-file-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 6px;
+  color: var(--c-text-3);
+  font-size: 12px;
+}
+
+.auth-file-status {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.auth-file-action {
+  white-space: nowrap;
+}
+
+.validation-message {
+  display: block;
+  margin-top: 4px;
+  color: var(--c-text-3);
+  line-height: 1.35;
 }
 
 .custom-interface-head {
@@ -2201,7 +2684,10 @@ async function unsuppressProvider() {
   }
 
   .form-grid,
-  .probe-grid {
+  .probe-grid,
+  .cliproxy-auth-file-row,
+  .auth-file-card,
+  .auth-command-grid {
     grid-template-columns: 1fr;
   }
 

@@ -13,6 +13,7 @@ import (
 )
 
 const RedactedPlaceholder = "__REDACTED__"
+const clearProviderAPIKeyMarker = "__clear_api_key__"
 
 func writeSSE(w http.ResponseWriter, r reqlog.Record) {
 	data, err := json.Marshal(r)
@@ -137,6 +138,9 @@ func preserveProviderSecrets(newCfg map[string]any, currentCfg map[string]any) {
 }
 
 func preserveProviderAPIKey(newProvider map[string]any, currentProvider map[string]any) {
+	if clearAPIKey, _ := newProvider[clearProviderAPIKeyMarker].(bool); clearAPIKey {
+		return
+	}
 	currentAPIKey, _ := currentProvider["api_key"].(string)
 	if strings.TrimSpace(currentAPIKey) == "" {
 		return
@@ -201,6 +205,10 @@ func NormalizeProviderConfigJSON(cfgMap map[string]any) {
 		if protocol, ok := pm["protocol"].(string); ok && strings.TrimSpace(protocol) == "" {
 			delete(pm, "protocol")
 		}
+		if clearAPIKey, _ := pm[clearProviderAPIKeyMarker].(bool); clearAPIKey {
+			delete(pm, "api_key")
+		}
+		delete(pm, clearProviderAPIKeyMarker)
 	}
 }
 

@@ -74,6 +74,32 @@ export function fetchProviderFormMeta() {
 	return apiJSON("/_admin/api/providers/form-meta");
 }
 
+export function fetchCLIProxyAuthFiles() {
+	return apiJSON("/_admin/api/cliproxy/auth-files");
+}
+
+export function createCLIProxyAuthFile(content, filename = "") {
+	return apiJSON("/_admin/api/cliproxy/auth-files", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content, filename }),
+	});
+}
+
+export function deleteCLIProxyAuthFile(filename) {
+	return apiJSON(`/_admin/api/cliproxy/auth-files?filename=${encodeURIComponent(filename)}`, {
+		method: "DELETE",
+	});
+}
+
+export function verifyCLIProxyAuthFile(provider, filename, model = "") {
+	return apiJSON("/_admin/api/cliproxy/auth-files/verify", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ provider, filename, model }),
+	});
+}
+
 export function setProviderSuppress(name, suppress) {
 	return apiJSON("/_admin/api/providers/suppress", {
 		method: "POST",

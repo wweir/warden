@@ -60,6 +60,10 @@
 								<span>{{ $t('logs.duration') }}</span>
 								<strong>{{ formatDuration(log.duration_ms) }}</strong>
 							</div>
+							<div v-if="log.ttft_ms !== undefined && log.ttft_ms !== null" class="detail-meta-item">
+								<span>{{ $t('logs.ttft') }}</span>
+								<strong>{{ formatDuration(log.ttft_ms) }}</strong>
+							</div>
 							<div v-if="log.fingerprint" class="detail-meta-item detail-meta-item-wide">
 								<span>{{ $t('logs.session') }}</span>
 								<code class="fp-str">{{ log.fingerprint }}</code>

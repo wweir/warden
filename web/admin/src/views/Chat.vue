@@ -280,6 +280,7 @@ function buildResponsesRequest(protocol, model, messages, previousResponseID = '
   const body = {
     model,
     stream: true,
+    store: false,
   }
 
   if (isStatefulResponsesProtocol(protocol) && previousResponseID) {

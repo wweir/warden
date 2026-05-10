@@ -9,9 +9,11 @@
 - Tool Hooks：route-scoped hook 编辑与建议
 - Logs：SSE 请求日志流
 - Logs 流按 `request_id` 合并事件；流式请求会先显示 pending，再在同一条记录上补全最终响应
+- Logs 详情弹层展示 `ttft_ms`，有流式首 token 数据时与总耗时并列显示；非流式请求不会伪造该字段
 - Logs 页面整合会话时，优先按 Responses API 的 `previous_response_id -> response.id` 显式续接整合；没有显式续接时，只在同 route 下按 fingerprint 前缀做保守归并，不再使用旧的 prompt 哈希 + 时间窗启发式，避免把独立请求误并成同一 session
 - Logs 页面桌面端采用“左侧 session 树 + 右侧日志表”的主从布局；顶部动作区单独成组，右侧在表格上方增加 scope 摘要条，显式展示当前 route / session / 时间范围 / 请求数，让左侧选择和右侧明细始终对齐；左侧树支持整栏收起、按 route 分组折叠，并限制在视口内滚动，避免长会话把页面纵向撑长；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段，减少排障时的信息竞争
-- Chat：根据 `route.protocol` 自动选择 `/chat/completions`、`/responses` 或 `/messages` 发起请求，并按对应 SSE 格式解析文本输出；对 `responses_stateful` 会本地保存上一轮 `response.id` 并续传 `previous_response_id`
+- Chat：根据 `route.protocol` 自动选择 `/chat/completions`、`/responses` 或 `/messages` 发起请求，并按对应 SSE 格式解析文本输出；发起 Responses 请求时显式携带 `store=false`；对 `responses_stateful` 会本地保存上一轮 `response.id` 并续传 `previous_response_id`
+- Provider 详情页的 cliproxy 认证导入面板只写 `cliproxy.auth_dir` 下的 auth JSON 文件，不回填 provider 配置字段；导入和列表状态只做离线结构校验，不证明账号在线可用；在线验证按钮只调用 Warden 后端，由后端沿当前 cliproxy provider 的正常 chat 探测链路发起请求
 - Config：结构化配置编辑、客户端 API 密钥、验证、应用
 
 约束：
@@ -40,7 +42,7 @@
 - `Providers` 页面卡片支持直接跳到“基于该 provider 模型创建 route”的新建入口；新 route 会默认生成该 provider 已配置/已发现模型的 `exact_models`，并预选单个协议
 - `Tool Hooks` 页面负责 route hooks 编辑
 - `Providers` 页面负责单个 provider 配置编辑；`provider.models` 在 UI 中被明确当作“静态模型基线/兜底”，直接展示在配置表单中，并复用运行时已发现模型作为录入建议，不等同于 route 对外暴露模型定义
-- provider 创建页采用 intent-first 结构：先选 provider type，再填写连接 / 认证 / 能力；静态模型基线和高级字段直接展示，底层 `family`、`backend`、`backend_provider` 只在自定义接入中出现，原始 `service_protocols` 只在自定义接口中出现
+- provider 创建页采用 intent-first 结构：先选 provider type，再填写连接 / 认证 / 能力；认证配置内联在“认证来源”选择器下，选中静态 API Key、命令、配置目录或无认证时只展示该来源需要的字段；静态模型基线和高级字段直接展示，底层 `family`、`backend`、`backend_provider` 只在自定义接入中出现，原始 `service_protocols` 只在自定义接口中出现
 - provider 创建页消费后端 `/_admin/api/providers/form-meta` 元数据接口，使用 provider presets 和 capability templates 派生默认值，但最终仍写回现有 `provider.*` schema
 - provider 编辑器仍允许直接编辑当前真实支持的 provider 配置项：`url`、`api_key`、`config_dir`、`proxy`、`headers`、`models`；对 `openai` provider 额外暴露 `backend` / `backend_provider` 元数据和 `responses_to_chat` / `anthropic_to_chat` 桥接开关
 - `Config` 页面保留通用配置、客户端 API 密钥、webhook 和日志目标
