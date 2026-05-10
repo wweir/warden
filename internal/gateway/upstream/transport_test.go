@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wweir/warden/config"
 	"github.com/wweir/warden/internal/providerauth"
@@ -319,6 +320,76 @@ func TestSendStreamingRequestAcceptsSSEBodyWithoutContentType(t *testing.T) {
 	}
 	if got := string(body); got != "data: {\"id\":\"chunk\"}\n\ndata: [DONE]\n\n" {
 		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestSendStreamingRequestLatencyWaitsForFirstToken(t *testing.T) {
+	t.Parallel()
+
+	const firstTokenDelay = 80 * time.Millisecond
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		time.Sleep(firstTokenDelay)
+		_, _ = w.Write([]byte("data: {\"id\":\"chunk\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+		Timeout:  "2s",
+	}
+
+	reader, latency, err := SendStreamingRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	if err != nil {
+		t.Fatalf("SendStreamingRequest() error = %v", err)
+	}
+	defer reader.Close()
+
+	if latency < firstTokenDelay/2 {
+		t.Fatalf("latency = %s, want it to include first-token wait around %s", latency, firstTokenDelay)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if got := string(body); !strings.Contains(got, `"chunk"`) || !strings.Contains(got, "[DONE]") {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestSendStreamingRequestTimesOutWaitingForFirstTokenAfterHeaders(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte("data: late\n\n"))
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+		Timeout:  "30ms",
+	}
+
+	reader, _, err := SendStreamingRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[],"stream":true}`))
+	if reader != nil {
+		t.Fatal("reader should be nil on first-token timeout")
+	}
+	var timeoutErr *FirstTokenTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("error = %v, want FirstTokenTimeoutError", err)
+	}
+	if !selector.IsRetryableError(err) {
+		t.Fatalf("first-token timeout should be retryable, got %v", err)
 	}
 }
 

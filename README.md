@@ -237,6 +237,7 @@ curl http://localhost:9832/openai/embeddings \
 - `provider.*.family` 必填，`provider.*.protocol` 只保留为兼容别名
 - `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
 - `cliproxy.enabled` 启用嵌入式 cliproxy；启用时所有 `backend: cliproxy` provider 必须共享同一个 `http://loopback:port/v1` URL
+- `provider.*.timeout` 只限制发出上游请求到首个响应 body/token 的时间，不限制首 token 之后的流式读取
 - `provider.*.api_key_command` 可用一行命令动态提供 provider API Key，默认正超时 `5s`、缓存 `5m`；它与 `api_key` 互斥，是受信任 operator-only 配置，`backend: cliproxy` 不支持
 - `route.protocol` 必须显式声明，而且只能是 `chat`、`responses_stateless`、`responses_stateful`、`anthropic` 之一
 - `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时可让同一路由同时暴露 `chat`、`responses`、`embeddings` 等服务接口，但必须包含 `route.protocol`，且每个显式接口都必须有 route upstream/provider 支持
@@ -479,6 +480,7 @@ If the matched route requires client API keys, use any of these headers:
 - `provider.*.family` is required, and `provider.*.protocol` remains only as a compatibility alias
 - `provider.*.backend` is an optional upstream implementation marker; the only current value is `cliproxy`, and it requires `family: openai`, `backend_provider`, and explicit `service_protocols`
 - `cliproxy.enabled` starts embedded cliproxy; when enabled, all `backend: cliproxy` providers must share the same `http://loopback:port/v1` URL
+- `provider.*.timeout` only limits the time from upstream request dispatch to the first response body/token, not streaming reads after the first token
 - `provider.*.api_key_command` can dynamically provide the provider API key through one shell command, with default positive timeout `5s` and cache TTL `5m`; it is mutually exclusive with `api_key`, trusted operator-only configuration, and unsupported for `backend: cliproxy`
 - `route.protocol` is required and must be one of `chat`, `responses_stateless`, `responses_stateful`, or `anthropic`
 - `route.service_protocols` is optional; empty derives from `route.protocol`, while explicit values let one route expose `chat`, `responses`, `embeddings`, and other service interfaces together, but must include `route.protocol`, and every explicit interface must be supported by at least one route upstream/provider

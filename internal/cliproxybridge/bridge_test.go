@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+	"github.com/wweir/warden/config"
 )
 
 func TestApplyFeatureHidingDefaults(t *testing.T) {
@@ -84,5 +85,55 @@ func TestWriteRuntimeConfigIncludesFeatureHidingDefaults(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("runtime config missing %q in:\n%s", want, content)
 		}
+	}
+}
+
+func TestBuildRuntimeConfigUsesCLIProxyProxy(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.ConfigStruct{
+		CLIProxy: &config.CLIProxyConfig{
+			Proxy:               "socks5://127.0.0.1:1080",
+			RequestRetry:        2,
+			MaxRetryCredentials: 3,
+		},
+		Provider: map[string]*config.ProviderConfig{
+			"cliproxy-codex": {
+				Backend: config.ProviderBackendCLIProxy,
+				Proxy:   "http://127.0.0.1:8080",
+			},
+		},
+	}
+
+	runtimeCfg := buildRuntimeConfig(cfg, "127.0.0.1", 18741, "/tmp/auth")
+
+	if got := runtimeCfg.SDKConfig.ProxyURL; got != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy-url = %q, want explicit cliproxy proxy", got)
+	}
+	if got := runtimeCfg.RequestRetry; got != 2 {
+		t.Fatalf("request-retry = %d, want 2", got)
+	}
+	if got := runtimeCfg.MaxRetryCredentials; got != 3 {
+		t.Fatalf("max-retry-credentials = %d, want 3", got)
+	}
+}
+
+func TestBuildRuntimeConfigDerivesProxyFromCLIProxyProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.ConfigStruct{
+		CLIProxy: &config.CLIProxyConfig{},
+		Provider: map[string]*config.ProviderConfig{
+			"cliproxy-codex": {
+				Backend: config.ProviderBackendCLIProxy,
+				Proxy:   "http://127.0.0.1:8080",
+			},
+		},
+	}
+
+	runtimeCfg := buildRuntimeConfig(cfg, "127.0.0.1", 18741, "/tmp/auth")
+
+	if got := runtimeCfg.SDKConfig.ProxyURL; got != "http://127.0.0.1:8080" {
+		t.Fatalf("proxy-url = %q, want provider proxy", got)
 	}
 }

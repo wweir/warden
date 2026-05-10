@@ -43,6 +43,7 @@ type Record struct {
     Provider    string
     UserAgent   string
     DurationMs  int64
+    TTFTMs      *int64          // 流式请求首 token 延迟，非流式请求为空
     Error       string
     Fingerprint string          // 会话指纹，见 BuildFingerprint
     Request     json.RawMessage

@@ -116,7 +116,7 @@ func (g *Gateway) handleChatBridge(
 			}
 
 			// Stream: all hook checks degrade to async audits because the live response cannot be rewritten.
-			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
 			go func() {
 				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.hookGatewayTarget(), observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
 				if len(asyncVerdicts) == 0 {
@@ -177,7 +177,7 @@ func (g *Gateway) handleChatBridge(
 			respBody = spec.injectBlockVerdicts(respBody, blockVerdicts)
 		}
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
-		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
 		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {

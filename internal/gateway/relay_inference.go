@@ -95,7 +95,7 @@ func (g *Gateway) handleRelayInference(
 			}
 
 			_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
-			completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
 			observepkg.RecordInferenceLog(
 				completedLogParams,
 				rawResp,
@@ -146,7 +146,7 @@ func (g *Gateway) handleRelayInference(
 		session.observeMatchedModel()
 		respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
 		spec.writeNonStream(w, respBody)
-		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
 		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {

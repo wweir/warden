@@ -88,3 +88,66 @@ func TestGatewayProxyLogsDecompressedResponsesBody(t *testing.T) {
 		t.Fatalf("logged response should be decompressed, got %q", got)
 	}
 }
+
+func TestGatewayProxyStreamErrorLogDoesNotCarryTTFT(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+			return
+		}
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("upstream path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"upstream failed"}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				URL:      upstream.URL,
+				Protocol: "openai",
+				APIKey:   config.SecretString("provider-token"),
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: config.RouteProtocolChat,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": exactModel(config.RouteProtocolChat, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := gatewaypkg.NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	records := gw.Broadcaster().Recent()
+	if len(records) != 1 {
+		t.Fatalf("recent log count = %d, want 1", len(records))
+	}
+	if records[0].TTFTMs != nil {
+		t.Fatalf("TTFTMs = %v, want nil for stream error response", records[0].TTFTMs)
+	}
+	if records[0].Error == "" {
+		t.Fatalf("Error is empty, want upstream error")
+	}
+}

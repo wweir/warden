@@ -105,7 +105,7 @@ func (g *Gateway) handleBufferedInference(
 			}
 
 			_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
-			g.recordBufferedStreamResponse(session, spec, logParams, rawResp, errMsg, blockVerdicts, runAsync)
+			g.recordBufferedStreamResponse(session, spec, logParams.WithTTFT(latency), rawResp, errMsg, blockVerdicts, runAsync)
 			return true
 		}
 
@@ -134,12 +134,12 @@ func (g *Gateway) handleBufferedInference(
 
 		if req.Stream {
 			spec.writeStream(w, session.provider.Protocol, respBody)
-			g.recordBufferedStreamResponse(session, spec, logParams, respBody, "", blockVerdicts, runAsync)
+			g.recordBufferedStreamResponse(session, spec, logParams.WithTTFT(latency), respBody, "", blockVerdicts, runAsync)
 			return true
 		}
 
 		spec.writeNonStream(w, respBody)
-		completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
+		completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
 		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeJSONTokenUsage(spec.serviceProtocol, respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {

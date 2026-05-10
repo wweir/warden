@@ -9,6 +9,9 @@ import (
 
 	"github.com/wweir/warden/config"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
+	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
+	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
+	"github.com/wweir/warden/internal/reqlog"
 	"github.com/wweir/warden/pkg/protocol"
 	"github.com/wweir/warden/pkg/toolhook"
 )
@@ -71,4 +74,60 @@ func TestRunRouteToolHooksSkipsUnmatchedCallsInVerdicts(t *testing.T) {
 	if len(verdicts) != 0 {
 		t.Fatalf("expected no verdicts for unmatched tool call, got %+v", verdicts)
 	}
+}
+
+func TestRecordInferenceLogCarriesTTFT(t *testing.T) {
+	t.Parallel()
+
+	got := recordTestInferenceLogWithTTFT(true)
+
+	if got.DurationMs != 456 {
+		t.Fatalf("DurationMs = %d, want 456", got.DurationMs)
+	}
+	if got.TTFTMs == nil || *got.TTFTMs != 123 {
+		t.Fatalf("TTFTMs = %v, want 123", got.TTFTMs)
+	}
+}
+
+func TestRecordInferenceLogSkipsTTFTForNonStream(t *testing.T) {
+	t.Parallel()
+
+	got := recordTestInferenceLogWithTTFT(false)
+
+	if got.TTFTMs != nil {
+		t.Fatalf("TTFTMs = %v, want nil for non-stream request", got.TTFTMs)
+	}
+}
+
+func recordTestInferenceLogWithTTFT(stream bool) reqlog.Record {
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	params := NewInferenceLogParams(
+		req,
+		time.Unix(0, 0),
+		"req_1",
+		"/openai",
+		"chat/completions",
+		"gpt-4o",
+		stream,
+		[]byte(`{"model":"gpt-4o"}`),
+		nil,
+		telemetrypkg.Labels{},
+		"openai",
+	).WithTTFT(123 * time.Millisecond).WithDuration(456)
+
+	var got reqlog.Record
+	RecordInferenceLog(
+		params,
+		[]byte(`{"ok":true}`),
+		"",
+		nil,
+		tokenusagepkg.Missing(""),
+		nil,
+		nil,
+		func(record reqlog.Record) {
+			got = record
+		},
+	)
+
+	return got
 }

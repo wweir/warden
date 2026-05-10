@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -65,21 +66,7 @@ func New(cfg *config.ConfigStruct) (*Bridge, error) {
 		authDir = filepath.Join(home, authDir[2:])
 	}
 
-	clipCfg := &sdkconfig.Config{
-		Host:                   host,
-		Port:                   port,
-		AuthDir:                authDir,
-		LoggingToFile:          false,
-		UsageStatisticsEnabled: false,
-		RequestRetry:           cfg.CLIProxy.RequestRetry,
-		MaxRetryCredentials:    cfg.CLIProxy.MaxRetryCredentials,
-	}
-	clipCfg.SDKConfig.ProxyURL = strings.TrimSpace(cfg.CLIProxy.Proxy)
-	clipCfg.SDKConfig.APIKeys = cliproxyAPIKeys(cfg)
-	clipCfg.Pprof.Enable = false
-	clipCfg.RemoteManagement.AllowRemote = false
-	clipCfg.RemoteManagement.DisableControlPanel = true
-	applyFeatureHidingDefaults(clipCfg)
+	clipCfg := buildRuntimeConfig(cfg, host, port, authDir)
 
 	configPath, err := writeRuntimeConfig(clipCfg)
 	if err != nil {
@@ -101,6 +88,49 @@ func New(cfg *config.ConfigStruct) (*Bridge, error) {
 		configPath: configPath,
 		errCh:      make(chan error, 1),
 	}, nil
+}
+
+func buildRuntimeConfig(cfg *config.ConfigStruct, host string, port int, authDir string) *sdkconfig.Config {
+	clipCfg := &sdkconfig.Config{
+		Host:                   host,
+		Port:                   port,
+		AuthDir:                authDir,
+		LoggingToFile:          false,
+		UsageStatisticsEnabled: false,
+		RequestRetry:           cfg.CLIProxy.RequestRetry,
+		MaxRetryCredentials:    cfg.CLIProxy.MaxRetryCredentials,
+	}
+	clipCfg.SDKConfig.ProxyURL = effectiveCLIProxyProxy(cfg)
+	clipCfg.SDKConfig.APIKeys = cliproxyAPIKeys(cfg)
+	clipCfg.Pprof.Enable = false
+	clipCfg.RemoteManagement.AllowRemote = false
+	clipCfg.RemoteManagement.DisableControlPanel = true
+	applyFeatureHidingDefaults(clipCfg)
+	return clipCfg
+}
+
+func effectiveCLIProxyProxy(cfg *config.ConfigStruct) string {
+	if cfg == nil || cfg.CLIProxy == nil {
+		return ""
+	}
+	if proxy := strings.TrimSpace(cfg.CLIProxy.Proxy); proxy != "" {
+		return proxy
+	}
+	names := make([]string, 0, len(cfg.Provider))
+	for name := range cfg.Provider {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		prov := cfg.Provider[name]
+		if prov == nil || prov.Backend != config.ProviderBackendCLIProxy {
+			continue
+		}
+		if proxy := strings.TrimSpace(prov.Proxy); proxy != "" {
+			return proxy
+		}
+	}
+	return ""
 }
 
 func applyFeatureHidingDefaults(cfg *sdkconfig.Config) {

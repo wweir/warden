@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +52,49 @@ func TestProviderConfig_HTTPClient_Caching(t *testing.T) {
 	client4 := prov.HTTPClient(60 * time.Second)
 	if client3 != client4 {
 		t.Error("HTTPClient should cache instance for custom timeout")
+	}
+}
+
+func TestProviderConfigHTTPClientUsesProviderProxy(t *testing.T) {
+	prov := &ProviderConfig{
+		Name:  "test",
+		URL:   "https://upstream.example.test",
+		Proxy: "http://127.0.0.1:18080",
+	}
+
+	client := prov.HTTPClient(0)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", client.Transport)
+	}
+	reqURL, err := url.Parse("https://upstream.example.test/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURL, err := transport.Proxy(&http.Request{URL: reqURL})
+	if err != nil {
+		t.Fatalf("Proxy() error = %v", err)
+	}
+	if proxyURL == nil || proxyURL.String() != prov.Proxy {
+		t.Fatalf("proxy URL = %v, want %s", proxyURL, prov.Proxy)
+	}
+}
+
+func TestProviderConfigHTTPClientSkipsProxyForCLIProxyBackend(t *testing.T) {
+	prov := &ProviderConfig{
+		Name:    "codex",
+		URL:     "http://127.0.0.1:18741/v1",
+		Backend: ProviderBackendCLIProxy,
+		Proxy:   "socks5h://192.168.1.2:1080",
+	}
+
+	client := prov.HTTPClient(0)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("cliproxy backend HTTP client should connect to the local bridge directly")
 	}
 }
 
@@ -1150,6 +1195,118 @@ func TestValidateEmbeddedCLIProxyRejectsMismatchedProviders(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must share the same endpoint") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyAcceptsSharedProviderProxy(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{Enabled: true},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8080",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+			"gemini": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "gemini",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8080",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyRejectsConflictingProviderProxy(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{Enabled: true},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8080",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+			"gemini": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "gemini",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8081",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "share one outbound proxy") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEmbeddedCLIProxyAllowsProviderProxyConflictWithExplicitCLIProxyProxy(t *testing.T) {
+	cfg := &ConfigStruct{
+		CLIProxy: &CLIProxyConfig{Enabled: true, Proxy: "socks5://127.0.0.1:1080"},
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "codex",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8080",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+			"gemini": {
+				Family:           ProviderProtocolOpenAI,
+				Backend:          ProviderBackendCLIProxy,
+				BackendProvider:  "gemini",
+				URL:              "http://127.0.0.1:18741/v1",
+				Proxy:            "http://127.0.0.1:8081",
+				ServiceProtocols: []string{RouteProtocolChat},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/codex": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

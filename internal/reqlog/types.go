@@ -20,6 +20,7 @@ type Record struct {
 	Provider     string                 `json:"provider"`
 	UserAgent    string                 `json:"user_agent,omitempty"`
 	DurationMs   int64                  `json:"duration_ms"`
+	TTFTMs       *int64                 `json:"ttft_ms,omitempty"`
 	Error        string                 `json:"error,omitempty"`
 	Fingerprint  string                 `json:"fingerprint,omitempty"`
 	Request      json.RawMessage        `json:"request"`

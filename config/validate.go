@@ -150,11 +150,28 @@ func (c *ConfigStruct) validateCLIProxyConfig() error {
 
 	endpoint := ""
 	count := 0
-	for name, prov := range c.Provider {
+	cliproxyProxy := ""
+	cliproxyProxyProvider := ""
+	names := make([]string, 0, len(c.Provider))
+	for name := range c.Provider {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		prov := c.Provider[name]
 		if prov == nil || prov.Backend != ProviderBackendCLIProxy {
 			continue
 		}
 		count++
+		providerProxy := strings.TrimSpace(prov.Proxy)
+		if c.CLIProxy.Proxy == "" && providerProxy != "" {
+			if cliproxyProxy == "" {
+				cliproxyProxy = providerProxy
+				cliproxyProxyProvider = name
+			} else if cliproxyProxy != providerProxy {
+				return NewValidationError("provider %s: embedded cliproxy providers share one outbound proxy; proxy must match provider %s proxy %s, got %s, or set cliproxy.proxy explicitly", name, cliproxyProxyProvider, cliproxyProxy, providerProxy)
+			}
+		}
 		parsed, err := url.Parse(prov.URL)
 		if err != nil {
 			return NewValidationError("provider %s: invalid cliproxy backend url %s: %v", name, prov.URL, err)

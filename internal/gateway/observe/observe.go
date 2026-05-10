@@ -27,6 +27,7 @@ type StreamLogAssembler func(respBody []byte) (assembled []byte, fallback []byte
 type InferenceLogParams struct {
 	StartTime  time.Time
 	DurationMs int64 // < 0 means unset and should be computed from StartTime
+	TTFTMs     *int64
 	RequestID  string
 	Route      string
 	Endpoint   string
@@ -63,6 +64,14 @@ func (p InferenceLogParams) WithDuration(durationMs int64) InferenceLogParams {
 	return p
 }
 
+func (p InferenceLogParams) WithTTFT(ttft time.Duration) InferenceLogParams {
+	if p.Stream && ttft > 0 {
+		v := ttft.Milliseconds()
+		p.TTFTMs = &v
+	}
+	return p
+}
+
 func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), verdicts []toolhook.HookVerdict, emit func(reqlog.Record)) {
 	durationMs := params.DurationMs
 	if durationMs < 0 {
@@ -80,6 +89,7 @@ func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 		Provider:     params.Provider,
 		UserAgent:    params.UserAgent,
 		DurationMs:   durationMs,
+		TTFTMs:       params.TTFTMs,
 		Error:        errMsg,
 		Fingerprint:  fingerprintpkg.BuildFingerprint(params.Request),
 		Request:      params.Request,

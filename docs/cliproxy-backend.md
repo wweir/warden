@@ -41,7 +41,15 @@ service_protocols = ["chat"]
 
 When `cliproxy.enabled` is true, Warden defaults `cliproxy.auth_dir` to `/etc/warden` when omitted, then builds a minimal SDK config for `github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy`, starts it before the main gateway listener, waits for `/healthz`, and shuts it down before process restart or exit.
 
+The provider admin page can import a complete CLIProxyAPI auth JSON file into this directory. The imported content is written as a plain `.json` file under `cliproxy.auth_dir`; Warden does not convert it into provider config fields.
+
+Warden validates imported auth files offline. It rejects malformed JSON, non-object payloads, and files without a non-empty `type` field. It also reports a structural status for existing and newly imported files by checking common credential indicators, disabled state, and locally encoded expiration fields. This status does not prove that the upstream account is still accepted online, because Warden does not refresh tokens or call provider APIs during import.
+
+The admin page also exposes a manual online validation action. The browser only calls Warden's admin API; Warden sends the actual validation request from the backend through the same provider request path used for normal OpenAI-compatible requests. The request targets the current saved cliproxy provider and a selected or first known model with a minimal Responses payload: `model`, `input: "ping"`, and `store: false`. This validates that the provider's CLIProxyAPI credential pool can serve a real request. It does not pin the request to a specific auth file because CLIProxyAPI's normal HTTP request surface does not expose a per-file auth selector.
+
 The embedded service endpoint is derived from the first `backend: cliproxy` provider URL. All cliproxy-backed providers must point to the same `http://loopback:port/v1` endpoint because Warden starts one embedded cliproxy service per process.
+
+For `backend: cliproxy`, `provider.*.proxy` does not proxy Warden's local HTTP call to this loopback endpoint. It is only used as the embedded service's outbound proxy to the real upstream when `cliproxy.proxy` is empty. Set `cliproxy.proxy` to override this derived value.
 
 Warden main config is TOML-only. The embedded cliproxy bridge still generates a temporary YAML runtime file for CLIProxyAPI's SDK watcher because the SDK reads its own YAML schema. That file is internal process state, not a Warden user config, and must not be edited as `/etc/warden/warden.toml`.
 

@@ -113,6 +113,27 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		}
 		return manager.Failovers()
 	}
+	handleAttemptError := func(attemptErr error, latency time.Duration) (retry bool, canceled bool) {
+		if allowFailover {
+			h.deps.Selector.RecordOutcome(provCfg.Name, attemptErr, latency)
+		}
+		if r.Context().Err() != nil {
+			return false, true
+		}
+		if manager == nil && inferencepkg.TryAuthRetry(attemptErr, provCfg, authRetried) {
+			return true, false
+		}
+		if manager != nil && manager.HandleError(attemptErr) {
+			current := manager.Current()
+			provCfg = current.Provider
+			target = current.Target
+			if h.deps.ApplyMetricHeaders != nil {
+				metricLabels = h.deps.ApplyMetricHeaders(w, r, route, serviceProtocol, endpoint, provCfg.Name, target)
+			}
+			return true, false
+		}
+		return false, false
+	}
 
 	for {
 		if h.deps.LogRequest != nil {
@@ -140,56 +161,38 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		}
 		if err := providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg); err != nil {
 			upErr := &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
-			if allowFailover {
-				h.deps.Selector.RecordOutcome(provCfg.Name, upErr, 0)
-			}
-			if r.Context().Err() != nil {
+			if retry, canceled := handleAttemptError(upErr, 0); canceled {
 				return
-			}
-			if manager == nil && inferencepkg.TryAuthRetry(upErr, provCfg, authRetried) {
-				continue
-			}
-			if manager != nil && manager.HandleError(upErr) {
-				current := manager.Current()
-				provCfg = current.Provider
-				target = current.Target
-				if h.deps.ApplyMetricHeaders != nil {
-					metricLabels = h.deps.ApplyMetricHeaders(w, r, route, serviceProtocol, endpoint, provCfg.Name, target)
-				}
+			} else if retry {
 				continue
 			}
 			upstreampkg.WriteUpstreamAwareError(w, upErr)
 			return
 		}
 
-		upstreamStart := time.Now()
-		resp, err := provCfg.HTTPClient(0).Do(proxyReq)
-		latency := time.Since(upstreamStart)
+		timeout := provCfg.FirstTokenTimeout(0)
+		resp, deadline, err := upstreampkg.DoWithFirstTokenTimeout(provCfg.HTTPClient(0), proxyReq, timeout)
+		latency := deadline.Latency()
 		if err != nil {
-			if allowFailover {
-				h.deps.Selector.RecordOutcome(provCfg.Name, err, latency)
-			}
-			if r.Context().Err() != nil {
+			if retry, canceled := handleAttemptError(err, latency); canceled {
 				return
-			}
-			if manager == nil && inferencepkg.TryAuthRetry(err, provCfg, authRetried) {
-				continue
-			}
-			if manager != nil && manager.HandleError(err) {
-				current := manager.Current()
-				provCfg = current.Provider
-				target = current.Target
-				if h.deps.ApplyMetricHeaders != nil {
-					metricLabels = h.deps.ApplyMetricHeaders(w, r, route, serviceProtocol, endpoint, provCfg.Name, target)
-				}
+			} else if retry {
 				continue
 			}
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		respBody, latency, readErr := upstreampkg.ReadRawResponseBodyWithFirstTokenDeadline(resp, deadline, timeout)
+		if readErr != nil {
+			if retry, canceled := handleAttemptError(readErr, latency); canceled {
+				return
+			} else if retry {
+				continue
+			}
+			http.Error(w, readErr.Error(), http.StatusBadGateway)
+			return
+		}
 		contentEncoding := upstreampkg.NormalizeContentEncoding(resp.Header.Get("Content-Encoding"))
 		decodedRespBody, decodeErr := upstreampkg.DecodeResponseBody(contentEncoding, respBody)
 		inspectableBody := decodeErr == nil
@@ -210,22 +213,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		}
 
 		if upErr != nil {
-			if allowFailover {
-				h.deps.Selector.RecordOutcome(provCfg.Name, upErr, latency)
-			}
-			if r.Context().Err() != nil {
+			if retry, canceled := handleAttemptError(upErr, latency); canceled {
 				return
-			}
-			if manager == nil && inferencepkg.TryAuthRetry(upErr, provCfg, authRetried) {
-				continue
-			}
-			if manager != nil && manager.HandleError(upErr) {
-				current := manager.Current()
-				provCfg = current.Provider
-				target = current.Target
-				if h.deps.ApplyMetricHeaders != nil {
-					metricLabels = h.deps.ApplyMetricHeaders(w, r, route, serviceProtocol, endpoint, provCfg.Name, target)
-				}
+			} else if retry {
 				continue
 			}
 		} else {
@@ -279,6 +269,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				Request:     reqBody,
 				Response:    logResp,
 				Failovers:   currentFailovers(),
+			}
+			if stream && upErr == nil {
+				ttft := latency.Milliseconds()
+				rec.TTFTMs = &ttft
 			}
 			if resp.StatusCode == http.StatusOK && inspectableBody {
 				rec.TokenUsage = &reqlog.TokenUsage{

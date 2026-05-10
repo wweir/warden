@@ -105,7 +105,7 @@ type ProviderConfig struct {
 	APIKeyCommandTimeout string            `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
 	APIKeyCommandTTL     string            `json:"api_key_command_ttl" usage:"Cache TTL for api_key_command output, default 5m; 0s disables cache"`
 	ConfigDir            string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
-	Timeout              string            `json:"timeout" usage:"First-token timeout for non-streaming requests (e.g. 30s, 2m); streaming uses fixed 30s; body reading has no time limit"`
+	Timeout              string            `json:"timeout" usage:"First-token timeout from upstream request start to first response body byte (e.g. 30s, 2m); body reading after the first token has no time limit"`
 	Proxy                string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers              map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models               []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
@@ -118,6 +118,8 @@ type ProviderConfig struct {
 	apiKeyCommandMu    sync.Mutex
 	apiKeyCommandCache providerAPIKeyCommandCache
 }
+
+const defaultProviderFirstTokenTimeout = 120 * time.Second
 
 type providerAPIKeyCommandCache struct {
 	Command   string
@@ -142,22 +144,27 @@ func (b *ProviderConfig) InvalidateAuth() {
 	}
 }
 
-// HTTPClient returns an *http.Client configured with the provider's proxy and timeout.
-// If override is non-zero it is used as the timeout; otherwise falls back to Timeout
-// (default 120s). The timeout applies to waiting for response headers (first-token latency),
-// not the entire request duration - this allows streaming responses and slow non-streaming
-// responses to complete without being terminated by a fixed deadline.
-// Clients are cached by timeout value to reuse connections.
-func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
-	timeout := override
-	if timeout == 0 {
-		timeout = 120 * time.Second // default first-token timeout
-		if b.Timeout != "" {
-			if d, err := time.ParseDuration(b.Timeout); err == nil {
-				timeout = d
-			}
+// FirstTokenTimeout returns the provider timeout for waiting until the first response body byte.
+func (b *ProviderConfig) FirstTokenTimeout(override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	if b != nil && b.Timeout != "" {
+		if d, err := time.ParseDuration(b.Timeout); err == nil && d > 0 {
+			return d
 		}
 	}
+	return defaultProviderFirstTokenTimeout
+}
+
+// HTTPClient returns an *http.Client configured with the provider's proxy.
+// If override is non-zero it is used as the response-header guard; otherwise falls back to Timeout
+// (default 120s). The gateway transport enforces the real first-token deadline across request
+// send, response headers, and the first response body byte. Body reading after the first token is
+// not limited by http.Client.Timeout so long streams can complete.
+// Clients are cached by timeout value to reuse connections.
+func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
+	timeout := b.FirstTokenTimeout(override)
 
 	b.clientCacheMu.RLock()
 	if client, ok := b.clientCache[timeout]; ok {
@@ -175,8 +182,10 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = timeout // first-token timeout
-	if b.Proxy != "" {
+	transport.ResponseHeaderTimeout = timeout // response-header guard; body first-token deadline is enforced in gateway/upstream.
+	if b.Backend == ProviderBackendCLIProxy {
+		transport.Proxy = nil
+	} else if b.Proxy != "" {
 		if proxyURL, err := url.Parse(b.Proxy); err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
 		}

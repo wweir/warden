@@ -45,10 +45,11 @@
 - `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
 - `provider.*.family` 必填；`provider.*.protocol` 只保留为兼容别名，不能与 `family` 冲突
 - `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
-- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`；该 URL 是 Warden 访问内嵌/本地 cliproxy 的 endpoint，不代表还要外接一个模型服务
-- `cliproxy.auth_dir` 留空时默认使用 `/etc/warden`，与托管安装默认主配置 `/etc/warden/warden.toml` 共享目录，便于集中放置多账号授权 JSON
+- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`；该 URL 是 Warden 访问内嵌/本地 cliproxy 的 endpoint，不代表还要外接一个模型服务。`backend: cliproxy` provider 的 `provider.*.proxy` 不代理这段本机 HTTP 调用，只在 `cliproxy.proxy` 未设置时派生嵌入式服务访问真实上游的出站代理；多个不同 proxy 会被拒绝。
+- `cliproxy.auth_dir` 留空时默认使用 `/etc/warden`，与托管安装默认主配置 `/etc/warden/warden.toml` 共享目录，便于集中放置多账号授权 JSON；admin provider 页面上的 cliproxy 认证导入只会写入这个目录，不会把认证内容写进 `provider.*`
 - `backend: cliproxy` 的请求会默认移除客户端 CLI/SDK 指纹头、Codex turn metadata 和 Warden 生成的 forwarding 头；嵌入式 cliproxy 会写入 Codex/Claude 默认头，关闭 CLIProxyAPI response header passthrough，并启用 Claude device-profile stabilization。显式配置在 `provider.*.headers` 中的静态头仍会在清理后注入
 - `~` 路径在校验阶段统一展开
+- `provider.*.timeout` 只限制从发出上游请求到收到首个响应 body/token 的时间；首 token 到达后，流式响应读取不再受该字段限制
 - `provider.*.api_key_command` 允许通过一行 shell 命令提供 provider API Key：Linux/macOS 使用 `sh -c`，Windows 使用 `cmd /C`。命令 stdout trim 后必须是非空单行；默认 `api_key_command_timeout = "5s"` 且必须大于 0；默认 `api_key_command_ttl = "5m"`，`api_key_command_ttl = "0s"` 表示每次请求都执行。
 - `provider.*.api_key_command` 与 `provider.*.api_key` 互斥；`Validate()` 只校验互斥关系和 duration 字段，不执行命令。该字段等同 RCE 级 operator-only 配置，命令以 Warden 服务用户身份执行。`backend: cliproxy` 不支持该字段。
 - `copilot` 在未设置 `api_key` 或 `api_key_command` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
@@ -79,7 +80,7 @@
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
 - `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
 - cliproxy 默认隐匿逻辑只覆盖 Warden 到 cliproxy 的 HTTP 头和嵌入式 SDK 配置；TLS 指纹、OAuth token 刷新、provider 原生执行和上游连接仍由 CLIProxyAPI 负责
-- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；认证来源选择器只写回 `api_key`、`api_key_command` 或 `config_dir` 等既有字段，不新增 provider type。cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only，并固定使用 CLIProxyAPI auth_dir；这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段
+- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；认证来源选择器只写回 `api_key`、`api_key_command` 或 `config_dir` 等既有字段，不新增 provider type。cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only，并固定使用 CLIProxyAPI auth_dir；这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段。provider 详情页的 cliproxy 认证导入面板只负责写 auth_dir 下的 JSON 文件
 
 动态命令认证示例：
 
