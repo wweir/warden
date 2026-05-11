@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/wweir/warden/config"
 	sel "github.com/wweir/warden/internal/selector"
 )
@@ -449,22 +450,9 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 	}
 
 	usageByKey := map[string]*usageStats{}
-	for _, met := range CollectMetrics(APIKeyRequestCounter) {
-		var key string
-		var route string
-		var status string
-		for _, label := range met.GetLabel() {
-			switch label.GetName() {
-			case "api_key":
-				key = label.GetValue()
-			case "route":
-				route = label.GetValue()
-			case "status":
-				status = label.GetValue()
-			}
-		}
+	ensureRow := func(key, route string) *usageStats {
 		if key == "" || route == "" {
-			continue
+			return nil
 		}
 		usageKey := route + "\x00" + key
 		row := usageByKey[usageKey]
@@ -472,38 +460,30 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 			row = &usageStats{}
 			usageByKey[usageKey] = row
 		}
+		return row
+	}
+
+	for _, met := range CollectMetrics(APIKeyRequestCounter) {
+		key, route, status := apiKeyMetricLabels(met, "status")
+		row := ensureRow(key, route)
+		if row == nil {
+			continue
+		}
 		value := int64(met.GetCounter().GetValue())
 		row.TotalRequests += value
-		if status == "success" {
+		switch status {
+		case "success":
 			row.SuccessRequests += value
-		}
-		if status == "failure" {
+		case "failure":
 			row.FailureRequests += value
 		}
 	}
 
 	for _, met := range CollectMetrics(APIKeyTokenCounter) {
-		var key string
-		var route string
-		var typ string
-		for _, label := range met.GetLabel() {
-			switch label.GetName() {
-			case "api_key":
-				key = label.GetValue()
-			case "route":
-				route = label.GetValue()
-			case "type":
-				typ = label.GetValue()
-			}
-		}
-		if key == "" || route == "" {
-			continue
-		}
-		usageKey := route + "\x00" + key
-		row := usageByKey[usageKey]
+		key, route, typ := apiKeyMetricLabels(met, "type")
+		row := ensureRow(key, route)
 		if row == nil {
-			row = &usageStats{}
-			usageByKey[usageKey] = row
+			continue
 		}
 		value := int64(met.GetCounter().GetValue())
 		switch typ {
@@ -517,27 +497,10 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 	}
 
 	for _, met := range CollectMetrics(APIKeyTokenObservationCounter) {
-		var key string
-		var route string
-		var completeness string
-		for _, label := range met.GetLabel() {
-			switch label.GetName() {
-			case "api_key":
-				key = label.GetValue()
-			case "route":
-				route = label.GetValue()
-			case "completeness":
-				completeness = label.GetValue()
-			}
-		}
-		if key == "" || route == "" {
-			continue
-		}
-		usageKey := route + "\x00" + key
-		row := usageByKey[usageKey]
+		key, route, completeness := apiKeyMetricLabels(met, "completeness")
+		row := ensureRow(key, route)
 		if row == nil {
-			row = &usageStats{}
-			usageByKey[usageKey] = row
+			continue
 		}
 		value := int64(met.GetCounter().GetValue())
 		switch completeness {
@@ -569,4 +532,25 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 		}
 	}
 	return keys
+}
+
+// apiKeyMetricLabels extracts api_key, route, and one additional label from a
+// Prometheus metric. additional must not be "api_key" or "route" — the two
+// reserved cases are matched first and shadow any conflicting additional name.
+// Returns "" for any label that is not present on the metric.
+func apiKeyMetricLabels(met *dto.Metric, additional string) (key, route, other string) {
+	for _, label := range met.GetLabel() {
+		name := label.GetName()
+		switch name {
+		case "api_key":
+			key = label.GetValue()
+		case "route":
+			route = label.GetValue()
+		default:
+			if name == additional {
+				other = label.GetValue()
+			}
+		}
+	}
+	return
 }
