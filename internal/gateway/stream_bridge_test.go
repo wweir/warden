@@ -249,9 +249,9 @@ func TestGatewayResponsesToChatStreamIncludesDoneSnapshotsAndIncompleteDetails(t
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": exactModel(config.RouteProtocolResponsesStateless,
+					"gpt-4o": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"},
 					),
 				},
@@ -333,9 +333,9 @@ func TestGatewayResponsesToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},

@@ -97,7 +97,7 @@ func FromStream(serviceProtocol, providerProtocol string, body []byte) Observati
 	switch {
 	case providerProtocol == config.ProviderProtocolAnthropic:
 		return FromAnthropicStream(body)
-	case config.IsResponsesRouteProtocol(serviceProtocol):
+	case serviceProtocol == config.RouteProtocolResponses:
 		return FromResponsesStream(body)
 	default:
 		return FromOpenAIChatStream(body)

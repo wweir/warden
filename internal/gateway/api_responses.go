@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,10 +20,15 @@ import (
 )
 
 // handleResponses handles Responses API requests (POST /*/responses).
+//
+// Stateless requests (no previous_response_id) run through the inference
+// pipeline, which supports failover, tool hooks, and responses_to_chat
+// bridging. Stateful requests (carrying previous_response_id) are forwarded
+// transparently because the upstream owns the conversation state and Warden
+// cannot safely fail over mid-session.
 func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route *config.RouteConfig) {
 	var err error
 	defer func() { deferlog.DebugError(err, "handle responses", "route", route.Prefix) }()
-	hookGateway := g.hookGatewayTarget()
 
 	var bootstrap inferenceBootstrap
 	bootstrap, err = bootstrapInferenceRequest(r, route)
@@ -32,22 +38,32 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	}
 	r = bootstrap.request
 	req := bootstrap.req
-	serviceProtocol := inferencepkg.ResponsesRequestProtocol(req.RawBody)
-	stateful := serviceProtocol == config.RouteProtocolResponsesStateful
+	serviceProtocol := config.RouteProtocolResponses
 	if !route.SupportsServiceProtocol(serviceProtocol) {
-		http.Error(w, inferencepkg.UnsupportedResponsesProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
+		http.Error(w, inferencepkg.UnsupportedRouteProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
 		return
 	}
 
-	manager, ok := g.buildInferenceManager(w, route, serviceProtocol, "responses", req, req.ExplicitProvider == "" && !stateful)
+	if inferencepkg.IsStatefulResponsesRequest(req.RawBody) {
+		g.forwardResponsesTransparently(w, r, route, req.RawBody)
+		return
+	}
+
+	manager, ok := g.buildInferenceManager(w, route, serviceProtocol, "responses", req, req.ExplicitProvider == "")
 	if !ok {
 		return
 	}
 	applyRouteModelPrompt(&req, manager.Current().Model, openai.InjectSystemPromptResponsesRaw)
+	hookGateway := g.hookGatewayTarget()
+
+	// providerNeedsChatBridge reports whether the current provider must serve
+	// Responses requests through the chat bridge instead of native /responses.
+	providerNeedsChatBridge := func(provider *config.ProviderConfig) bool {
+		return provider.ResponsesToChat && provider.Protocol == config.ProviderProtocolOpenAI
+	}
 
 	for {
-		current := manager.Current()
-		if serviceProtocol == config.RouteProtocolResponsesStateless && current.Provider.ResponsesToChat && current.Provider.Protocol == "openai" {
+		if providerNeedsChatBridge(manager.Current().Provider) {
 			g.handleResponsesViaChat(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
@@ -56,7 +72,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			serviceProtocol: serviceProtocol,
 			endpoint:        "responses",
 			canHandle: func(provider *config.ProviderConfig) bool {
-				return !(serviceProtocol == config.RouteProtocolResponsesStateless && provider.ResponsesToChat && provider.Protocol == "openai")
+				return !providerNeedsChatBridge(provider)
 			},
 			upstreamPath: func(providerProtocol string) string {
 				return upstreampkg.ProtocolEndpoint(providerProtocol, true)
@@ -109,6 +125,22 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 	}
 }
 
+// forwardResponsesTransparently routes a stateful Responses request through
+// the shared transparent proxy handler. The proxy path supports model
+// rewriting (via the matched route target), provider auth/header injection,
+// and request logging without parsing or rewriting the response body.
+func (g *Gateway) forwardResponsesTransparently(w http.ResponseWriter, r *http.Request, route *config.RouteConfig, rawBody []byte) {
+	// Replay the buffered body so the proxy handler can re-read it; the
+	// inference bootstrap above consumed the original stream.
+	r.Body = io.NopCloser(bytes.NewReader(rawBody))
+	r.ContentLength = int64(len(rawBody))
+	// Strip the route prefix so the proxy handler concatenates only the
+	// upstream-facing tail (e.g. /responses) onto provider URL. The route
+	// context value installed by bootstrapInferenceRequest is preserved
+	// because trimRoutePrefix clones with the same context.
+	g.proxyHandler().Handle(w, trimRoutePrefix(r, route.Prefix), route)
+}
+
 // handleResponsesViaChat handles Responses API requests by converting to/from Chat Completions.
 // This is used when responses_to_chat is enabled for a provider.
 func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
@@ -116,7 +148,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 ) {
 	hookGateway := g.hookGatewayTarget()
 	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID, chatBridgeSpec{
-		serviceProtocol:   config.RouteProtocolResponsesStateless,
+		serviceProtocol:   config.RouteProtocolResponses,
 		endpoint:          "responses",
 		streamWarn:        "ResponsesToChat stream terminated early",
 		writeResponseWarn: "Failed to write converted response",

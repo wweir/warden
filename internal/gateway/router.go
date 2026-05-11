@@ -68,19 +68,6 @@ func (g *Gateway) buildHTTPHandler() http.Handler {
 	).Process(router)
 }
 
-func shouldRegisterOpenAIEndpoint(route *config.RouteConfig, serviceProtocol string) bool {
-	switch serviceProtocol {
-	case config.RouteProtocolChat:
-		return route.SupportsServiceProtocol(config.RouteProtocolChat)
-	case config.RouteProtocolResponsesStateless:
-		return route.SupportsServiceProtocol(config.RouteProtocolResponsesStateless) || route.SupportsServiceProtocol(config.RouteProtocolResponsesStateful)
-	case config.ServiceProtocolEmbeddings:
-		return route.SupportsServiceProtocol(config.ServiceProtocolEmbeddings)
-	default:
-		return false
-	}
-}
-
 func (g *Gateway) newRouter() *httprouter.Router {
 	router := httprouter.New()
 	router.RedirectTrailingSlash = false
@@ -105,13 +92,13 @@ func (g *Gateway) registerRouteBindings(router *httprouter.Router) {
 func (g *Gateway) registerRoute(router *httprouter.Router, binding routeBinding) {
 	router.Handle(http.MethodGet, binding.prefix+"/models", g.bindRouteHandler(binding.route, g.handleModels))
 
-	if shouldRegisterOpenAIEndpoint(binding.route, config.RouteProtocolChat) {
+	if binding.route.SupportsServiceProtocol(config.RouteProtocolChat) {
 		router.Handle(http.MethodPost, binding.prefix+"/chat/completions", g.bindRouteHandler(binding.route, g.handleChatCompletion))
 	}
-	if shouldRegisterOpenAIEndpoint(binding.route, config.RouteProtocolResponsesStateless) {
+	if binding.route.SupportsServiceProtocol(config.RouteProtocolResponses) {
 		router.Handle(http.MethodPost, binding.prefix+"/responses", g.bindRouteHandler(binding.route, g.handleResponses))
 	}
-	if shouldRegisterOpenAIEndpoint(binding.route, config.ServiceProtocolEmbeddings) {
+	if binding.route.SupportsServiceProtocol(config.ServiceProtocolEmbeddings) {
 		router.Handle(http.MethodPost, binding.prefix+"/embeddings", g.bindRouteHandler(binding.route, g.handleEmbeddings))
 	}
 	if binding.route.SupportsServiceProtocol(config.RouteProtocolAnthropic) {

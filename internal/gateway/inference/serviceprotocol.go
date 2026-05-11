@@ -1,7 +1,6 @@
 package inference
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -9,36 +8,37 @@ import (
 )
 
 func IsInferenceEndpoint(path string) bool {
-	if strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/embeddings") {
-		return true
-	}
-	return path == "/messages" || strings.HasSuffix(path, "/messages")
+	return strings.HasSuffix(path, "/chat/completions") ||
+		strings.HasSuffix(path, "/responses") ||
+		strings.HasSuffix(path, "/embeddings") ||
+		strings.HasSuffix(path, "/messages")
 }
 
-func ServiceProtocolFromRequest(path string, reqBody []byte) string {
-	if strings.HasSuffix(path, "/messages") || path == "/messages" {
+// ServiceProtocolFromRequest maps a request path to its service protocol. The
+// stateless/stateful distinction was dropped, so /responses uniformly maps to
+// RouteProtocolResponses; the gateway later inspects the request body to
+// decide between the inference pipeline and transparent forwarding.
+func ServiceProtocolFromRequest(path string) string {
+	switch {
+	case strings.HasSuffix(path, "/messages"):
 		return config.RouteProtocolAnthropic
-	}
-	if strings.HasSuffix(path, "/chat/completions") {
+	case strings.HasSuffix(path, "/chat/completions"):
 		return config.RouteProtocolChat
-	}
-	if strings.HasSuffix(path, "/responses") {
-		return ResponsesRequestProtocol(reqBody)
-	}
-	if strings.HasSuffix(path, "/embeddings") {
+	case strings.HasSuffix(path, "/responses"):
+		return config.RouteProtocolResponses
+	case strings.HasSuffix(path, "/embeddings"):
 		return config.ServiceProtocolEmbeddings
+	default:
+		return ""
 	}
-	return ""
 }
 
 func UnsupportedRouteProtocolMessage(routeProtocol, serviceProtocol string) string {
 	switch serviceProtocol {
-	case config.RouteProtocolResponsesStateful:
-		return UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
-	case config.RouteProtocolResponsesStateless:
-		return UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol)
 	case config.RouteProtocolChat:
 		return "route protocol " + routeProtocol + " does not support chat requests"
+	case config.RouteProtocolResponses:
+		return "route protocol " + routeProtocol + " does not support responses requests"
 	case config.RouteProtocolAnthropic:
 		return "route protocol " + routeProtocol + " does not support anthropic messages requests"
 	case config.ServiceProtocolEmbeddings:
@@ -48,20 +48,10 @@ func UnsupportedRouteProtocolMessage(routeProtocol, serviceProtocol string) stri
 	}
 }
 
-func ResponsesRequestProtocol(rawReqBody []byte) string {
-	if gjson.GetBytes(rawReqBody, "previous_response_id").String() != "" {
-		return config.RouteProtocolResponsesStateful
-	}
-	return config.RouteProtocolResponsesStateless
-}
-
-func UnsupportedResponsesProtocolMessage(routeProtocol, serviceProtocol string) string {
-	switch serviceProtocol {
-	case config.RouteProtocolResponsesStateful:
-		return fmt.Sprintf("route protocol %s does not support stateful responses requests", routeProtocol)
-	case config.RouteProtocolResponsesStateless:
-		return fmt.Sprintf("route protocol %s does not support stateless responses requests", routeProtocol)
-	default:
-		return fmt.Sprintf("route protocol %s does not support responses requests", routeProtocol)
-	}
+// IsStatefulResponsesRequest reports whether a Responses API request body
+// carries a previous_response_id, indicating it is part of an ongoing
+// server-tracked conversation. Such requests are forwarded transparently
+// because Warden does not own the conversation state.
+func IsStatefulResponsesRequest(rawReqBody []byte) bool {
+	return gjson.GetBytes(rawReqBody, "previous_response_id").String() != ""
 }

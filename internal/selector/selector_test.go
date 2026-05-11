@@ -82,9 +82,9 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				WildcardModels: map[string]*config.WildcardRouteModelConfig{
-					"gpt-*": testWildcardModel(config.RouteProtocolResponsesStateless, "first", "second"),
+					"gpt-*": testWildcardModel(config.RouteProtocolResponses, "first", "second"),
 				},
 			},
 		},
@@ -101,7 +101,7 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 	s.states["second"].availableModels = map[string]bool{"gpt-4.1": true}
 	s.mu.Unlock()
 
-	target, prov, err := s.Select(cfg, config.RouteProtocolResponsesStateless, matched, "gpt-4.1")
+	target, prov, err := s.Select(cfg, config.RouteProtocolResponses, matched, "gpt-4.1")
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}

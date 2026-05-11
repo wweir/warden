@@ -350,7 +350,7 @@ func TestToolHookBlockRemovesRejectedFuncCall_Responses(t *testing.T) {
 	upstream := newUpstreamFixedResponse("/responses", respBody)
 	defer upstream.Close()
 
-	gw := buildGatewayWithHooks(t, "/openai", config.RouteProtocolResponsesStateless, upstream.URL, "openai", "gpt-4o",
+	gw := buildGatewayWithHooks(t, "/openai", config.RouteProtocolResponses, upstream.URL, "openai", "gpt-4o",
 		[]*config.HookRuleConfig{
 			{Match: "exec_cmd", Hook: config.HookConfig{
 				Type:    "http",

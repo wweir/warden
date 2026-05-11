@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tidwall/gjson"
 	"github.com/wweir/warden/config"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	"github.com/wweir/warden/internal/providerauth"
@@ -82,13 +81,13 @@ func protocolProbeEndpoint(providerProtocol, configuredProtocol string) string {
 	switch configuredProtocol {
 	case config.RouteProtocolChat:
 		return upstreampkg.ProtocolEndpoint(providerProtocol, false)
-	case config.RouteProtocolResponsesStateless, config.RouteProtocolResponsesStateful:
-		if providerProtocol != "openai" {
+	case config.RouteProtocolResponses:
+		if providerProtocol != config.ProviderProtocolOpenAI {
 			return ""
 		}
 		return upstreampkg.ProtocolEndpoint(providerProtocol, true)
 	case config.RouteProtocolAnthropic:
-		if providerProtocol != "anthropic" {
+		if providerProtocol != config.ProviderProtocolAnthropic {
 			return ""
 		}
 		return upstreampkg.ProtocolEndpoint(providerProtocol, false)
@@ -142,16 +141,8 @@ func probeProviderModelProtocol(ctx context.Context, provCfg *config.ProviderCon
 	case config.RouteProtocolChat:
 		err := sendChatProbe(ctx, provCfg, model)
 		applyProbeError(&probe, err)
-	case config.RouteProtocolResponsesStateless:
-		err := sendResponsesProbe(ctx, provCfg, model, "")
-		applyProbeError(&probe, err)
-	case config.RouteProtocolResponsesStateful:
-		firstID, err := sendResponsesProbeAndExtractID(ctx, provCfg, model)
-		if err != nil {
-			applyProbeError(&probe, err)
-			return probe
-		}
-		err = sendResponsesProbe(ctx, provCfg, model, firstID)
+	case config.RouteProtocolResponses:
+		err := sendResponsesProbe(ctx, provCfg, model)
 		applyProbeError(&probe, err)
 	case config.RouteProtocolAnthropic:
 		err := sendAnthropicProbe(ctx, provCfg, model)
@@ -199,7 +190,7 @@ func sendChatProbe(ctx context.Context, provCfg *config.ProviderConfig, model st
 }
 
 func sendAnthropicProbe(ctx context.Context, provCfg *config.ProviderConfig, model string) error {
-	if provCfg.Protocol == "openai" && provCfg.AnthropicToChat {
+	if provCfg.Protocol == config.ProviderProtocolOpenAI && provCfg.AnthropicToChat {
 		rawBody := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`, model))
 		chatReq, err := anthproto.MessagesRequestToChatRequest(rawBody)
 		if err != nil {
@@ -212,47 +203,28 @@ func sendAnthropicProbe(ctx context.Context, provCfg *config.ProviderConfig, mod
 		return sendProbeRequest(ctx, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, false), body)
 	}
 
-	if provCfg.Protocol != "anthropic" {
+	if provCfg.Protocol != config.ProviderProtocolAnthropic {
 		return fmt.Errorf("provider family does not support anthropic probe")
 	}
 	body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`, model))
 	return sendProbeRequest(ctx, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, false), body)
 }
 
-func sendResponsesProbe(ctx context.Context, provCfg *config.ProviderConfig, model, previousResponseID string) error {
-	_, _, err := sendResponsesProbeRaw(ctx, provCfg, model, previousResponseID, false)
-	return err
-}
-
-func sendResponsesProbeAndExtractID(ctx context.Context, provCfg *config.ProviderConfig, model string) (string, error) {
-	body, _, err := sendResponsesProbeRaw(ctx, provCfg, model, "", true)
-	if err != nil {
-		return "", err
-	}
-	id := gjson.GetBytes(body, "id").String()
-	if id == "" {
-		return "", fmt.Errorf("probe response missing id")
-	}
-	return id, nil
-}
-
-func sendResponsesProbeRaw(ctx context.Context, provCfg *config.ProviderConfig, model, previousResponseID string, store bool) ([]byte, time.Duration, error) {
-	if provCfg.Protocol != "openai" {
-		return nil, 0, fmt.Errorf("provider family does not support responses probe")
+func sendResponsesProbe(ctx context.Context, provCfg *config.ProviderConfig, model string) error {
+	if provCfg.Protocol != config.ProviderProtocolOpenAI {
+		return fmt.Errorf("provider family does not support responses probe")
 	}
 	payload := map[string]any{
 		"model":             model,
 		"input":             "ping",
 		"max_output_tokens": 1,
-		"store":             store,
-	}
-	if previousResponseID != "" {
-		payload["previous_response_id"] = previousResponseID
+		"store":             false,
 	}
 	body, _ := json.Marshal(payload)
 	ctx, cancel := probeContext(ctx)
 	defer cancel()
-	return upstreampkg.SendRequest(ctx, nil, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, true), body, false)
+	_, _, err := upstreampkg.SendRequest(ctx, nil, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, true), body, false)
+	return err
 }
 
 func sendProbeRequest(ctx context.Context, provCfg *config.ProviderConfig, endpoint string, body []byte) error {

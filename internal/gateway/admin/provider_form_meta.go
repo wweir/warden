@@ -145,10 +145,10 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 			{
 				ID:               "chat_responses_embeddings",
 				Title:            "Chat + Responses + Embeddings",
-				Summary:          "Expose chat, Responses stateless/stateful, and embeddings.",
+				Summary:          "Expose chat, Responses, and embeddings.",
 				Families:         []string{config.ProviderProtocolOpenAI},
 				Backends:         []string{""},
-				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponsesStateless, config.RouteProtocolResponsesStateful, config.ServiceProtocolEmbeddings},
+				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings},
 			},
 			{
 				ID:               "anthropic_bridge",

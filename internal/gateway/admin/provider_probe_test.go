@@ -84,7 +84,7 @@ func TestProbeProviderModelProtocolChatUsesMinimalPayload(t *testing.T) {
 	}
 }
 
-func TestProbeProviderModelProtocolStatefulResponsesStoresFirstResponse(t *testing.T) {
+func TestProbeProviderModelProtocolResponsesSendsSingleStatelessRequest(t *testing.T) {
 	t.Parallel()
 
 	var bodies []map[string]any
@@ -106,24 +106,18 @@ func TestProbeProviderModelProtocolStatefulResponsesStoresFirstResponse(t *testi
 		URL:      server.URL,
 		Protocol: "openai",
 		APIKey:   config.SecretString("token"),
-	}, "gpt-4o", config.RouteProtocolResponsesStateful)
+	}, "gpt-4o", config.RouteProtocolResponses)
 
 	if probe.Status != "supported" {
 		t.Fatalf("probe status = %q, want supported, error=%q", probe.Status, probe.Error)
 	}
-	if len(bodies) != 2 {
-		t.Fatalf("probe request count = %d, want 2", len(bodies))
+	if len(bodies) != 1 {
+		t.Fatalf("probe request count = %d, want 1", len(bodies))
 	}
-	if got, _ := bodies[0]["store"].(bool); !got {
-		t.Fatalf("first response probe store = %v, want true", bodies[0]["store"])
+	if got, _ := bodies[0]["store"].(bool); got {
+		t.Fatalf("probe store = %v, want false", bodies[0]["store"])
 	}
 	if got := bodies[0]["previous_response_id"]; got != nil {
-		t.Fatalf("first response previous_response_id = %v, want nil", got)
-	}
-	if got := bodies[1]["previous_response_id"]; got != "resp_probe" {
-		t.Fatalf("second response previous_response_id = %v, want resp_probe", got)
-	}
-	if got, _ := bodies[1]["store"].(bool); got {
-		t.Fatalf("second response probe store = %v, want false", bodies[1]["store"])
+		t.Fatalf("probe previous_response_id = %v, want absent", got)
 	}
 }

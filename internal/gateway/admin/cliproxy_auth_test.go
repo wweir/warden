@@ -714,7 +714,7 @@ func TestHandleCLIProxyAuthFileVerifySendsBackendProbe(t *testing.T) {
 	if resp.Status != "ok" {
 		t.Fatalf("status = %q, want ok; error=%q", resp.Status, resp.Error)
 	}
-	if resp.Protocol != config.RouteProtocolResponsesStateless {
-		t.Fatalf("protocol = %q, want %q", resp.Protocol, config.RouteProtocolResponsesStateless)
+	if resp.Protocol != config.RouteProtocolResponses {
+		t.Fatalf("protocol = %q, want %q", resp.Protocol, config.RouteProtocolResponses)
 	}
 }

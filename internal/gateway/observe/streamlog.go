@@ -21,7 +21,7 @@ func AssembleResponse(serviceProtocol, upstreamProtocol string, body []byte) []b
 		}
 		return MarshalRawStreamForLog(body)
 	}
-	if config.IsResponsesRouteProtocol(serviceProtocol) {
+	if serviceProtocol == config.RouteProtocolResponses {
 		if assembled, err := openai.AssembleResponsesStream(body); err == nil {
 			return assembled
 		}

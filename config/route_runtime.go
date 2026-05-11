@@ -6,11 +6,10 @@ import (
 )
 
 const (
-	RouteProtocolChat               = "chat"
-	RouteProtocolResponsesStateless = "responses_stateless"
-	RouteProtocolResponsesStateful  = "responses_stateful"
-	RouteProtocolAnthropic          = "anthropic"
-	ServiceProtocolEmbeddings       = "embeddings"
+	RouteProtocolChat         = "chat"
+	RouteProtocolResponses    = "responses"
+	RouteProtocolAnthropic    = "anthropic"
+	ServiceProtocolEmbeddings = "embeddings"
 )
 
 type CompiledRouteModel struct {
@@ -33,10 +32,6 @@ type CompiledRouteUpstream struct {
 type routePatternSpecificity struct {
 	literalCount  int
 	wildcardCount int
-}
-
-func CompatibleRouteProtocols(prov *ProviderConfig) []string {
-	return CandidateRouteProtocols(prov)
 }
 
 func CandidateRouteProtocols(prov *ProviderConfig) []string {
@@ -83,8 +78,7 @@ func DefaultServiceProtocols(prov *ProviderConfig) []string {
 	case ProviderProtocolOpenAI:
 		supported := []string{
 			RouteProtocolChat,
-			RouteProtocolResponsesStateless,
-			RouteProtocolResponsesStateful,
+			RouteProtocolResponses,
 			ServiceProtocolEmbeddings,
 		}
 		if prov.AnthropicToChat {
@@ -111,18 +105,12 @@ func ProviderSupportsAnyServiceProtocol(prov *ProviderConfig, serviceProtocols [
 	return false
 }
 
-func IsResponsesRouteProtocol(routeProtocol string) bool {
-	return routeProtocol == RouteProtocolResponsesStateless || routeProtocol == RouteProtocolResponsesStateful
-}
-
 func SupportedServiceProtocolsForConfiguredProtocol(routeProtocol string) []string {
 	switch routeProtocol {
 	case RouteProtocolChat:
 		return []string{RouteProtocolChat, ServiceProtocolEmbeddings}
-	case RouteProtocolResponsesStateless:
-		return []string{RouteProtocolResponsesStateless, ServiceProtocolEmbeddings}
-	case RouteProtocolResponsesStateful:
-		return []string{RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, ServiceProtocolEmbeddings}
+	case RouteProtocolResponses:
+		return []string{RouteProtocolResponses, ServiceProtocolEmbeddings}
 	case RouteProtocolAnthropic:
 		return []string{RouteProtocolAnthropic, ServiceProtocolEmbeddings}
 	default:
@@ -157,11 +145,8 @@ func RouteProtocolsFromServiceProtocols(serviceProtocols []string) []string {
 		switch protocol {
 		case RouteProtocolChat:
 			add(RouteProtocolChat)
-		case RouteProtocolResponsesStateless:
-			add(RouteProtocolResponsesStateless)
-		case RouteProtocolResponsesStateful:
-			add(RouteProtocolResponsesStateless)
-			add(RouteProtocolResponsesStateful)
+		case RouteProtocolResponses:
+			add(RouteProtocolResponses)
 		case RouteProtocolAnthropic:
 			add(RouteProtocolAnthropic)
 		}
@@ -416,11 +401,8 @@ func normalizeConfiguredServiceProtocols(protocols []string) []string {
 	for _, raw := range protocols {
 		protocol := normalizeRouteProtocol(raw)
 		switch protocol {
-		case RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
+		case RouteProtocolChat, RouteProtocolResponses, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
 			add(protocol)
-			if protocol == RouteProtocolResponsesStateful {
-				add(RouteProtocolResponsesStateless)
-			}
 		}
 	}
 	return result
@@ -429,7 +411,7 @@ func normalizeConfiguredServiceProtocols(protocols []string) []string {
 func validConfiguredServiceProtocols(protocols []string) bool {
 	for _, raw := range protocols {
 		switch normalizeRouteProtocol(raw) {
-		case RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
+		case RouteProtocolChat, RouteProtocolResponses, RouteProtocolAnthropic, ServiceProtocolEmbeddings:
 		default:
 			return false
 		}

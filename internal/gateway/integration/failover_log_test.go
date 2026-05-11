@@ -52,7 +52,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 		{
 			name:          "responses direct",
 			routePrefix:   "/openai-responses",
-			routeProtocol: config.RouteProtocolResponsesStateless,
+			routeProtocol: config.RouteProtocolResponses,
 			requestPath:   "/openai-responses/responses",
 			requestBody:   `{"model":"gpt-4o","input":"hello"}`,
 			upstreamPath:  "/responses",
@@ -69,7 +69,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 		{
 			name:          "responses via chat",
 			routePrefix:   "/openai-resp-chat",
-			routeProtocol: config.RouteProtocolResponsesStateless,
+			routeProtocol: config.RouteProtocolResponses,
 			requestPath:   "/openai-resp-chat/responses",
 			requestBody:   `{"model":"gpt-4o","input":"hello"}`,
 			upstreamPath:  "/chat/completions",
@@ -196,6 +196,8 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 
 	primaryHits := 0
 	fallbackHits := 0
+	var primaryBody []byte
+	var primaryAuth string
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/models") {
@@ -207,6 +209,8 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 		if r.URL.Path != "/responses" {
 			t.Fatalf("primary upstream path = %q, want /responses", r.URL.Path)
 		}
+		primaryBody, _ = io.ReadAll(r.Body)
+		primaryAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"error":{"type":"server_error","message":"primary failed"}}`)
@@ -240,9 +244,9 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateful,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": exactModel(config.RouteProtocolResponsesStateful,
+					"gpt-4o": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o-primary"},
 					),
 				},
@@ -269,6 +273,18 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 	}
 	if fallbackHits != 0 {
 		t.Fatalf("fallback hits = %d, want 0", fallbackHits)
+	}
+	// Transparent forwarding still rewrites the route-target model.
+	if !strings.Contains(string(primaryBody), `"model":"gpt-4o-primary"`) {
+		t.Fatalf("primary body = %q, want rewritten model gpt-4o-primary", primaryBody)
+	}
+	// previous_response_id is passed through verbatim because the gateway
+	// does not own conversation state.
+	if !strings.Contains(string(primaryBody), `"previous_response_id":"resp_prev"`) {
+		t.Fatalf("primary body = %q, want previous_response_id passthrough", primaryBody)
+	}
+	if primaryAuth != "Bearer primary-token" {
+		t.Fatalf("primary Authorization = %q, want primary provider credential", primaryAuth)
 	}
 
 	record := mustSingleLogRecord(t, gw.Broadcaster().Recent())

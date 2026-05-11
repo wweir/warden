@@ -68,7 +68,7 @@ func (h *Handler) verifyCLIProxyAuthFileOnline(ctx context.Context, req cliproxy
 		Filename:  fileName,
 		Provider:  providerName,
 		Model:     model,
-		Protocol:  config.RouteProtocolResponsesStateless,
+		Protocol:  config.RouteProtocolResponses,
 		Status:    "ok",
 		LatencyMS: latency.Milliseconds(),
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),

@@ -896,8 +896,7 @@ func TestWriteStatusSSEReturnsConfiguredAndDisplayProtocolsSeparately(t *testing
 
 	wantSupported := []string{
 		config.RouteProtocolChat,
-		config.RouteProtocolResponsesStateless,
-		config.RouteProtocolResponsesStateful,
+		config.RouteProtocolResponses,
 	}
 	if got := payload.Providers[0].SupportedProtocols; !sameStrings(got, wantSupported) {
 		t.Fatalf("supported_protocols = %v, want %v", got, wantSupported)
@@ -962,8 +961,7 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 
 	wantSupported := []string{
 		config.RouteProtocolChat,
-		config.RouteProtocolResponsesStateless,
-		config.RouteProtocolResponsesStateful,
+		config.RouteProtocolResponses,
 	}
 	if got := payload.SupportedProtocols; !sameStrings(got, wantSupported) {
 		t.Fatalf("supported_protocols = %v, want %v", got, wantSupported)

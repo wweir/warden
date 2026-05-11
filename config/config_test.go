@@ -359,9 +359,9 @@ func TestValidateToolHookAIRejectsNonChatRouteAndAllowsProtectedRoute(t *testing
 				},
 			},
 			"/responses": {
-				Protocol: RouteProtocolResponsesStateless,
+				Protocol: RouteProtocolResponses,
 				ExactModels: map[string]*ExactRouteModelConfig{
-					"gpt-4o-mini": testExactModel(RouteProtocolResponsesStateless, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o-mini"}),
+					"gpt-4o-mini": testExactModel(RouteProtocolResponses, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o-mini"}),
 				},
 			},
 			"/test": {
@@ -504,34 +504,6 @@ func TestValidateAnthropicRouteAllowsOpenAIProviderWhenAnthropicToChatEnabled(t 
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
-func TestValidateStatefulRouteRejectsResponsesToChatProvider(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"openai": {
-				URL:             "https://api.openai.com/v1",
-				Protocol:        "openai",
-				ResponsesToChat: true,
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/openai": {
-				Protocol: RouteProtocolResponsesStateful,
-				ExactModels: map[string]*ExactRouteModelConfig{
-					"gpt-4o": testExactModel(RouteProtocolResponsesStateful, &RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "enables responses_to_chat and cannot back route protocol responses_stateful") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -750,8 +722,7 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 			provider: &ProviderConfig{Protocol: "openai"},
 			want: []string{
 				RouteProtocolChat,
-				RouteProtocolResponsesStateless,
-				RouteProtocolResponsesStateful,
+				RouteProtocolResponses,
 			},
 		},
 		{
@@ -769,8 +740,7 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
 			want: []string{
 				RouteProtocolChat,
-				RouteProtocolResponsesStateless,
-				RouteProtocolResponsesStateful,
+				RouteProtocolResponses,
 				RouteProtocolAnthropic,
 			},
 		},
@@ -797,8 +767,7 @@ func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
 			provider: &ProviderConfig{Protocol: "openai"},
 			want: []string{
 				RouteProtocolChat,
-				RouteProtocolResponsesStateless,
-				RouteProtocolResponsesStateful,
+				RouteProtocolResponses,
 				ServiceProtocolEmbeddings,
 			},
 		},
@@ -812,8 +781,7 @@ func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
 			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
 			want: []string{
 				RouteProtocolChat,
-				RouteProtocolResponsesStateless,
-				RouteProtocolResponsesStateful,
+				RouteProtocolResponses,
 				ServiceProtocolEmbeddings,
 				RouteProtocolAnthropic,
 			},
@@ -846,7 +814,7 @@ func TestValidateProviderFamilyAlias(t *testing.T) {
 		},
 		Route: map[string]*RouteConfig{
 			"/responses": {
-				Protocol: RouteProtocolResponsesStateless,
+				Protocol: RouteProtocolResponses,
 				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"*": {Providers: []string{"primary"}},
 				},
@@ -877,7 +845,7 @@ func TestValidateProviderLegacyProtocolAliasStillWorks(t *testing.T) {
 		},
 		Route: map[string]*RouteConfig{
 			"/responses": {
-				Protocol: RouteProtocolResponsesStateless,
+				Protocol: RouteProtocolResponses,
 				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"*": {Providers: []string{"primary"}},
 				},
@@ -1408,7 +1376,7 @@ func TestValidateRouteAcceptsExplicitServiceProtocols(t *testing.T) {
 		Route: map[string]*RouteConfig{
 			"/multi": {
 				Protocol:         RouteProtocolChat,
-				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponsesStateless, ServiceProtocolEmbeddings},
+				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponses, ServiceProtocolEmbeddings},
 				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"*": {Providers: []string{"openai"}},
 				},
@@ -1419,7 +1387,7 @@ func TestValidateRouteAcceptsExplicitServiceProtocols(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	for _, protocol := range []string{RouteProtocolChat, RouteProtocolResponsesStateless, ServiceProtocolEmbeddings} {
+	for _, protocol := range []string{RouteProtocolChat, RouteProtocolResponses, ServiceProtocolEmbeddings} {
 		if !cfg.Route["/multi"].SupportsServiceProtocol(protocol) {
 			t.Fatalf("route should support %s", protocol)
 		}
@@ -1466,7 +1434,7 @@ func TestValidateRouteRejectsExplicitServiceProtocolWithoutProviderSupport(t *te
 		Route: map[string]*RouteConfig{
 			"/multi": {
 				Protocol:         RouteProtocolChat,
-				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponsesStateless},
+				ServiceProtocols: []string{RouteProtocolChat, RouteProtocolResponses},
 				WildcardModels: map[string]*WildcardRouteModelConfig{
 					"*": {Providers: []string{"copilot"}},
 				},
@@ -1478,7 +1446,7 @@ func TestValidateRouteRejectsExplicitServiceProtocolWithoutProviderSupport(t *te
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "service_protocols includes responses_stateless but no route upstream/provider supports it") {
+	if !strings.Contains(err.Error(), "service_protocols includes responses but no route upstream/provider supports it") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1636,7 +1604,7 @@ func TestValidateRouteConfigRejectsInvalidProtocolName(t *testing.T) {
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
-				Protocol: "responses",
+				Protocol: "responses_invalid",
 				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
@@ -1650,7 +1618,7 @@ func TestValidateRouteConfigRejectsInvalidProtocolName(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "responses_stateless/responses_stateful") {
+	if !strings.Contains(err.Error(), "chat/responses/anthropic") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

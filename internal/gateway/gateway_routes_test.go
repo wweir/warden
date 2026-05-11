@@ -233,9 +233,9 @@ func TestGatewayResponsesRouteExposesResponsesEndpoint(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -490,7 +490,7 @@ func TestGatewayRouteExplicitServiceProtocolsExposeMultipleEndpoints(t *testing.
 		Route: map[string]*config.RouteConfig{
 			"/multi": {
 				Protocol:         config.RouteProtocolChat,
-				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponsesStateless, config.ServiceProtocolEmbeddings},
+				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings},
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"gpt-4o": exactModel(config.RouteProtocolChat,
 						&config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"},
@@ -637,9 +637,9 @@ func TestGatewayResponsesRouteExposesEmbeddingsEndpoint(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/responses": {
-				Protocol: config.RouteProtocolResponsesStateful,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"text-embedding-3-small": exactModel(config.RouteProtocolResponsesStateful,
+					"text-embedding-3-small": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "openai", Model: "text-embedding-3-small"},
 					),
 				},
@@ -866,9 +866,9 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -922,9 +922,9 @@ func TestGatewayResponsesToChatMapsMaxOutputTokensAndNormalizesToolChoice(t *tes
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -990,9 +990,9 @@ func TestGatewayResponsesToChatConvertsInstructionsToDeveloperMessage(t *testing
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -1058,9 +1058,9 @@ func TestGatewayResponsesToChatNormalizesUsageAndFinishReason(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -1138,9 +1138,9 @@ func TestGatewayResponsesToChatRetriesDeveloperRoleAsSystem(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"qwen3-coder-plus": exactModel(config.RouteProtocolResponsesStateless,
+					"qwen3-coder-plus": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "ali-coding", Model: "qwen3.5-plus"},
 					),
 				},
@@ -1268,9 +1268,9 @@ func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateful,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-4o": exactModel(config.RouteProtocolResponsesStateful, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
+					"gpt-4o": exactModel(config.RouteProtocolResponses, &config.RouteUpstreamConfig{Provider: "openai", Model: "gpt-4o"}),
 				},
 			},
 		},
@@ -1301,7 +1301,7 @@ func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 	}
 }
 
-func TestGatewayChatRouteRejectsStatefulResponsesRequests(t *testing.T) {
+func TestGatewayChatRouteRejectsResponsesRequests(t *testing.T) {
 	t.Parallel()
 
 	upstreamHits := 0
@@ -1346,8 +1346,8 @@ func TestGatewayChatRouteRejectsStatefulResponsesRequests(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "does not support stateful responses requests") {
-		t.Fatalf("body = %q, want stateful unsupported message", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "does not support responses requests") {
+		t.Fatalf("body = %q, want responses unsupported message", rec.Body.String())
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("upstream hits = %d, want 0", upstreamHits)
@@ -1772,9 +1772,9 @@ func TestGatewayResponsesFailoverSwitchesToResponsesToChatProvider(t *testing.T)
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
-					"gpt-public": exactModel(config.RouteProtocolResponsesStateless,
+					"gpt-public": exactModel(config.RouteProtocolResponses,
 						&config.RouteUpstreamConfig{Provider: "primary", Model: "gpt-4o"},
 						&config.RouteUpstreamConfig{Provider: "fallback", Model: "gpt-4.1"},
 					),
@@ -2081,7 +2081,7 @@ func TestGatewayResponsesRouteInjectsSystemPromptOnlyWhenEnabled(t *testing.T) {
 		},
 		Route: map[string]*config.RouteConfig{
 			"/openai": {
-				Protocol: config.RouteProtocolResponsesStateless,
+				Protocol: config.RouteProtocolResponses,
 				ExactModels: map[string]*config.ExactRouteModelConfig{
 					"enabled-model": {
 						PromptEnabled: &enabled,

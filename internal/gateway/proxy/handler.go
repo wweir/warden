@@ -58,13 +58,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 	explicitProvider := r.Header.Get("X-Provider")
 	allowFailover := inferencepkg.IsInferenceEndpoint(r.URL.Path)
 	authRetried := map[string]bool{}
-	serviceProtocol := inferencepkg.ServiceProtocolFromRequest(r.URL.Path, reqBody)
+	serviceProtocol := inferencepkg.ServiceProtocolFromRequest(r.URL.Path)
 	endpoint := strings.TrimPrefix(r.URL.Path, "/")
 	if serviceProtocol != "" && !route.SupportsServiceProtocol(serviceProtocol) {
 		http.Error(w, inferencepkg.UnsupportedRouteProtocolMessage(route.ConfiguredProtocol(), serviceProtocol), http.StatusBadRequest)
 		return
 	}
-	if serviceProtocol == config.RouteProtocolResponsesStateful {
+	if serviceProtocol == config.RouteProtocolResponses && inferencepkg.IsStatefulResponsesRequest(reqBody) {
+		// Stateful Responses requests rely on upstream-managed conversation
+		// state; the gateway forwards them transparently without failover.
 		allowFailover = false
 	}
 

@@ -99,7 +99,7 @@ type ProviderConfig struct {
 	Protocol             string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
 	Backend              string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
 	BackendProvider      string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
-	ServiceProtocols     []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty uses adapter defaults"`
+	ServiceProtocols     []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses, anthropic, embeddings; empty uses adapter defaults"`
 	APIKey               SecretString      `json:"api_key" usage:"API key for authentication"`
 	APIKeyCommand        string            `json:"api_key_command" usage:"Shell command that prints an API key to stdout"`
 	APIKeyCommandTimeout string            `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
@@ -203,8 +203,8 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 
 type RouteConfig struct {
 	Prefix           string                               `json:"-"` // populated from map key
-	Protocol         string                               `json:"protocol" usage:"Primary route protocol: chat, responses_stateless, responses_stateful, or anthropic"`
-	ServiceProtocols []string                             `json:"service_protocols" usage:"External service protocols exposed by this route: chat, responses_stateless, responses_stateful, anthropic, embeddings; empty derives from protocol"`
+	Protocol         string                               `json:"protocol" usage:"Primary route protocol: chat, responses, or anthropic"`
+	ServiceProtocols []string                             `json:"service_protocols" usage:"External service protocols exposed by this route: chat, responses, anthropic, embeddings; empty derives from protocol"`
 	APIKeys          map[string]SecretString              `json:"api_keys" usage:"Client API keys allowed to access this route (name -> key); empty means no client auth"`
 	ExactModels      map[string]*ExactRouteModelConfig    `json:"exact_models" usage:"Exact public model mappings for this route protocol; each entry defines explicit upstream provider/model targets"`
 	WildcardModels   map[string]*WildcardRouteModelConfig `json:"wildcard_models" usage:"Wildcard public model mappings for this route protocol; each pattern defines ordered upstream providers and forwards the requested model unchanged"`

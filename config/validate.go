@@ -298,7 +298,7 @@ func (c *ConfigStruct) validateProviderConfig() error {
 		}
 		if len(prov.ServiceProtocols) > 0 {
 			if !validConfiguredServiceProtocols(prov.ServiceProtocols) {
-				return NewValidationError("provider %s: invalid service_protocols %v (must be chat/responses_stateless/responses_stateful/anthropic/embeddings)", name, prov.ServiceProtocols)
+				return NewValidationError("provider %s: invalid service_protocols %v (must be chat/responses/anthropic/embeddings)", name, prov.ServiceProtocols)
 			}
 			prov.ServiceProtocols = normalizeConfiguredServiceProtocols(prov.ServiceProtocols)
 			allowedProtocols := DefaultServiceProtocols(prov)
@@ -374,7 +374,7 @@ func (c *ConfigStruct) validateRouteConfig() error {
 		}
 		route.Protocol = normalizeRouteProtocol(route.Protocol)
 		if len(route.ServiceProtocols) > 0 && !validConfiguredServiceProtocols(route.ServiceProtocols) {
-			return NewValidationError("route %s: invalid service_protocols %v (must be chat/responses_stateless/responses_stateful/anthropic/embeddings)", prefix, route.ServiceProtocols)
+			return NewValidationError("route %s: invalid service_protocols %v (must be chat/responses/anthropic/embeddings)", prefix, route.ServiceProtocols)
 		}
 		route.serviceProtocols = configuredRouteServiceProtocols(route)
 		if len(route.serviceProtocols) == 0 {
@@ -512,9 +512,6 @@ func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig
 	if hasWildcardPattern(modelName) {
 		return NewValidationError("route %s %s %q: exact model name cannot contain *", prefix, desc.kindLabel, modelName)
 	}
-	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Upstreams) != 1 {
-		return NewValidationError("route %s %s %q: exactly one %s is required for protocol %s", prefix, desc.kindLabel, modelName, desc.fieldSingular, route.Protocol)
-	}
 	if len(modelCfg.Upstreams) == 0 {
 		return NewValidationError("route %s %s %q: %s is required", prefix, desc.kindLabel, modelName, desc.fieldKey)
 	}
@@ -552,9 +549,6 @@ func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteCon
 	}
 	if !hasWildcardPattern(pattern) {
 		return NewValidationError("route %s %s %q: pattern must contain *", prefix, desc.kindLabel, pattern)
-	}
-	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Providers) != 1 {
-		return NewValidationError("route %s %s %q: exactly one %s is required for protocol %s", prefix, desc.kindLabel, pattern, desc.fieldSingular, route.Protocol)
 	}
 	if len(modelCfg.Providers) == 0 {
 		return NewValidationError("route %s %s %q: %s is required", prefix, desc.kindLabel, pattern, desc.fieldKey)
@@ -594,9 +588,6 @@ func (c *ConfigStruct) compileRouteModel(prefix string, route *RouteConfig, desc
 		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
 			return nil, NewValidationError("route %s %s %q %s[%d]: provider %s does not support any route service protocol %v", prefix, desc.kindLabel, key, desc.fieldKey, idx, in.Provider, route.serviceProtocols)
 		}
-		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
-			return nil, NewValidationError("route %s %s %q %s[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, desc.kindLabel, key, desc.fieldKey, idx, in.Provider, route.Protocol)
-		}
 		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
 			Provider:      in.Provider,
 			UpstreamModel: in.UpstreamModel,
@@ -624,13 +615,13 @@ func compiledRouteModelSupportsServiceProtocol(compiled *CompiledRouteModel, pro
 func validateConfiguredProtocolName(prefix, modelName, protocol string) error {
 	protocol = normalizeRouteProtocol(protocol)
 	switch protocol {
-	case RouteProtocolChat, RouteProtocolResponsesStateless, RouteProtocolResponsesStateful, RouteProtocolAnthropic:
+	case RouteProtocolChat, RouteProtocolResponses, RouteProtocolAnthropic:
 		return nil
 	default:
 		if modelName == "" {
-			return NewValidationError("route %s: invalid protocol %q (must be chat/responses_stateless/responses_stateful/anthropic)", prefix, protocol)
+			return NewValidationError("route %s: invalid protocol %q (must be chat/responses/anthropic)", prefix, protocol)
 		}
-		return NewValidationError("route %s model %q: invalid protocol %q (must be chat/responses_stateless/responses_stateful/anthropic)", prefix, modelName, protocol)
+		return NewValidationError("route %s model %q: invalid protocol %q (must be chat/responses/anthropic)", prefix, modelName, protocol)
 	}
 }
 

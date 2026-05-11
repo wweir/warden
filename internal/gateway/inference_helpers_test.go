@@ -49,9 +49,9 @@ func TestApplyInferenceMetricHeadersUsesProviderFallback(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	route := &config.RouteConfig{Prefix: "/openai", Protocol: config.RouteProtocolResponsesStateless}
+	route := &config.RouteConfig{Prefix: "/openai", Protocol: config.RouteProtocolResponses}
 
-	labels := applyInferenceMetricHeaders(rec, req, route, config.RouteProtocolResponsesStateless, "responses", "provider-a", nil)
+	labels := applyInferenceMetricHeaders(rec, req, route, config.RouteProtocolResponses, "responses", "provider-a", nil)
 
 	if labels.Provider != "provider-a" {
 		t.Fatalf("labels.Provider = %q", labels.Provider)
