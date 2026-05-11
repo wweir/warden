@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -23,28 +22,10 @@ func summarizeCLIProxyAuthUsage(raw []byte, payload map[string]any, auth *clipro
 			summary = append(summary, cliproxyAuthUsageMetric{Name: "plan", Value: plan})
 		}
 	}
-	summary = appendFirstUsageMetric(summary, "5h", root,
-		"usage.5h", "usage.5_hour", "usage.five_hour", "usage.fiveHour", "usage.five_hour_limit", "usage.five_hour_quota",
-		"quota.5h", "quota.5_hour", "quota.five_hour", "quota.fiveHour", "quota.five_hour_limit", "quota.five_hour_quota",
-		"limits.5h", "limits.5_hour", "limits.five_hour", "limits.fiveHour", "limits.five_hour_limit", "limits.five_hour_quota",
-	)
-	summary = appendFirstUsageMetric(summary, "5h_reset", root,
-		"usage.5h.reset_at", "usage.5_hour.reset_at", "usage.five_hour.reset_at", "usage.fiveHour.reset_at",
-		"usage.5h.reset_after", "usage.5_hour.reset_after", "usage.five_hour.reset_after", "usage.fiveHour.reset_after",
-		"quota.5h.reset_at", "quota.5_hour.reset_at", "quota.five_hour.reset_at", "quota.fiveHour.reset_at",
-		"limits.5h.reset_at", "limits.5_hour.reset_at", "limits.five_hour.reset_at", "limits.fiveHour.reset_at",
-	)
-	summary = appendFirstUsageMetric(summary, "weekly", root,
-		"usage.weekly", "usage.week", "usage.7d", "usage.seven_day", "usage.sevenDay", "usage.weekly_limit", "usage.weekly_quota",
-		"quota.weekly", "quota.week", "quota.7d", "quota.seven_day", "quota.sevenDay", "quota.weekly_limit", "quota.weekly_quota",
-		"limits.weekly", "limits.week", "limits.7d", "limits.seven_day", "limits.sevenDay", "limits.weekly_limit", "limits.weekly_quota",
-	)
-	summary = appendFirstUsageMetric(summary, "weekly_reset", root,
-		"usage.weekly.reset_at", "usage.week.reset_at", "usage.7d.reset_at", "usage.seven_day.reset_at", "usage.sevenDay.reset_at",
-		"usage.weekly.reset_after", "usage.week.reset_after", "usage.7d.reset_after", "usage.seven_day.reset_after", "usage.sevenDay.reset_after",
-		"quota.weekly.reset_at", "quota.week.reset_at", "quota.7d.reset_at", "quota.seven_day.reset_at", "quota.sevenDay.reset_at",
-		"limits.weekly.reset_at", "limits.week.reset_at", "limits.7d.reset_at", "limits.seven_day.reset_at", "limits.sevenDay.reset_at",
-	)
+	summary = appendFirstUsageMetric(summary, "5h", root, usagePaths5H...)
+	summary = appendFirstUsageMetric(summary, "5h_reset", root, usagePaths5HReset...)
+	summary = appendFirstUsageMetric(summary, "weekly", root, usagePathsWeekly...)
+	summary = appendFirstUsageMetric(summary, "weekly_reset", root, usagePathsWeeklyReset...)
 	if quota := root.Get("quota"); quota.Exists() {
 		if quota.Get("exceeded").Bool() {
 			summary = append(summary, cliproxyAuthUsageMetric{Name: "quota", Value: "exceeded"})
@@ -81,77 +62,6 @@ func summarizeCLIProxyAuthUsage(raw []byte, payload map[string]any, auth *clipro
 	default:
 		return summary, usageData, "unknown", ""
 	}
-}
-
-func appendFirstUsageMetric(summary []cliproxyAuthUsageMetric, name string, root gjson.Result, paths ...string) []cliproxyAuthUsageMetric {
-	if len(summary) >= 8 || hasUsageMetric(summary, name) {
-		return summary
-	}
-	for _, path := range paths {
-		result := root.Get(path)
-		if !result.Exists() {
-			continue
-		}
-		value := usageMetricValue(result)
-		if value == "" {
-			continue
-		}
-		return append(summary, cliproxyAuthUsageMetric{Name: name, Value: value})
-	}
-	return summary
-}
-
-func hasUsageMetric(summary []cliproxyAuthUsageMetric, name string) bool {
-	for _, item := range summary {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func usageMetricValue(result gjson.Result) string {
-	if isGJSONScalar(result) {
-		return gjsonScalarString(result)
-	}
-	used := firstExistingGJSON(result, "used", "current", "consumed")
-	limit := firstExistingGJSON(result, "limit", "total", "quota", "maximum")
-	if used.Exists() && limit.Exists() && isGJSONScalar(used) && isGJSONScalar(limit) {
-		return gjsonScalarString(used) + "/" + gjsonScalarString(limit)
-	}
-	remaining := firstExistingGJSON(result, "remaining", "available", "left")
-	if remaining.Exists() && limit.Exists() && isGJSONScalar(remaining) && isGJSONScalar(limit) {
-		return gjsonScalarString(remaining) + "/" + gjsonScalarString(limit) + " remaining"
-	}
-	if reset := firstExistingGJSON(result, "reset_at", "reset_after", "resets_at", "next_reset_at", "nextResetAt", "next_recover_at", "nextRecoverAt"); reset.Exists() && isGJSONScalar(reset) {
-		return gjsonScalarString(reset)
-	}
-	raw := result.Raw
-	if raw == "" {
-		marshaled, err := json.Marshal(result.Value())
-		if err != nil {
-			return ""
-		}
-		raw = string(marshaled)
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, []byte(raw)); err == nil {
-		raw = compact.String()
-	}
-	if len(raw) > 96 {
-		raw = raw[:93] + "..."
-	}
-	return raw
-}
-
-func firstExistingGJSON(root gjson.Result, paths ...string) gjson.Result {
-	for _, path := range paths {
-		result := root.Get(path)
-		if result.Exists() {
-			return result
-		}
-	}
-	return gjson.Result{}
 }
 
 func cliproxyAuthUsageData(raw []byte) map[string]json.RawMessage {
@@ -193,29 +103,6 @@ func cliproxyAuthUsageData(raw []byte) map[string]json.RawMessage {
 		return nil
 	}
 	return data
-}
-
-func firstGJSONString(root gjson.Result, paths ...string) string {
-	for _, path := range paths {
-		result := root.Get(path)
-		if result.Exists() {
-			if value := strings.TrimSpace(result.String()); value != "" {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
-func isGJSONScalar(result gjson.Result) bool {
-	return result.Type == gjson.String || result.Type == gjson.Number || result.Type == gjson.True || result.Type == gjson.False
-}
-
-func gjsonScalarString(result gjson.Result) string {
-	if result.Type == gjson.String {
-		return strings.TrimSpace(result.String())
-	}
-	return result.Raw
 }
 
 func codexPlanTypeFromIDToken(token string) string {

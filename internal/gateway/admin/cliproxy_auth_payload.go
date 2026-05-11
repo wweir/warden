@@ -241,47 +241,6 @@ func extractCLIProxyAuthProvider(payload map[string]any) string {
 	return strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["type"], payload["provider"], payload["auth_type"])))
 }
 
-func firstNonEmptyString(values ...any) string {
-	for _, value := range values {
-		if s, ok := value.(string); ok {
-			if trimmed := strings.TrimSpace(s); trimmed != "" {
-				return trimmed
-			}
-		}
-	}
-	return ""
-}
-
-func mapStringAny(value any) (map[string]any, bool) {
-	switch m := value.(type) {
-	case map[string]any:
-		return m, true
-	case map[string]string:
-		out := make(map[string]any, len(m))
-		for key, value := range m {
-			out[key] = value
-		}
-		return out, true
-	default:
-		return nil, false
-	}
-}
-
-func boolFromAny(value any) (bool, bool) {
-	switch v := value.(type) {
-	case bool:
-		return v, true
-	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true", "1", "yes", "y":
-			return true, true
-		case "false", "0", "no", "n":
-			return false, true
-		}
-	}
-	return false, false
-}
-
 func validateCLIProxyAuthStructure(provider string, payload map[string]any) cliproxyAuthValidation {
 	validation := cliproxyAuthValidation{
 		Provider: provider,

@@ -142,8 +142,8 @@ func runtimeUsageFromSuppressReason(providerName string, reason sel.SuppressReas
 			summary = append(summary, cliproxyAuthUsageMetric{Name: "auth", Value: "unavailable"})
 		}
 	}
-	summary = appendFirstUsageMetric(summary, "weekly", root, "weekly", "week", "7d", "weekly_limit", "weekly_quota")
-	summary = appendFirstUsageMetric(summary, "weekly_reset", root, "weekly.reset_at", "week.reset_at", "7d.reset_at", "weekly_reset_at")
+	summary = appendFirstUsageMetric(summary, "weekly", root, runtimeWeeklyPaths...)
+	summary = appendFirstUsageMetric(summary, "weekly_reset", root, runtimeWeeklyResetPaths...)
 	if len(summary) == 0 {
 		return cliproxyRuntimeUsage{}, false
 	}
@@ -226,22 +226,6 @@ func mergeUsageSummary(base, extra []cliproxyAuthUsageMetric) []cliproxyAuthUsag
 		out = out[:8]
 	}
 	return out
-}
-
-func extractJSONFromText(text string) string {
-	text = strings.TrimSpace(text)
-	start := strings.IndexByte(text, '{')
-	if start < 0 {
-		return ""
-	}
-	candidate := strings.TrimSpace(text[start:])
-	for len(candidate) > 0 {
-		if gjson.Valid(candidate) {
-			return candidate
-		}
-		candidate = strings.TrimSpace(candidate[:len(candidate)-1])
-	}
-	return ""
 }
 
 func runtimeResetAt(root gjson.Result, observedAt time.Time, unixPath, secondsPath string) string {
