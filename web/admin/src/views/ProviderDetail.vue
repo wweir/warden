@@ -857,8 +857,7 @@
             </select>
             <select v-model="selectedProbeProtocol" class="form-input">
               <option value="chat">chat</option>
-              <option value="responses_stateless">responses_stateless</option>
-              <option value="responses_stateful">responses_stateful</option>
+              <option value="responses">responses</option>
               <option value="anthropic">anthropic</option>
             </select>
             <button
@@ -1351,16 +1350,11 @@ const cliproxyAuthImportDisabled = computed(
 
 const serviceProtocolSuggestions = computed(() => {
   if (providerBackend(providerConfig.value) === "cliproxy") {
-    return ["chat", "responses_stateless", "responses_stateful"];
+    return ["chat", "responses"];
   }
   switch (providerFamily(providerConfig.value)) {
     case "openai": {
-      const protocols = [
-        "chat",
-        "responses_stateless",
-        "responses_stateful",
-        "embeddings",
-      ];
+      const protocols = ["chat", "responses", "embeddings"];
       if (providerConfig.value?.anthropic_to_chat) protocols.push("anthropic");
       return protocols;
     }

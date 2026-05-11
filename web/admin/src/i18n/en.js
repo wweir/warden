@@ -424,7 +424,7 @@ export default {
 		savedMsg: "Saved and applied route {prefix}",
 		protocol: "Protocol",
 		protocolRouteHint:
-			"Each route must lock to exactly one protocol. responses_stateful accepts both stateless and stateful /responses requests.",
+			"Each route must lock to exactly one protocol. The responses protocol covers both stateless requests (handled by the inference pipeline) and stateful requests carrying previous_response_id (forwarded transparently).",
 		protocolLockedLabel: "Current Route Protocol",
 		protocolLockedHint:
 			"All exact model and wildcard model mappings below follow this single route protocol. Model-level multi-protocol branches are no longer allowed.",
@@ -433,8 +433,7 @@ export default {
 		serviceProtocolsHint:
 			"Empty derives from the route protocol. Set this when one route should expose chat, responses, or embeddings together; it must include the current protocol.",
 		protocolChat: "chat",
-		protocolResponsesStateless: "responses_stateless",
-		protocolResponsesStateful: "responses_stateful",
+		protocolResponses: "responses",
 		protocolAnthropic: "anthropic",
 		hookCount: "Rule Count",
 		exactModels: "Exact Models",
@@ -456,7 +455,6 @@ export default {
 		patternHint: "Wildcard patterns must contain *, for example gpt-*.",
 		upstreamsCol: "Upstreams",
 		upstreamsHint: "Tried in order. Earlier entries have higher priority, and you can rewrite a public model name to a different upstream model here.",
-		upstreamsHintSingle: "This route uses responses_stateful, so only one upstream is allowed and failover is disabled.",
 		priorityCol: "Priority",
 		addUpstream: "+ Add Upstream",
 		noUpstreams: "No upstreams yet.",
@@ -466,7 +464,6 @@ export default {
 		providersCol: "Providers",
 		providersPlaceholder: "Provider name",
 		wildcardProvidersHint: "Select providers only. The request model name is not rewritten, and list order defines priority.",
-		wildcardProvidersHintSingle: "This route uses responses_stateful, so only one provider is allowed and failover is disabled.",
 		priorityValue: "P{n}",
 		promptCol: "Prompt",
 		promptToggleLabel: "Enable Extra Prompt",
@@ -529,7 +526,7 @@ export default {
 		interfaceTemplate_chat_embeddings_desc: "Allow chat and embeddings, without Responses.",
 		interfaceTemplate_chat_responses_embeddings: "Chat + Responses + Embeddings",
 		interfaceTemplate_chat_responses_embeddings_desc:
-			"Allow chat, stateless/stateful Responses, and embeddings.",
+			"Allow chat, Responses, and embeddings.",
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages Compatible",
 		interfaceTemplate_anthropic_bridge_desc:
 			"Serve Anthropic /messages through an OpenAI-compatible provider and enable anthropic_to_chat.",
@@ -540,8 +537,7 @@ export default {
 			"This is the only advanced interface entrypoint. Changes are reflected in the final interface preview above.",
 		rawServiceProtocols: "Interface List",
 		serviceProtocol_chat: "Chat",
-		serviceProtocol_responses_stateless: "Responses",
-		serviceProtocol_responses_stateful: "Stateful Responses",
+		serviceProtocol_responses: "Responses",
 		serviceProtocol_embeddings: "Embeddings",
 		serviceProtocol_anthropic: "Anthropic Messages",
 		noEffectiveProtocols: "No available interfaces yet",

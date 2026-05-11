@@ -347,14 +347,12 @@ const route = useRoute()
 const router = useRouter()
 const routeProtocolOptions = [
   { value: 'chat', label: t('routeDetail.protocolChat') },
-  { value: 'responses_stateless', label: t('routeDetail.protocolResponsesStateless') },
-  { value: 'responses_stateful', label: t('routeDetail.protocolResponsesStateful') },
+  { value: 'responses', label: t('routeDetail.protocolResponses') },
   { value: 'anthropic', label: t('routeDetail.protocolAnthropic') },
 ]
 const routeServiceProtocolOptions = [
   'chat',
-  'responses_stateless',
-  'responses_stateful',
+  'responses',
   'anthropic',
   'embeddings',
 ]
@@ -646,7 +644,7 @@ function sanitizeRouteModelsForProtocol(protocol, routeModelConfig = {}) {
       upstreams.push(nextUpstream)
     }
     const nextCfg = {
-      upstreams: protocol === 'responses_stateful' ? upstreams.slice(0, 1) : upstreams,
+      upstreams,
     }
     if (promptEnabled) {
       nextCfg.prompt_enabled = true
@@ -660,7 +658,7 @@ function sanitizeRouteModelsForProtocol(protocol, routeModelConfig = {}) {
     const promptEnabled = !!cfg?.prompt_enabled
     const providers = dedupeOrderedTextValues(cfg?.providers || [])
     const nextCfg = {
-      providers: protocol === 'responses_stateful' ? providers.slice(0, 1) : providers,
+      providers,
     }
     if (promptEnabled) {
       nextCfg.prompt_enabled = true

@@ -125,8 +125,11 @@ import ModelCombobox from '../components/ModelCombobox.vue'
 
 const { t } = useI18n()
 
-const RESPONSE_ROUTE_PROTOCOLS = new Set(['responses_stateless', 'responses_stateful'])
-const STATEFUL_RESPONSES_PROTOCOL = 'responses_stateful'
+const RESPONSES_PROTOCOL = 'responses'
+
+function isResponsesProtocol(protocol) {
+  return protocol === RESPONSES_PROTOCOL
+}
 
 // --- State ---
 const sidebarOpen = ref(false)
@@ -226,10 +229,6 @@ function resolveRouteProtocol(route = currentRoute.value) {
   return routeProtocols.value[route] || 'chat'
 }
 
-function isStatefulResponsesProtocol(protocol) {
-  return protocol === STATEFUL_RESPONSES_PROTOCOL
-}
-
 function clearConversationStatefulResponse(conv) {
   if (!conv || typeof conv !== 'object') return
   conv.stateful_response_id = ''
@@ -283,7 +282,7 @@ function buildResponsesRequest(protocol, model, messages, previousResponseID = '
     store: false,
   }
 
-  if (isStatefulResponsesProtocol(protocol) && previousResponseID) {
+  if (isResponsesProtocol(protocol) && previousResponseID) {
     body.input = latestResponsesTurnInput(messages)
     body.previous_response_id = previousResponseID
   } else {
@@ -367,7 +366,7 @@ function buildProtocolRequest(protocol, model, messages) {
       },
     }
   }
-  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+  if (isResponsesProtocol(protocol)) {
     return buildResponsesRequest(protocol, model, messages, currentConversationStatefulResponseID())
   }
   if (protocol === 'anthropic') {
@@ -429,13 +428,13 @@ function extractAnthropicResponseText(payload) {
 
 function extractProtocolResponseText(payload, protocol) {
   if (protocol === 'chat') return extractChatResponseText(payload)
-  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) return extractResponsesResponseText(payload)
+  if (isResponsesProtocol(protocol)) return extractResponsesResponseText(payload)
   if (protocol === 'anthropic') return extractAnthropicResponseText(payload)
   return ''
 }
 
 function extractProtocolResponseID(payload, protocol) {
-  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) return extractResponsesResponseID(payload)
+  if (isResponsesProtocol(protocol)) return extractResponsesResponseID(payload)
   return ''
 }
 
@@ -458,7 +457,7 @@ function extractProtocolDeltaText(payload, protocol) {
   if (protocol === 'chat') {
     return getTextContentFromValue(payload?.choices?.[0]?.delta?.content)
   }
-  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+  if (isResponsesProtocol(protocol)) {
     if (payload?.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
       return payload.delta
     }
@@ -476,7 +475,7 @@ function extractProtocolFinalEventText(payload, protocol) {
   if (protocol === 'chat') {
     return extractChatResponseText(payload)
   }
-  if (RESPONSE_ROUTE_PROTOCOLS.has(protocol)) {
+  if (isResponsesProtocol(protocol)) {
     return extractResponsesResponseText(payload)
   }
   if (protocol === 'anthropic') {
@@ -830,7 +829,7 @@ async function sendMessage() {
 
     // add assistant message
     conv.messages.push({ role: 'assistant', content: fullContent })
-    if (isStatefulResponsesProtocol(protocol)) {
+    if (isResponsesProtocol(protocol)) {
       conv.stateful_response_id = result.responseID || ''
     } else {
       clearConversationStatefulResponse(conv)

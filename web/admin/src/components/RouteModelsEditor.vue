@@ -93,7 +93,6 @@
               <button
                 class="btn btn-secondary btn-sm"
                 type="button"
-                :disabled="isStatefulRoute && entry.upstreams.length > 0"
                 @click="addUpstream(entry.id)"
               >
                 {{ $t('routeDetail.addUpstream') }}
@@ -153,7 +152,7 @@
                   <button
                     class="btn btn-secondary btn-sm"
                     type="button"
-                    :disabled="idx === 0 || isStatefulRoute"
+                    :disabled="idx === 0"
                     @click="moveUpstream(entry.id, idx, -1)"
                   >
                     {{ $t('common.moveUp') }}
@@ -161,7 +160,7 @@
                   <button
                     class="btn btn-secondary btn-sm"
                     type="button"
-                    :disabled="idx === entry.upstreams.length - 1 || isStatefulRoute"
+                    :disabled="idx === entry.upstreams.length - 1"
                     @click="moveUpstream(entry.id, idx, 1)"
                   >
                     {{ $t('common.moveDown') }}
@@ -272,7 +271,7 @@
               <TagListEditor
                 :model-value="entry.providers"
                 :suggestions="providerOptions()"
-                :allow-reorder="!isStatefulRoute"
+                :allow-reorder="true"
                 :placeholder="$t('routeDetail.providersPlaceholder')"
                 @update:modelValue="updateWildcardProviders(entry.pattern, $event)"
               />
@@ -302,13 +301,8 @@ const props = defineProps({
 const emit = defineEmits(['update:exactModels', 'update:wildcardModels'])
 const { t } = useI18n()
 
-const isStatefulRoute = computed(() => props.routeProtocol === 'responses_stateful')
-const upstreamHint = computed(() =>
-  isStatefulRoute.value ? t('routeDetail.upstreamsHintSingle') : t('routeDetail.upstreamsHint'),
-)
-const wildcardHint = computed(() =>
-  isStatefulRoute.value ? t('routeDetail.wildcardProvidersHintSingle') : t('routeDetail.wildcardProvidersHint'),
-)
+const upstreamHint = computed(() => t('routeDetail.upstreamsHint'))
+const wildcardHint = computed(() => t('routeDetail.wildcardProvidersHint'))
 
 const exactEntries = ref([])
 const exactInputRefs = new Map()
@@ -412,7 +406,7 @@ function serializeExactEntries(entries) {
       }))
       .filter((upstream) => upstream.provider || upstream.model)
     if (upstreams.length > 0) {
-      nextCfg.upstreams = isStatefulRoute.value ? upstreams.slice(0, 1) : upstreams
+      nextCfg.upstreams = upstreams
     }
     out[name] = nextCfg
   }
@@ -429,9 +423,7 @@ function serializeWildcardEntries(entries) {
       nextCfg.prompt_enabled = true
       if (entry?.systemPrompt) nextCfg.system_prompt = entry.systemPrompt
     }
-    const providers = isStatefulRoute.value
-      ? dedupeNonEmpty(entry?.providers || []).slice(0, 1)
-      : dedupeNonEmpty(entry?.providers || [])
+    const providers = dedupeNonEmpty(entry?.providers || [])
     if (providers.length > 0) nextCfg.providers = providers
     out[pattern] = nextCfg
   }
@@ -471,18 +463,8 @@ watch(
   () => props.routeProtocol,
   () => {
     const nextExactEntries = buildExactEntries(props.exactModels)
-    emitExact(
-      nextExactEntries.map((entry) => ({
-        ...entry,
-        upstreams: isStatefulRoute.value ? (entry.upstreams || []).slice(0, 1) : entry.upstreams,
-      })),
-    )
-    emitWildcard(
-      cloneWildcardEntries().map((entry) => ({
-        ...entry,
-        providers: isStatefulRoute.value ? dedupeNonEmpty(entry.providers || []).slice(0, 1) : entry.providers,
-      })),
-    )
+    emitExact(nextExactEntries)
+    emitWildcard(cloneWildcardEntries())
   },
 )
 
@@ -646,16 +628,15 @@ function addUpstream(entryID) {
   emitExact(
     cloneExactEntries().map((entry) => {
       if (entry.id !== entryID) return entry
-      const nextUpstreams = isStatefulRoute.value
-        ? [{ provider: defaultProvider(), model: entry.name || '' }]
-        : [...(entry.upstreams || []), { provider: defaultProvider(), model: '' }]
-      return { ...entry, upstreams: nextUpstreams }
+      return {
+        ...entry,
+        upstreams: [...(entry.upstreams || []), { provider: defaultProvider(), model: '' }],
+      }
     }),
   )
 }
 
 function moveUpstream(entryID, idx, delta) {
-  if (isStatefulRoute.value) return
   emitExact(
     cloneExactEntries().map((entry) =>
       entry.id === entryID
@@ -672,7 +653,7 @@ function updateUpstreamProvider(entryID, idx, provider) {
       const upstreams = (entry.upstreams || []).map((upstream, upstreamIdx) =>
         upstreamIdx === idx ? { provider, model: upstream.model } : upstream,
       )
-      return { ...entry, upstreams: isStatefulRoute.value ? upstreams.slice(0, 1) : upstreams }
+      return { ...entry, upstreams }
     }),
   )
 }
@@ -705,12 +686,7 @@ function updateWildcardProviders(pattern, providers) {
   emitWildcard(
     cloneWildcardEntries().map((entry) =>
       entry.pattern === pattern
-        ? {
-            ...entry,
-            providers: isStatefulRoute.value
-              ? dedupeNonEmpty(providers).slice(0, 1)
-              : [...providers],
-          }
+        ? { ...entry, providers: [...providers] }
         : entry,
     ),
   )

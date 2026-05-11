@@ -407,7 +407,7 @@ export default {
 		savedMsg: "已保存并应用路由 {prefix}",
 		protocol: "协议",
 		protocolRouteHint:
-			"每个 route 必须锁定唯一协议。responses_stateful 会同时接受无状态和有状态 /responses 请求。",
+			"每个 route 必须锁定唯一协议。responses 协议同时覆盖无状态请求(走 inference 路径)和带 previous_response_id 的有状态请求(走透明转发)。",
 		protocolLockedLabel: "当前 route 协议",
 		protocolLockedHint:
 			"下方 exact model / wildcard model 都只能按这个唯一协议配置，不再允许模型级多协议分支。",
@@ -416,8 +416,7 @@ export default {
 		serviceProtocolsHint:
 			"留空表示按协议自动推导；需要同一路由同时暴露 chat、responses 或 embeddings 时显式填写，且必须包含当前协议。",
 		protocolChat: "chat",
-		protocolResponsesStateless: "responses_stateless",
-		protocolResponsesStateful: "responses_stateful",
+		protocolResponses: "responses",
 		protocolAnthropic: "anthropic",
 		hookCount: "审查规则数",
 		exactModels: "精确模型",
@@ -439,7 +438,6 @@ export default {
 		patternHint: "通配符模式必须包含 *，例如 gpt-*。",
 		upstreamsCol: "上游",
 		upstreamsHint: "按顺序尝试上游；越靠前优先级越高，也可以把公开模型名重写成不同的上游模型名。",
-		upstreamsHintSingle: "当前 route 是 responses_stateful，只允许单个 upstream，不支持 failover。",
 		priorityCol: "优先级",
 		addUpstream: "+ 添加上游",
 		noUpstreams: "还没有 upstream。",
@@ -449,7 +447,6 @@ export default {
 		providersCol: "供应商",
 		providersPlaceholder: "Provider name",
 		wildcardProvidersHint: "只选择 provider，不改写请求里的模型名；列表顺序就是优先级。",
-		wildcardProvidersHintSingle: "当前 route 是 responses_stateful，只允许单个 provider，不支持 failover。",
 		priorityValue: "P{n}",
 		promptCol: "提示词",
 		promptToggleLabel: "启用额外提示词",
@@ -510,7 +507,7 @@ export default {
 		interfaceTemplate_chat_embeddings_desc: "允许聊天和 embeddings，不开放 Responses。",
 		interfaceTemplate_chat_responses_embeddings: "聊天 + Responses + 向量",
 		interfaceTemplate_chat_responses_embeddings_desc:
-			"允许聊天、Responses 无状态/有状态和 embeddings。",
+			"允许聊天、Responses 和 embeddings。",
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages 兼容",
 		interfaceTemplate_anthropic_bridge_desc:
 			"通过 OpenAI-compatible provider 承接 Anthropic /messages，并开启 anthropic_to_chat。",
@@ -521,8 +518,7 @@ export default {
 			"这是唯一的接口高级入口；修改后上方最终可用接口会同步变化。",
 		rawServiceProtocols: "接口列表",
 		serviceProtocol_chat: "Chat",
-		serviceProtocol_responses_stateless: "Responses",
-		serviceProtocol_responses_stateful: "Stateful Responses",
+		serviceProtocol_responses: "Responses",
 		serviceProtocol_embeddings: "Embeddings",
 		serviceProtocol_anthropic: "Anthropic Messages",
 		noEffectiveProtocols: "当前没有可用接口",

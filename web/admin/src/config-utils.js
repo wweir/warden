@@ -52,10 +52,6 @@ export function normalizeServiceProtocols(protocols) {
     if (!protocol || seen.has(protocol)) continue;
     seen.add(protocol);
     out.push(protocol);
-    if (protocol === "responses_stateful" && !seen.has("responses_stateless")) {
-      seen.add("responses_stateless");
-      out.push("responses_stateless");
-    }
   }
   return out;
 }
@@ -66,12 +62,7 @@ export function defaultServiceProtocolsForProvider(provider) {
   }
   switch (providerFamily(provider)) {
     case "openai": {
-      const protocols = [
-        "chat",
-        "responses_stateless",
-        "responses_stateful",
-        "embeddings",
-      ];
+      const protocols = ["chat", "responses", "embeddings"];
       if (provider?.anthropic_to_chat) protocols.push("anthropic");
       return protocols;
     }

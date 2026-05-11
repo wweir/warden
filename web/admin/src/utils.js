@@ -10,64 +10,7 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
-function normalizeConfiguredServiceProtocols(serviceProtocols) {
-  if (!Array.isArray(serviceProtocols) || serviceProtocols.length === 0)
-    return [];
-
-  const out = [];
-  const seen = new Set();
-  const add = (protocol) => {
-    if (!protocol || seen.has(protocol)) return;
-    seen.add(protocol);
-    out.push(protocol);
-  };
-
-  for (const raw of serviceProtocols) {
-    const protocol = normalizeText(raw);
-    switch (protocol) {
-      case "chat":
-      case "responses_stateless":
-      case "responses_stateful":
-      case "anthropic":
-      case "embeddings":
-        add(protocol);
-        if (protocol === "responses_stateful") add("responses_stateless");
-        break;
-    }
-  }
-
-  return out;
-}
-
-function routeProtocolsFromServiceProtocols(serviceProtocols) {
-  const out = [];
-  const seen = new Set();
-  const add = (protocol) => {
-    if (!protocol || seen.has(protocol)) return;
-    seen.add(protocol);
-    out.push(protocol);
-  };
-
-  for (const protocol of serviceProtocols || []) {
-    switch (protocol) {
-      case "chat":
-        add("chat");
-        break;
-      case "responses_stateless":
-        add("responses_stateless");
-        break;
-      case "responses_stateful":
-        add("responses_stateless");
-        add("responses_stateful");
-        break;
-      case "anthropic":
-        add("anthropic");
-        break;
-    }
-  }
-
-  return out;
-}
+const ROUTE_PROTOCOLS = new Set(["chat", "responses", "anthropic"]);
 
 function defaultServiceProtocols(provider) {
   const family = normalizeText(provider?.family || provider?.protocol);
@@ -75,12 +18,7 @@ function defaultServiceProtocols(provider) {
     case "anthropic":
       return ["chat", "anthropic"];
     case "openai": {
-      const protocols = [
-        "chat",
-        "responses_stateless",
-        "responses_stateful",
-        "embeddings",
-      ];
+      const protocols = ["chat", "responses", "embeddings"];
       if (provider?.anthropic_to_chat) protocols.push("anthropic");
       return protocols;
     }
@@ -92,13 +30,18 @@ function defaultServiceProtocols(provider) {
 }
 
 export function providerRouteProtocols(provider) {
-  const configuredServiceProtocols = normalizeConfiguredServiceProtocols(
-    provider?.service_protocols,
-  );
-  if (configuredServiceProtocols.length > 0) {
-    return routeProtocolsFromServiceProtocols(configuredServiceProtocols);
+  const configured = Array.isArray(provider?.service_protocols) && provider.service_protocols.length > 0
+    ? provider.service_protocols
+    : defaultServiceProtocols(provider);
+  const out = [];
+  const seen = new Set();
+  for (const raw of configured) {
+    const protocol = normalizeText(raw);
+    if (!ROUTE_PROTOCOLS.has(protocol) || seen.has(protocol)) continue;
+    seen.add(protocol);
+    out.push(protocol);
   }
-  return routeProtocolsFromServiceProtocols(defaultServiceProtocols(provider));
+  return out;
 }
 
 export const DEFAULT_AI_HOOK_PROMPT = `You are a security reviewer for tool calls. Review the tool call below and return ONLY compact JSON:
