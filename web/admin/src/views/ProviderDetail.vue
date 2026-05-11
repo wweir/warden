@@ -366,6 +366,34 @@
                                       {{ file.onlineResult.model }} / {{ file.onlineResult.latency_ms }}ms
                                     </span>
                                   </div>
+                                  <div>
+                                    <span v-if="cliproxyAuthUsageLoading[file.filename]" class="badge badge-muted">
+                                      {{ $t("providerDetail.cliproxyAuthUsageLoading") }}
+                                    </span>
+                                    <template v-else-if="file.usageResult">
+                                      <span class="badge" :class="file.usageClass">{{ file.usageLabel }}</span>
+                                      <span
+                                        class="validation-message usage-message"
+                                        tabindex="0"
+                                        :aria-label="cliproxyAuthUsageDetails(file.usageResult)"
+                                      >
+                                        <span class="usage-metrics">
+                                          <span
+                                            v-for="item in cliproxyAuthUsageMetrics(file.usageResult)"
+                                            :key="`${file.filename}-${item.name}`"
+                                            class="usage-metric"
+                                          >
+                                            <span class="usage-metric-name">{{ cliproxyAuthUsageMetricName(item.name) }}</span>
+                                            <span class="usage-metric-value">{{ item.value }}</span>
+                                          </span>
+                                          <span v-if="file.usageResult.cached" class="usage-metric usage-metric-muted">
+                                            {{ $t("providerDetail.cliproxyAuthUsageCached") }}
+                                          </span>
+                                        </span>
+                                        <pre class="usage-tooltip">{{ cliproxyAuthUsageDetails(file.usageResult) }}</pre>
+                                      </span>
+                                    </template>
+                                  </div>
                                 </div>
                                 <div class="auth-file-actions">
                                   <button
@@ -911,6 +939,7 @@ import {
   detectProviderProtocols,
   fetchConfig,
   fetchConfigSource,
+  fetchCLIProxyAuthFileUsage,
   fetchCLIProxyAuthFiles,
   fetchProviderDetail,
   fetchProviderFormMeta,
@@ -970,6 +999,9 @@ const cliproxyAuthFileInput = ref(null);
 const cliproxyAuthVerifying = ref({});
 const cliproxyAuthDeleting = ref({});
 const cliproxyAuthOnlineResults = ref({});
+const cliproxyAuthUsageLoading = ref({});
+const cliproxyAuthUsageResults = ref({});
+const cliproxyAuthUsageRequestID = ref(0);
 const selectedProbeModel = ref("");
 const selectedProbeProtocol = ref("chat");
 const protocolProbeResult = ref(null);
@@ -1058,7 +1090,10 @@ watch(
     if (enabled) {
       await refreshCliproxyAuthFiles();
     } else {
+      invalidateCliproxyAuthUsageRequests();
       cliproxyAuthFiles.value = [];
+      cliproxyAuthUsageResults.value = {};
+      cliproxyAuthUsageLoading.value = {};
       clearCliproxyAuthDraft();
     }
   },
@@ -1279,6 +1314,9 @@ const cliproxyAuthFilesSummary = computed(() =>
     onlineResult: cliproxyAuthOnlineResults.value[file.filename] || null,
     onlineLabel: cliproxyAuthOnlineLabel(cliproxyAuthOnlineResults.value[file.filename]?.status),
     onlineClass: cliproxyAuthOnlineClass(cliproxyAuthOnlineResults.value[file.filename]?.status),
+    usageResult: cliproxyAuthUsageResults.value[file.filename] || null,
+    usageLabel: cliproxyAuthUsageLabel(cliproxyAuthUsageResults.value[file.filename]?.status),
+    usageClass: cliproxyAuthUsageClass(cliproxyAuthUsageResults.value[file.filename]?.status),
   })),
 );
 
@@ -1764,6 +1802,79 @@ function cliproxyAuthOnlineClass(status) {
   }
 }
 
+function cliproxyAuthUsageLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+      return t("providerDetail.cliproxyAuthUsageOk");
+    case "warning":
+      return t("providerDetail.cliproxyAuthUsageWarning");
+    case "disabled":
+      return t("providerDetail.cliproxyAuthUsageDisabled");
+    case "error":
+      return t("providerDetail.cliproxyAuthUsageError");
+    default:
+      return t("providerDetail.cliproxyAuthUsageUnknown");
+  }
+}
+
+function cliproxyAuthUsageClass(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+      return "badge-ok";
+    case "warning":
+      return "badge-warn";
+    case "disabled":
+    case "unknown":
+      return "badge-muted";
+    case "error":
+      return "badge-error";
+    default:
+      return "badge-muted";
+  }
+}
+
+function cliproxyAuthUsageMetrics(usage) {
+  if (!usage) return [];
+  if (usage.error) return [{ name: "error", value: usage.error }];
+  if (usage.summary?.length) return usage.summary;
+  const fallback = usage.note || usage.status_message || "-";
+  return [{ name: "status", value: fallback }];
+}
+
+function cliproxyAuthUsageMetricName(name) {
+  const labels = {
+    plan: t("providerDetail.cliproxyAuthUsageMetricPlan"),
+    "5h": t("providerDetail.cliproxyAuthUsageMetric5h"),
+    "5h_reset": t("providerDetail.cliproxyAuthUsageMetric5hReset"),
+    weekly: t("providerDetail.cliproxyAuthUsageMetricWeekly"),
+    weekly_reset: t("providerDetail.cliproxyAuthUsageMetricWeeklyReset"),
+    auth: t("providerDetail.cliproxyAuthUsageMetricAuth"),
+    quota: t("providerDetail.cliproxyAuthUsageMetricQuota"),
+    recover_at: t("providerDetail.cliproxyAuthUsageMetricRecoverAt"),
+    cooldown: t("providerDetail.cliproxyAuthUsageMetricCooldown"),
+    model: t("providerDetail.cliproxyAuthUsageMetricModel"),
+    reset_at: t("providerDetail.cliproxyAuthUsageMetricResetAt"),
+    reset_after: t("providerDetail.cliproxyAuthUsageMetricResetAfter"),
+    remaining: t("providerDetail.cliproxyAuthUsageMetricRemaining"),
+    credits: t("providerDetail.cliproxyAuthUsageMetricCredits"),
+    credit_balance: t("providerDetail.cliproxyAuthUsageMetricCredits"),
+    credits_balance: t("providerDetail.cliproxyAuthUsageMetricCredits"),
+  };
+  return labels[name] || name;
+}
+
+function cliproxyAuthUsageDetails(usage) {
+  if (!usage) return "";
+  const detail = {};
+  if (usage.summary?.length) detail.summary = usage.summary;
+  if (usage.data && Object.keys(usage.data).length > 0) detail.data = usage.data;
+  if (usage.checked_at) detail.checked_at = usage.checked_at;
+  if (usage.cached) detail.cached = true;
+  if (usage.note) detail.note = usage.note;
+  if (usage.error) detail.error = usage.error;
+  return JSON.stringify(detail, null, 2);
+}
+
 function cliproxyAuthOnlineDisabled(file) {
   return (
     props.create ||
@@ -1781,11 +1892,73 @@ async function refreshCliproxyAuthFiles() {
   try {
     const result = await fetchCLIProxyAuthFiles();
     cliproxyAuthFiles.value = result.files || [];
+    void refreshCliproxyAuthUsageForFiles(cliproxyAuthFiles.value);
   } catch (e) {
     error.value = e.message;
   } finally {
     cliproxyAuthLoading.value = false;
   }
+}
+
+async function refreshCliproxyAuthUsageForFiles(files) {
+  const requestID = ++cliproxyAuthUsageRequestID.value;
+  if (!Array.isArray(files) || files.length === 0) {
+    cliproxyAuthUsageResults.value = {};
+    cliproxyAuthUsageLoading.value = {};
+    return;
+  }
+  const currentNames = new Set(files.map((file) => file.filename).filter(Boolean));
+  const nextResults = {};
+  for (const file of files) {
+    if (cliproxyAuthUsageResults.value[file.filename]) {
+      nextResults[file.filename] = cliproxyAuthUsageResults.value[file.filename];
+    }
+  }
+  cliproxyAuthUsageResults.value = nextResults;
+  await Promise.all(
+    files.map(async (file) => {
+      if (!file?.filename || file.validation_status === "invalid") return;
+      cliproxyAuthUsageLoading.value = {
+        ...cliproxyAuthUsageLoading.value,
+        [file.filename]: true,
+      };
+      try {
+        const result = await fetchCLIProxyAuthFileUsage(file.filename);
+        if (!isCurrentCliproxyAuthUsageRequest(requestID, file.filename, currentNames)) return;
+        cliproxyAuthUsageResults.value = {
+          ...cliproxyAuthUsageResults.value,
+          [file.filename]: result,
+        };
+      } catch (e) {
+        if (!isCurrentCliproxyAuthUsageRequest(requestID, file.filename, currentNames)) return;
+        cliproxyAuthUsageResults.value = {
+          ...cliproxyAuthUsageResults.value,
+          [file.filename]: {
+            filename: file.filename,
+            provider: file.provider,
+            status: "error",
+            error: e.message,
+          },
+        };
+      } finally {
+        if (!isCurrentCliproxyAuthUsageRequest(requestID, file.filename, currentNames)) return;
+        cliproxyAuthUsageLoading.value = {
+          ...cliproxyAuthUsageLoading.value,
+          [file.filename]: false,
+        };
+      }
+    }),
+  );
+}
+
+function invalidateCliproxyAuthUsageRequests() {
+  cliproxyAuthUsageRequestID.value += 1;
+}
+
+function isCurrentCliproxyAuthUsageRequest(requestID, filename, expectedNames) {
+  if (requestID !== cliproxyAuthUsageRequestID.value) return false;
+  if (!expectedNames.has(filename)) return false;
+  return cliproxyAuthFiles.value.some((file) => file?.filename === filename);
 }
 
 function clearCliproxyAuthDraft() {
@@ -1878,6 +2051,9 @@ async function deleteCliproxyAuth(file) {
     const nextResults = { ...cliproxyAuthOnlineResults.value };
     delete nextResults[file.filename];
     cliproxyAuthOnlineResults.value = nextResults;
+    const nextUsageResults = { ...cliproxyAuthUsageResults.value };
+    delete nextUsageResults[file.filename];
+    cliproxyAuthUsageResults.value = nextUsageResults;
     message.value = t("providerDetail.cliproxyAuthDeleteSuccess", { filename: file.filename });
     await refreshCliproxyAuthFiles();
   } catch (e) {
@@ -1973,7 +2149,10 @@ async function load() {
     providerFormMeta.value = formMeta;
     showAPIKey.value = false;
     apiKeyTouched.value = false;
+    invalidateCliproxyAuthUsageRequests();
     cliproxyAuthFiles.value = [];
+    cliproxyAuthUsageResults.value = {};
+    cliproxyAuthUsageLoading.value = {};
     clearCliproxyAuthDraft();
 
     if (props.create) {
@@ -2533,6 +2712,76 @@ async function unsuppressProvider() {
   margin-top: 4px;
   color: var(--c-text-3);
   line-height: 1.35;
+}
+
+.usage-message {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  cursor: help;
+}
+
+.usage-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.usage-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-bg-soft);
+  color: var(--c-text-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.usage-metric-name {
+  color: var(--c-text-3);
+}
+
+.usage-metric-value {
+  overflow-wrap: anywhere;
+  color: var(--c-text);
+}
+
+.usage-metric-muted {
+  color: var(--c-text-3);
+}
+
+.usage-tooltip {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: calc(100% + 6px);
+  display: none;
+  width: min(520px, 70vw);
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-bg);
+  color: var(--c-text);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.usage-message:hover .usage-tooltip,
+.usage-message:focus .usage-tooltip,
+.usage-message:focus-within .usage-tooltip {
+  display: block;
 }
 
 .custom-interface-head {

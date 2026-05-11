@@ -100,6 +100,10 @@ export function verifyCLIProxyAuthFile(provider, filename, model = "") {
 	});
 }
 
+export function fetchCLIProxyAuthFileUsage(filename) {
+	return apiJSON(`/_admin/api/cliproxy/auth-files/usage?filename=${encodeURIComponent(filename)}`);
+}
+
 export function setProviderSuppress(name, suppress) {
 	return apiJSON("/_admin/api/providers/suppress", {
 		method: "POST",

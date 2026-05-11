@@ -13,7 +13,7 @@
 - Logs 页面整合会话时，优先按 Responses API 的 `previous_response_id -> response.id` 显式续接整合；没有显式续接时，只在同 route 下按 fingerprint 前缀做保守归并，不再使用旧的 prompt 哈希 + 时间窗启发式，避免把独立请求误并成同一 session
 - Logs 页面桌面端采用“左侧 session 树 + 右侧日志表”的主从布局；顶部动作区单独成组，右侧在表格上方增加 scope 摘要条，显式展示当前 route / session / 时间范围 / 请求数，让左侧选择和右侧明细始终对齐；左侧树支持整栏收起、按 route 分组折叠，并限制在视口内滚动，避免长会话把页面纵向撑长；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段，减少排障时的信息竞争
 - Chat：根据 `route.protocol` 自动选择 `/chat/completions`、`/responses` 或 `/messages` 发起请求，并按对应 SSE 格式解析文本输出；发起 Responses 请求时显式携带 `store=false`；对 `responses_stateful` 会本地保存上一轮 `response.id` 并续传 `previous_response_id`
-- Provider 详情页的 cliproxy 认证导入面板只写 `cliproxy.auth_dir` 下的 auth JSON 文件，不回填 provider 配置字段；导入和列表状态只做离线结构校验，不证明账号在线可用；在线验证按钮只调用 Warden 后端，由后端沿当前 cliproxy provider 的正常 chat 探测链路发起请求
+- Provider 详情页的 cliproxy 认证导入面板只写 `cliproxy.auth_dir` 下的 auth JSON 文件，不回填 provider 配置字段；导入和列表状态只做离线结构校验，不证明账号在线可用；页面会异步读取每个 auth 文件中可展示的用量状态，并优先直接展示计划、认证状态、5 小时限额、周限额和重置时间，后端只返回脱敏后的 quota cooldown、model state、selector 最近记录的 cliproxy 运行态错误响应和白名单用量字段；在线验证按钮只调用 Warden 后端，由后端沿当前 cliproxy provider 的正常 Responses 探测链路发起请求
 - Config：结构化配置编辑、客户端 API 密钥、验证、应用
 
 约束：
