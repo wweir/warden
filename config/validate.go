@@ -471,111 +471,142 @@ func validateRouteAPIKeys(prefix string, keys map[string]SecretString) error {
 	return nil
 }
 
+// routeModelDescriptor carries the per-kind labels used when emitting
+// validation errors for exact and wildcard route models.
+type routeModelDescriptor struct {
+	kindLabel     string // "exact model" or "wildcard model"
+	fieldKey      string // "upstreams" or "providers"
+	fieldSingular string // "upstream" or "provider"
+	wildcard      bool
+}
+
+var (
+	exactRouteModelDescriptor = routeModelDescriptor{
+		kindLabel:     "exact model",
+		fieldKey:      "upstreams",
+		fieldSingular: "upstream",
+		wildcard:      false,
+	}
+	wildcardRouteModelDescriptor = routeModelDescriptor{
+		kindLabel:     "wildcard model",
+		fieldKey:      "providers",
+		fieldSingular: "provider",
+		wildcard:      true,
+	}
+)
+
+// routeUpstreamInput is the normalized form of an exact upstream entry or a
+// wildcard provider entry. Wildcard inputs leave UpstreamModel empty and
+// RenameModel false.
+type routeUpstreamInput struct {
+	Provider      string
+	UpstreamModel string
+	RenameModel   bool
+}
+
 func (c *ConfigStruct) validateExactRouteModel(prefix string, route *RouteConfig, modelName string, modelCfg *ExactRouteModelConfig) error {
+	desc := exactRouteModelDescriptor
 	if modelCfg == nil {
-		return NewValidationError("route %s exact model %q: config is required", prefix, modelName)
+		return NewValidationError("route %s %s %q: config is required", prefix, desc.kindLabel, modelName)
 	}
 	if hasWildcardPattern(modelName) {
-		return NewValidationError("route %s exact model %q: exact model name cannot contain *", prefix, modelName)
+		return NewValidationError("route %s %s %q: exact model name cannot contain *", prefix, desc.kindLabel, modelName)
 	}
 	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Upstreams) != 1 {
-		return NewValidationError("route %s exact model %q: exactly one upstream is required for protocol %s", prefix, modelName, route.Protocol)
+		return NewValidationError("route %s %s %q: exactly one %s is required for protocol %s", prefix, desc.kindLabel, modelName, desc.fieldSingular, route.Protocol)
 	}
 	if len(modelCfg.Upstreams) == 0 {
-		return NewValidationError("route %s exact model %q: upstreams is required", prefix, modelName)
+		return NewValidationError("route %s %s %q: %s is required", prefix, desc.kindLabel, modelName, desc.fieldKey)
 	}
-	promptEnabled := routeModelPromptEnabled(modelCfg.PromptEnabled, modelCfg.SystemPrompt)
-	compiled := &CompiledRouteModel{
-		Key:           modelName,
-		Pattern:       modelName,
-		PublicModel:   modelName,
-		PromptEnabled: promptEnabled,
-		Wildcard:      false,
-		Specificity:   buildPatternSpecificity(modelName),
-	}
-	if promptEnabled {
-		compiled.SystemPrompt = modelCfg.SystemPrompt
-	}
+
+	inputs := make([]routeUpstreamInput, len(modelCfg.Upstreams))
 	for idx, upstream := range modelCfg.Upstreams {
 		if upstream == nil {
-			return NewValidationError("route %s exact model %q upstreams[%d]: config is required", prefix, modelName, idx)
+			return NewValidationError("route %s %s %q %s[%d]: config is required", prefix, desc.kindLabel, modelName, desc.fieldKey, idx)
 		}
 		if upstream.Provider == "" {
-			return NewValidationError("route %s exact model %q upstreams[%d]: provider is required", prefix, modelName, idx)
+			return NewValidationError("route %s %s %q %s[%d]: provider is required", prefix, desc.kindLabel, modelName, desc.fieldKey, idx)
 		}
 		if upstream.Model == "" {
-			return NewValidationError("route %s exact model %q upstreams[%d]: model is required", prefix, modelName, idx)
+			return NewValidationError("route %s %s %q %s[%d]: model is required", prefix, desc.kindLabel, modelName, desc.fieldKey, idx)
 		}
-		prov, exists := c.Provider[upstream.Provider]
-		if !exists {
-			return NewValidationError("route %s exact model %q upstreams[%d]: unknown provider %s", prefix, modelName, idx, upstream.Provider)
-		}
-		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
-			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s does not support any route service protocol %v", prefix, modelName, idx, upstream.Provider, route.serviceProtocols)
-		}
-		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
-			return NewValidationError("route %s exact model %q upstreams[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, modelName, idx, upstream.Provider, route.Protocol)
-		}
-		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
+		inputs[idx] = routeUpstreamInput{
 			Provider:      upstream.Provider,
 			UpstreamModel: upstream.Model,
 			RenameModel:   upstream.Model != modelName,
-		})
+		}
 	}
-	if !compiledRouteModelSupportsServiceProtocol(compiled, c.Provider, route.Protocol) {
-		return NewValidationError("route %s exact model %q: at least one upstream must support route protocol %s", prefix, modelName, route.Protocol)
+
+	compiled, err := c.compileRouteModel(prefix, route, desc, modelName, modelCfg.PromptEnabled, modelCfg.SystemPrompt, inputs)
+	if err != nil {
+		return err
 	}
 	route.exactModels[modelName] = compiled
 	return nil
 }
 
 func (c *ConfigStruct) validateWildcardRouteModel(prefix string, route *RouteConfig, pattern string, modelCfg *WildcardRouteModelConfig) error {
+	desc := wildcardRouteModelDescriptor
 	if modelCfg == nil {
-		return NewValidationError("route %s wildcard model %q: config is required", prefix, pattern)
+		return NewValidationError("route %s %s %q: config is required", prefix, desc.kindLabel, pattern)
 	}
 	if !hasWildcardPattern(pattern) {
-		return NewValidationError("route %s wildcard model %q: pattern must contain *", prefix, pattern)
+		return NewValidationError("route %s %s %q: pattern must contain *", prefix, desc.kindLabel, pattern)
 	}
 	if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && len(modelCfg.Providers) != 1 {
-		return NewValidationError("route %s wildcard model %q: exactly one provider is required for protocol %s", prefix, pattern, route.Protocol)
+		return NewValidationError("route %s %s %q: exactly one %s is required for protocol %s", prefix, desc.kindLabel, pattern, desc.fieldSingular, route.Protocol)
 	}
 	if len(modelCfg.Providers) == 0 {
-		return NewValidationError("route %s wildcard model %q: providers is required", prefix, pattern)
+		return NewValidationError("route %s %s %q: %s is required", prefix, desc.kindLabel, pattern, desc.fieldKey)
 	}
 
-	promptEnabled := routeModelPromptEnabled(modelCfg.PromptEnabled, modelCfg.SystemPrompt)
-	compiled := &CompiledRouteModel{
-		Key:           pattern,
-		Pattern:       pattern,
-		PublicModel:   pattern,
-		PromptEnabled: promptEnabled,
-		Wildcard:      true,
-		Specificity:   buildPatternSpecificity(pattern),
-	}
-	if promptEnabled {
-		compiled.SystemPrompt = modelCfg.SystemPrompt
-	}
+	inputs := make([]routeUpstreamInput, len(modelCfg.Providers))
 	for idx, provName := range modelCfg.Providers {
-		prov, exists := c.Provider[provName]
-		if !exists {
-			return NewValidationError("route %s wildcard model %q providers[%d]: unknown provider %s", prefix, pattern, idx, provName)
-		}
-		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
-			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s does not support any route service protocol %v", prefix, pattern, idx, provName, route.serviceProtocols)
-		}
-		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
-			return NewValidationError("route %s wildcard model %q providers[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, pattern, idx, provName, route.Protocol)
-		}
-		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
-			Provider:      provName,
-			UpstreamModel: "",
-		})
+		inputs[idx] = routeUpstreamInput{Provider: provName}
 	}
-	if !compiledRouteModelSupportsServiceProtocol(compiled, c.Provider, route.Protocol) {
-		return NewValidationError("route %s wildcard model %q: at least one provider must support route protocol %s", prefix, pattern, route.Protocol)
+
+	compiled, err := c.compileRouteModel(prefix, route, desc, pattern, modelCfg.PromptEnabled, modelCfg.SystemPrompt, inputs)
+	if err != nil {
+		return err
 	}
 	route.wildcards = append(route.wildcards, compiled)
 	return nil
+}
+
+func (c *ConfigStruct) compileRouteModel(prefix string, route *RouteConfig, desc routeModelDescriptor, key string, promptEnabled *bool, systemPrompt string, inputs []routeUpstreamInput) (*CompiledRouteModel, error) {
+	enabled := routeModelPromptEnabled(promptEnabled, systemPrompt)
+	compiled := &CompiledRouteModel{
+		Key:           key,
+		Pattern:       key,
+		PublicModel:   key,
+		PromptEnabled: enabled,
+		Wildcard:      desc.wildcard,
+		Specificity:   buildPatternSpecificity(key),
+	}
+	if enabled {
+		compiled.SystemPrompt = systemPrompt
+	}
+	for idx, in := range inputs {
+		prov, exists := c.Provider[in.Provider]
+		if !exists {
+			return nil, NewValidationError("route %s %s %q %s[%d]: unknown provider %s", prefix, desc.kindLabel, key, desc.fieldKey, idx, in.Provider)
+		}
+		if !ProviderSupportsAnyServiceProtocol(prov, route.serviceProtocols) {
+			return nil, NewValidationError("route %s %s %q %s[%d]: provider %s does not support any route service protocol %v", prefix, desc.kindLabel, key, desc.fieldKey, idx, in.Provider, route.serviceProtocols)
+		}
+		if route.SupportsServiceProtocol(RouteProtocolResponsesStateful) && prov.ResponsesToChat && ProviderSupportsServiceProtocol(prov, RouteProtocolResponsesStateless) {
+			return nil, NewValidationError("route %s %s %q %s[%d]: provider %s enables responses_to_chat and cannot back route protocol %s", prefix, desc.kindLabel, key, desc.fieldKey, idx, in.Provider, route.Protocol)
+		}
+		compiled.Upstreams = append(compiled.Upstreams, CompiledRouteUpstream{
+			Provider:      in.Provider,
+			UpstreamModel: in.UpstreamModel,
+			RenameModel:   in.RenameModel,
+		})
+	}
+	if !compiledRouteModelSupportsServiceProtocol(compiled, c.Provider, route.Protocol) {
+		return nil, NewValidationError("route %s %s %q: at least one %s must support route protocol %s", prefix, desc.kindLabel, key, desc.fieldSingular, route.Protocol)
+	}
+	return compiled, nil
 }
 
 func compiledRouteModelSupportsServiceProtocol(compiled *CompiledRouteModel, providers map[string]*ProviderConfig, serviceProtocol string) bool {
