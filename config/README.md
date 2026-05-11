@@ -68,14 +68,14 @@
 - 运行时路由真相由 `route.protocol + route model` 决定，不由展示层 probe 决定
 
 - route 配置的主结构是 `exact_models` / `wildcard_models`
-- `route.protocol` 是必填字段，且每个 route 只允许一个 `chat` / `responses_stateless` / `responses_stateful` / `anthropic`
+- `route.protocol` 是必填字段，且每个 route 只允许一个 `chat` / `responses` / `anthropic`
 - `/embeddings` 是额外 service protocol，不是新的 `route.protocol`；只有 route 内至少有一个 upstream/provider 支持 embeddings 时才会暴露
 - route model 的额外提示词由模型自身的 `prompt_enabled` + `system_prompt` 表达
 - `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时用于让同一路由暴露多个服务接口，且必须包含 `route.protocol`；显式声明的每个接口都必须至少有一个 route upstream/provider 支持，否则配置校验失败
 - `route.exact_models.<name>` 直接声明 `upstreams`
 - `route.wildcard_models.<pattern>` 直接声明 `providers`
 - `route.wildcard_models.<pattern>` 的 `*` 匹配完整模型 ID，包括 `vendor/model` 和 `vendor/model:free` 这类包含 `/` 的上游模型名
-- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses_* + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
+- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
 - OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols = ["chat"]`
 - CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
 - `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
@@ -91,16 +91,14 @@ url = "https://api.openai.com/v1"
 api_key_command = "op read 'op://LLM/OpenAI/api_key'"
 api_key_command_timeout = "5s"
 api_key_command_ttl = "10m"
-service_protocols = ["chat", "responses_stateless", "responses_stateful", "embeddings"]
+service_protocols = ["chat", "responses", "embeddings"]
 ```
 
 `api_key_command` 只改变鉴权来源；provider 可用协议仍由 `family`、`service_protocols` 和 `anthropic_to_chat` 决定。
 
 - failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
-- `responses_stateless` 明确拒绝 `previous_response_id`
-- `responses_stateful` 接受 `previous_response_id`，但会禁用 failover，并绕过 `responses_to_chat`
-- `responses_stateful` exact model 只允许单 upstream；wildcard model 只允许单 provider
-- 启用 `responses_to_chat` 的 provider 不能被 `responses_stateful` route 引用，因为该桥接模式不支持 `previous_response_id`
+- `responses` 协议的 route 默认按无状态请求走 inference handler;一旦请求体含 `previous_response_id`,网关会切换到透明转发链路(禁用 failover、跳过 tool hooks、原样透传请求与响应),由上游持有会话状态
+- `responses_to_chat` 只对无状态 Responses 请求生效;带 `previous_response_id` 的请求会绕过桥接,直接进入透明转发,不会被 Chat 兼容子集裁剪
 - `anthropic_to_chat` 只允许配置在 `openai` provider 上，并且只对 `route.protocol=anthropic` 的 `/messages` 入口生效
 - 原生 `anthropic` provider 不支持 `/embeddings`；`route.protocol=anthropic` 只有在命中的模型最终落到 OpenAI family provider 时才可承接 embeddings
 - `route` 的运行时派生字段只在 `Validate()` 后可依赖

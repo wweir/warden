@@ -16,8 +16,7 @@
 
 - `openai`:
   - `chat`
-  - `responses_stateless`
-  - `responses_stateful`
+  - `responses`
   - `anthropic`（仅当该 provider 开启 `anthropic_to_chat`）
 - `anthropic`:
   - `chat`
@@ -27,7 +26,7 @@
 
 对实现最关键的决策：
 
-- `copilot` 不再默认支持任何 `responses*`
+- `copilot` 不再默认支持 `responses`
 - OpenAI-compatible 第三方上游（例如 Ollama）不再拥有独立 family，而是归入 `openai`；若只支持聊天接口，必须显式配置 `service_protocols = ["chat"]`
 - `openai` provider 的 `anthropic` 能力不是原生 `/messages`，而是 `anthropic_to_chat` 的受控桥接能力
 - provider 级轻量探测只用于展示，不作为路由运行时真相
@@ -53,8 +52,7 @@ providers = ["openai"]
 
 - `route.protocol` 必填，且只允许一个值：
   - `chat`
-  - `responses_stateless`
-  - `responses_stateful`
+  - `responses`
   - `anthropic`
 - `exact_models` 不再嵌套 `protocols`
 - `wildcard_models` 不再嵌套 `protocols`
@@ -107,19 +105,14 @@ provider 详情页当前展示四类信息：
 
 ## 4. responses 约束
 
-- `responses_stateless`：
-  - 只接受无状态 `/responses`
-  - 明确拒绝 `previous_response_id`
-- `responses_stateful`：
-  - 同时接受无状态和有状态 `/responses`
-  - exact model 只允许单 upstream
-  - wildcard model 只允许单 provider
-  - 有状态请求禁用 failover
+- `responses` 协议同时承接无状态请求(无 `previous_response_id`)和有状态请求(带 `previous_response_id`)
+- 无状态请求走 inference handler,支持 failover、tool hooks、`responses_to_chat` 桥接
+- 有状态请求走透明转发链路,禁用 failover,不解析 tool calls
+- 网关本身不维护 Responses 会话状态;`previous_response_id` 的语义完全依赖上游 provider
 
 ## 5. 管理端行为
 
 - `Routes` 页面先选 route 唯一协议，再编辑模型
-- route 切换为 `responses_stateful` 时，UI 会把 exact upstream / wildcard provider 收敛到单个
 - `Providers` 页面可触发：
   - 轻量协议检测（更新 `display_protocols`）
   - 精确 `provider + model + protocol` 探测

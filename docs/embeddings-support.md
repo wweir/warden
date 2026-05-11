@@ -10,18 +10,16 @@
 
 `embeddings` 不是新的 `route.protocol`。
 
-当前仍只有四个 route 协议：
+当前仍只有三个 route 协议：
 
 - `chat`
-- `responses_stateless`
-- `responses_stateful`
+- `responses`
 - `anthropic`
 
 `/embeddings` 是额外的 service protocol。`route.service_protocols` 留空时会按 `route.protocol` 推导并在有上游支持时暴露 embeddings；显式配置时必须包含 `embeddings` 才会暴露该入口，并且至少一个 route upstream/provider 必须支持 embeddings：
 
 - `chat -> /chat/completions + /embeddings`
-- `responses_stateless -> /responses + /embeddings`
-- `responses_stateful -> /responses + /embeddings`
+- `responses -> /responses + /embeddings`
 - `anthropic -> /messages + /embeddings`
 
 ## 2. 报文形状
@@ -46,8 +44,7 @@
 
 - `openai`
   - `chat`
-  - `responses_stateless`
-  - `responses_stateful`
+  - `responses`
   - `embeddings`
   - 若开启 `anthropic_to_chat`，再额外支持 `anthropic`
 - `anthropic`

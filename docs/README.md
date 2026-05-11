@@ -15,8 +15,8 @@
 
 - [cross-platform-deployment.md](./cross-platform-deployment.md)
   Linux / macOS / Windows 的运行、托管与运维边界
-- [responses-stateful-stateless-support.md](./responses-stateful-stateless-support.md)
-  Responses API 的有状态/无状态支持边界，以及 `responses_to_chat` 的限制
+- [responses-protocol-support.md](./responses-protocol-support.md)
+  `responses` 协议的实现边界:无状态请求的 inference 链路、带 `previous_response_id` 的透明转发链路,以及 `responses_to_chat` 的兼容范围
 - [provider-dynamic-capability-discovery-plan.md](./provider-dynamic-capability-discovery-plan.md)
   provider 协议能力展示、单协议 route 设计和运行时真相来源
 - [anthropic-messages-to-chat-plan.md](./anthropic-messages-to-chat-plan.md)
