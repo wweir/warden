@@ -51,78 +51,11 @@ func (h *Handler) RegisterRoutes(router *httprouter.Router) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAdminStatus(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/config/source", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAdminConfigSource(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAdminConfigGet(w, r, nil)
-	})
-	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAdminConfigPut(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/config/validate", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleConfigValidate(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/logs/stream", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleLogStream(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/tool-hooks/suggestions", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleToolHookSuggestions(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/restart", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleRestart(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/providers/health", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderHealth(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/providers/form-meta", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderFormMeta(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleCLIProxyAuthFilesList(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleCLIProxyAuthFileCreate(w, r, nil)
-	})
-	mux.HandleFunc("DELETE /api/cliproxy/auth-files", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleCLIProxyAuthFileDelete(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/cliproxy/auth-files/verify", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleCLIProxyAuthFileVerify(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/cliproxy/auth-files/usage", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleCLIProxyAuthFileUsage(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/providers/protocols/detect", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderProtocolDetect(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/providers/protocols/probe", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderModelProtocolProbe(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/providers/detail", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderDetail(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/providers/suppress", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleProviderSuppress(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/routes/detail", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleRouteDetail(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/metrics/stream", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleMetricsStream(w, r, nil)
-	})
-	mux.HandleFunc("GET /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAPIKeysList(w, r, nil)
-	})
-	mux.HandleFunc("POST /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAPIKeysCreate(w, r, nil)
-	})
-	mux.HandleFunc("DELETE /api/apikeys", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleAPIKeysDelete(w, r, nil)
-	})
+	for _, route := range h.apiRoutes() {
+		mux.HandleFunc(route.method+" "+route.path, func(w http.ResponseWriter, r *http.Request) {
+			route.handle(w, r, nil)
+		})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fp := strings.TrimPrefix(r.URL.Path, "/")
 		if fp != "" {
@@ -162,5 +95,40 @@ func (h *Handler) basicAuth(next httprouter.Handle) httprouter.Handle {
 			return
 		}
 		next(w, r, ps)
+	}
+}
+
+type adminAPIRoute struct {
+	method string
+	path   string
+	handle func(http.ResponseWriter, *http.Request, httprouter.Params)
+}
+
+func (h *Handler) apiRoutes() []adminAPIRoute {
+	return []adminAPIRoute{
+		{http.MethodGet, "/api/status", h.HandleAdminStatus},
+		{http.MethodGet, "/api/config/source", h.HandleAdminConfigSource},
+		{http.MethodGet, "/api/config", h.HandleAdminConfigGet},
+		{http.MethodPut, "/api/config", h.HandleAdminConfigPut},
+		{http.MethodPost, "/api/config/validate", h.HandleConfigValidate},
+		{http.MethodGet, "/api/logs/stream", h.HandleLogStream},
+		{http.MethodGet, "/api/tool-hooks/suggestions", h.HandleToolHookSuggestions},
+		{http.MethodPost, "/api/restart", h.HandleRestart},
+		{http.MethodPost, "/api/providers/health", h.HandleProviderHealth},
+		{http.MethodGet, "/api/providers/form-meta", h.HandleProviderFormMeta},
+		{http.MethodGet, "/api/cliproxy/auth-files", h.HandleCLIProxyAuthFilesList},
+		{http.MethodPost, "/api/cliproxy/auth-files", h.HandleCLIProxyAuthFileCreate},
+		{http.MethodDelete, "/api/cliproxy/auth-files", h.HandleCLIProxyAuthFileDelete},
+		{http.MethodPost, "/api/cliproxy/auth-files/verify", h.HandleCLIProxyAuthFileVerify},
+		{http.MethodGet, "/api/cliproxy/auth-files/usage", h.HandleCLIProxyAuthFileUsage},
+		{http.MethodPost, "/api/providers/protocols/detect", h.HandleProviderProtocolDetect},
+		{http.MethodPost, "/api/providers/protocols/probe", h.HandleProviderModelProtocolProbe},
+		{http.MethodGet, "/api/providers/detail", h.HandleProviderDetail},
+		{http.MethodPost, "/api/providers/suppress", h.HandleProviderSuppress},
+		{http.MethodGet, "/api/routes/detail", h.HandleRouteDetail},
+		{http.MethodGet, "/api/metrics/stream", h.HandleMetricsStream},
+		{http.MethodGet, "/api/apikeys", h.HandleAPIKeysList},
+		{http.MethodPost, "/api/apikeys", h.HandleAPIKeysCreate},
+		{http.MethodDelete, "/api/apikeys", h.HandleAPIKeysDelete},
 	}
 }
