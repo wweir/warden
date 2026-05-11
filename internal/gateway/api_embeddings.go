@@ -46,7 +46,7 @@ func (g *Gateway) handleEmbeddings(w http.ResponseWriter, r *http.Request, route
 		return
 	}
 
-	g.handleBufferedInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, bufferedInferenceSpec{
+	g.handleInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, inferenceSpec{
 		serviceProtocol: config.ServiceProtocolEmbeddings,
 		endpoint:        "embeddings",
 		upstreamPath: func(_ string) string {
@@ -61,11 +61,12 @@ func (g *Gateway) handleEmbeddings(w http.ResponseWriter, r *http.Request, route
 		writeNonStream: func(w http.ResponseWriter, respBody []byte) {
 			writeJSONResponse(w, respBody, "Failed to write embeddings response")
 		},
-		writeStream: func(w http.ResponseWriter, _ string, respBody []byte) {
+		writeBufferedStream: func(w http.ResponseWriter, _ string, respBody []byte) {
 			writeJSONResponse(w, respBody, "Failed to write embeddings response")
 		},
 		streamAssembler: func(string) observepkg.StreamLogAssembler {
 			return nil
 		},
+		allowNonStreamFallback: true,
 	})
 }

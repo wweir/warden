@@ -10,7 +10,7 @@
 - Route-scoped tool-hook execution: `RunBlockToolHooks` (synchronous, can reject) and `RunAsyncToolHooks` (audit-only).
 - Response body injection: `InjectChatBlockVerdicts`, `InjectResponsesBlockVerdicts`, `InjectAnthropicBlockVerdicts` remove rejected tool calls from non-stream responses.
 - Async hook dispatch preserves route-scoped context values without inheriting downstream request cancellation, and publishes a same-request log update once async verdicts complete.
-- `RecordInferenceLog` accepts hook verdicts and writes them to `Record.ToolVerdicts`.
+- `RecordSuccess` and `RecordError` write the final log entry: success emits with token usage and hook verdicts, while error skips token accounting and only carries the optional partial body and error message.
 
 ## Boundary
 

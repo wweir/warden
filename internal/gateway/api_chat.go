@@ -37,7 +37,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 	}
 	applyRouteModelPrompt(&req, manager.Current().Model, openai.InjectSystemPromptRaw)
 
-	g.handleBufferedInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, bufferedInferenceSpec{
+	g.handleInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, inferenceSpec{
 		serviceProtocol: config.RouteProtocolChat,
 		endpoint:        "chat/completions",
 		upstreamPath: func(providerProtocol string) string {
@@ -70,7 +70,7 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 				}()
 			}
 		},
-		writeStream: func(w http.ResponseWriter, providerProtocol string, respBody []byte) {
+		writeBufferedStream: func(w http.ResponseWriter, providerProtocol string, respBody []byte) {
 			writeEventStreamHeaders(w)
 			clientBody := upstreampkg.ConvertStreamIfNeeded(providerProtocol, respBody)
 			writeStreamResponse(w, clientBody, "Failed to write stream response")
@@ -88,7 +88,8 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 		canRelayStream: func(providerProtocol string) bool {
 			return providerProtocol != config.RouteProtocolAnthropic
 		},
-		streamRelay: bridgepkg.RelayRawStream,
+		streamRelay:            bridgepkg.RelayRawStream,
+		allowNonStreamFallback: true,
 	})
 }
 

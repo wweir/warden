@@ -76,7 +76,7 @@ func TestRunRouteToolHooksSkipsUnmatchedCallsInVerdicts(t *testing.T) {
 	}
 }
 
-func TestRecordInferenceLogCarriesTTFT(t *testing.T) {
+func TestRecordSuccessCarriesTTFT(t *testing.T) {
 	t.Parallel()
 
 	got := recordTestInferenceLogWithTTFT(true)
@@ -89,7 +89,7 @@ func TestRecordInferenceLogCarriesTTFT(t *testing.T) {
 	}
 }
 
-func TestRecordInferenceLogSkipsTTFTForNonStream(t *testing.T) {
+func TestRecordSuccessSkipsTTFTForNonStream(t *testing.T) {
 	t.Parallel()
 
 	got := recordTestInferenceLogWithTTFT(false)
@@ -116,12 +116,11 @@ func recordTestInferenceLogWithTTFT(stream bool) reqlog.Record {
 	).WithTTFT(123 * time.Millisecond).WithDuration(456)
 
 	var got reqlog.Record
-	RecordInferenceLog(
+	RecordSuccess(
 		params,
 		[]byte(`{"ok":true}`),
-		"",
-		nil,
 		tokenusagepkg.Missing(""),
+		nil,
 		nil,
 		nil,
 		func(record reqlog.Record) {

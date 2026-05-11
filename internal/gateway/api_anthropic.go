@@ -44,7 +44,7 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 			g.handleAnthropicMessagesViaChat(w, r, route, prepareRawBody(req.RawBody, current.Target), req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
-		if g.handleRelayInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, relayInferenceSpec{
+		if g.handleInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, inferenceSpec{
 			serviceProtocol: config.RouteProtocolAnthropic,
 			endpoint:        "messages",
 			streamWarn:      "Anthropic stream terminated early",
@@ -57,8 +57,10 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 			prepareBody: func(_ string, rawBody []byte) ([]byte, error) {
 				return rawBody, nil
 			},
-			streamRelay:     bridgepkg.RelayAnthropicStream,
-			streamAssembler: observepkg.AssembleAnthropicStreamLog,
+			streamRelay: bridgepkg.RelayAnthropicStream,
+			streamAssembler: func(string) observepkg.StreamLogAssembler {
+				return observepkg.AssembleAnthropicStreamLog
+			},
 			runToolHooks: func(ctx context.Context, providerProtocol string, respBody []byte, stream bool) ([]byte, []toolhook.HookVerdict, asyncHookFn) {
 				calls := observepkg.ParseChatToolCalls(providerProtocol, respBody, stream)
 				if stream {

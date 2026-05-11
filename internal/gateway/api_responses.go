@@ -52,7 +52,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			return
 		}
 
-		if g.handleBufferedInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, bufferedInferenceSpec{
+		if g.handleInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, inferenceSpec{
 			serviceProtocol: serviceProtocol,
 			endpoint:        "responses",
 			canHandle: func(provider *config.ProviderConfig) bool {
@@ -88,7 +88,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					}()
 				}
 			},
-			writeStream: func(w http.ResponseWriter, _ string, respBody []byte) {
+			writeBufferedStream: func(w http.ResponseWriter, _ string, respBody []byte) {
 				writeEventStreamHeaders(w)
 				writeStreamResponse(w, respBody, "Failed to write responses stream")
 			},
@@ -101,7 +101,8 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 					return assembled, respBody, err
 				}
 			},
-			streamRelay: bridgepkg.RelayRawStream,
+			streamRelay:            bridgepkg.RelayRawStream,
+			allowNonStreamFallback: true,
 		}) {
 			return
 		}

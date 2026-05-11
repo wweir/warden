@@ -14,6 +14,7 @@ import (
 	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
+	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
 	upstreampkg "github.com/wweir/warden/internal/gateway/upstream"
 	sel "github.com/wweir/warden/internal/selector"
@@ -91,7 +92,7 @@ func (g *Gateway) handleChatBridge(
 					chatReq.Model = session.target.UpstreamModel
 					continue
 				}
-				observepkg.RecordInferenceLog(logParams, nil, sendErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
+				observepkg.RecordError(logParams, nil, sendErr.Error(), nil, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
 				return
 			}
@@ -117,33 +118,29 @@ func (g *Gateway) handleChatBridge(
 
 			// Stream: all hook checks degrade to async audits because the live response cannot be rewritten.
 			completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
+			emitStreamLog := func(verdicts []toolhook.HookVerdict, recordTokens func(telemetrypkg.Labels, tokenusagepkg.Observation, int64)) {
+				if errMsg != "" {
+					observepkg.RecordError(completedLogParams, clientBody, errMsg, verdicts, g.recordAndBroadcast)
+					return
+				}
+				observepkg.RecordSuccess(
+					completedLogParams,
+					clientBody,
+					observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
+					spec.streamLogAssembler,
+					recordTokens,
+					verdicts,
+					g.recordAndBroadcast,
+				)
+			}
 			go func() {
 				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.hookGatewayTarget(), observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
 				if len(asyncVerdicts) == 0 {
 					return
 				}
-				observepkg.RecordInferenceLog(
-					completedLogParams,
-					clientBody,
-					errMsg,
-					spec.streamLogAssembler,
-					observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
-					nil,
-					asyncVerdicts,
-					g.recordAndBroadcast,
-				)
+				emitStreamLog(asyncVerdicts, nil)
 			}()
-			var verdicts []toolhook.HookVerdict
-			observepkg.RecordInferenceLog(
-				completedLogParams,
-				clientBody,
-				errMsg,
-				spec.streamLogAssembler,
-				observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
-				g.RecordTokenMetrics,
-				verdicts,
-				g.recordAndBroadcast,
-			)
+			emitStreamLog(nil, g.RecordTokenMetrics)
 			return
 		}
 
@@ -157,7 +154,7 @@ func (g *Gateway) handleChatBridge(
 				chatReq.Model = session.target.UpstreamModel
 				continue
 			}
-			observepkg.RecordInferenceLog(logParams, nil, forwardErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
+			observepkg.RecordError(logParams, nil, forwardErr.Error(), nil, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, forwardErr)
 			return
 		}
@@ -166,7 +163,7 @@ func (g *Gateway) handleChatBridge(
 		respBody, convErr := spec.convertNonStreamResponse(chatResp, model)
 		if convErr != nil {
 			g.selector.RecordOutcome(session.provider.Name, nil, latency)
-			observepkg.RecordInferenceLog(logParams, rawRespBody, convErr.Error(), nil, tokenusagepkg.Missing(""), g.RecordTokenMetrics, nil, g.recordAndBroadcast)
+			observepkg.RecordError(logParams, rawRespBody, convErr.Error(), nil, g.recordAndBroadcast)
 			spec.writeConvertResponseError(w, convErr)
 			return
 		}
@@ -178,17 +175,16 @@ func (g *Gateway) handleChatBridge(
 		}
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
 		completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
-		observepkg.RecordInferenceLog(completedLogParams, respBody, "", nil, observeBridgeJSONTokenUsage(respBody), g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
+		observepkg.RecordSuccess(completedLogParams, respBody, observeBridgeJSONTokenUsage(respBody), nil, g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
 		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
 			if len(asyncVerdicts) == 0 {
 				return
 			}
-			observepkg.RecordInferenceLog(
+			observepkg.RecordSuccess(
 				completedLogParams,
 				respBody,
-				"",
-				nil,
 				observeBridgeJSONTokenUsage(respBody),
+				nil,
 				nil,
 				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
 				g.recordAndBroadcast,

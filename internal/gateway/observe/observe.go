@@ -72,7 +72,32 @@ func (p InferenceLogParams) WithTTFT(ttft time.Duration) InferenceLogParams {
 	return p
 }
 
-func RecordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), verdicts []toolhook.HookVerdict, emit func(reqlog.Record)) {
+// RecordError emits a failure log. respBody can be non-nil when the caller
+// received a partial body before the error. Token usage extraction, stream
+// assembly and recordTokens are skipped because the request did not finish.
+// verdicts may be non-nil for asynchronous audit updates after an in-stream
+// failure.
+func RecordError(params InferenceLogParams, respBody []byte, errMsg string, verdicts []toolhook.HookVerdict, emit func(reqlog.Record)) {
+	recordInferenceLog(params, respBody, errMsg, nil, tokenusagepkg.Observation{}, nil, verdicts, emit)
+}
+
+// RecordSuccess emits a success log. assembleStream is consulted only when
+// params.Stream is true; pass nil for non-streamed responses. recordTokens may
+// be nil for asynchronous verdict updates that should not double-count token
+// usage.
+func RecordSuccess(
+	params InferenceLogParams,
+	respBody []byte,
+	observation tokenusagepkg.Observation,
+	assembleStream StreamLogAssembler,
+	recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64),
+	verdicts []toolhook.HookVerdict,
+	emit func(reqlog.Record),
+) {
+	recordInferenceLog(params, respBody, "", assembleStream, observation, recordTokens, verdicts, emit)
+}
+
+func recordInferenceLog(params InferenceLogParams, respBody []byte, errMsg string, assembleStream StreamLogAssembler, observation tokenusagepkg.Observation, recordTokens func(labels telemetrypkg.Labels, usage tokenusagepkg.Observation, durationMs int64), verdicts []toolhook.HookVerdict, emit func(reqlog.Record)) {
 	durationMs := params.DurationMs
 	if durationMs < 0 {
 		durationMs = time.Since(params.StartTime).Milliseconds()
