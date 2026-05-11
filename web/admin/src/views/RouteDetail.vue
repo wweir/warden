@@ -336,6 +336,8 @@ import {
   saveConfig,
   validateConfig,
 } from '../api.js'
+import { deepClone, normalizeText } from '../config-utils.js'
+import { bindPollState, pollUntilAlive } from '../runtime-utils.js'
 import { fmtNum, providerRouteProtocols } from '../utils.js'
 import RouteModelsEditor from '../components/RouteModelsEditor.vue'
 import TagListEditor from '../components/TagListEditor.vue'
@@ -530,10 +532,6 @@ function normalizeRoutePrefix(prefix) {
   return value.startsWith('/') ? value : `/${value}`
 }
 
-function normalizeText(value) {
-  return String(value || '').trim()
-}
-
 function uniqueSortedTextValues(values) {
   const out = []
   const seen = new Set()
@@ -556,10 +554,6 @@ function dedupeOrderedTextValues(values) {
     out.push(normalized)
   }
   return out
-}
-
-function deepClone(value) {
-  return JSON.parse(JSON.stringify(value))
 }
 
 function supportedRouteProtocols(provider) {
@@ -826,32 +820,6 @@ function setMessage(type, text) {
   message.value = text
 }
 
-async function pollUntilAlive(timeoutMs = 60000, intervalMs = 1500) {
-  const deadline = Date.now() + timeoutMs
-  waitingAlive.value = true
-  waitingElapsed.value = 0
-  const startMs = Date.now()
-  const ticker = setInterval(() => {
-    waitingElapsed.value = Math.floor((Date.now() - startMs) / 1000)
-  }, 500)
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 800))
-    while (Date.now() < deadline) {
-      try {
-        await fetchStatus()
-        return true
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs))
-      }
-    }
-    return false
-  } finally {
-    clearInterval(ticker)
-    waitingAlive.value = false
-    waitingElapsed.value = 0
-  }
-}
-
 async function applyConfig(nextConfig) {
   const result = await validateConfig(nextConfig)
   if (!result.valid) {
@@ -862,7 +830,10 @@ async function applyConfig(nextConfig) {
   if (restart.status !== 'ok') {
     throw new Error(t('config.savedButRestartFailed', { error: restart.error || 'unknown error' }))
   }
-  const alive = await pollUntilAlive()
+  const alive = await pollUntilAlive(
+    fetchStatus,
+    bindPollState(waitingAlive, waitingElapsed),
+  )
   if (!alive) {
     throw new Error(t('config.serviceTimeout'))
   }

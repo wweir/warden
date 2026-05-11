@@ -310,6 +310,8 @@ import {
 	fetchStatus,
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
+import { cleanConfig } from "../config-utils.js";
+import { bindPollState, pollUntilAlive } from "../runtime-utils.js";
 
 const { t } = useI18n();
 
@@ -532,29 +534,6 @@ function deleteMapEntry(section, key) {
 	config.value[section] = { ...config.value[section] };
 }
 
-// clean config before sending: remove empty/null maps, strip __new_ keys from KV editors
-function cleanConfig(obj) {
-	if (obj === null || obj === undefined) return obj;
-	if (Array.isArray(obj)) return obj;
-	if (typeof obj !== "object") return obj;
-
-	const out = {};
-	for (const [k, v] of Object.entries(obj)) {
-		if (v === null || v === undefined) continue;
-		if (typeof v === "object" && !Array.isArray(v)) {
-			const cleaned = {};
-			for (const [ik, iv] of Object.entries(v)) {
-				if (ik.startsWith("__new_")) continue;
-				cleaned[ik] = cleanConfig(iv);
-			}
-			if (Object.keys(cleaned).length > 0) out[k] = cleaned;
-		} else {
-			out[k] = v;
-		}
-	}
-	return out;
-}
-
 // load config from server, reset dirty state
 async function load() {
 	loading.value = true;
@@ -603,33 +582,6 @@ function discard() {
 const waitingAlive = ref(false);
 const waitingElapsed = ref(0);
 
-async function pollUntilAlive(timeoutMs = 60000, intervalMs = 1500) {
-	const deadline = Date.now() + timeoutMs;
-	waitingAlive.value = true;
-	waitingElapsed.value = 0;
-	const startMs = Date.now();
-	const ticker = setInterval(() => {
-		waitingElapsed.value = Math.floor((Date.now() - startMs) / 1000);
-	}, 500);
-	try {
-		// first wait a short period so the old process has time to shut down
-		await new Promise((r) => setTimeout(r, 800));
-		while (Date.now() < deadline) {
-			try {
-				await fetchStatus();
-				return true;
-			} catch {
-				await new Promise((r) => setTimeout(r, intervalMs));
-			}
-		}
-		return false;
-	} finally {
-		clearInterval(ticker);
-		waitingAlive.value = false;
-		waitingElapsed.value = 0;
-	}
-}
-
 async function apply() {
 	applying.value = true;
 	message.value = "";
@@ -658,7 +610,10 @@ async function apply() {
 			return;
 		}
 		// step 4: poll until service is back up (max 60s)
-		const alive = await pollUntilAlive();
+		const alive = await pollUntilAlive(
+			fetchStatus,
+			bindPollState(waitingAlive, waitingElapsed),
+		);
 		if (!alive) {
 			error.value = t("config.serviceTimeout");
 			return;

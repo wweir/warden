@@ -954,6 +954,17 @@ import {
 } from "../api.js";
 import KeyValueEditor from "../components/KeyValueEditor.vue";
 import TagListEditor from "../components/TagListEditor.vue";
+import {
+  cleanConfig,
+  cloneData,
+  defaultServiceProtocolsForProvider,
+  normalizeLowerText,
+  normalizeServiceProtocols,
+  providerBackend,
+  providerFamily,
+  serviceProtocolsEqual,
+} from "../config-utils.js";
+import { bindPollState, pollUntilAlive } from "../runtime-utils.js";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -1383,24 +1394,6 @@ function createEmptyProviderConfig() {
   };
 }
 
-function normalizeText(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
-}
-
-function cloneData(value) {
-  return JSON.parse(JSON.stringify(value ?? {}));
-}
-
-function providerFamily(provider) {
-  return normalizeText(provider?.family || provider?.protocol);
-}
-
-function providerBackend(provider) {
-  return normalizeText(provider?.backend);
-}
-
 function inferAuthSource(provider) {
   if (!providerFamily(provider)) return "";
   if (providerBackend(provider) === "cliproxy") return "none";
@@ -1470,64 +1463,17 @@ function applyProviderAuthSource(provider, source) {
   }
 }
 
-function normalizeServiceProtocols(protocols) {
-  const out = [];
-  const seen = new Set();
-  for (const raw of protocols || []) {
-    const protocol = normalizeText(raw);
-    if (!protocol || seen.has(protocol)) continue;
-    seen.add(protocol);
-    out.push(protocol);
-    if (protocol === "responses_stateful" && !seen.has("responses_stateless")) {
-      seen.add("responses_stateless");
-      out.push("responses_stateless");
-    }
-  }
-  return out;
-}
-
-function defaultServiceProtocolsForProvider(provider) {
-  if (providerBackend(provider) === "cliproxy") {
-    return [];
-  }
-  switch (providerFamily(provider)) {
-    case "openai": {
-      const protocols = [
-        "chat",
-        "responses_stateless",
-        "responses_stateful",
-        "embeddings",
-      ];
-      if (provider?.anthropic_to_chat) protocols.push("anthropic");
-      return protocols;
-    }
-    case "anthropic":
-      return ["chat", "anthropic"];
-    case "copilot":
-      return ["chat"];
-    default:
-      return [];
-  }
-}
-
-function serviceProtocolsEqual(left, right) {
-  const a = normalizeServiceProtocols(left);
-  const b = normalizeServiceProtocols(right);
-  if (a.length !== b.length) return false;
-  return a.every((protocol, index) => protocol === b[index]);
-}
-
 function inferPresetID(provider) {
   const family = providerFamily(provider);
   const backend = providerBackend(provider);
-  const backendProvider = normalizeText(provider?.backend_provider);
+  const backendProvider = normalizeLowerText(provider?.backend_provider);
   const url = String(provider?.url || "").trim();
   if (family === "openai" && backend === "cliproxy" && backendProvider) {
     const match = providerPresets.value.find(
       (preset) =>
         preset.family === family &&
-        normalizeText(preset.backend) === backend &&
-        normalizeText(preset.backend_provider) === backendProvider,
+        normalizeLowerText(preset.backend) === backend &&
+        normalizeLowerText(preset.backend_provider) === backendProvider,
     );
     return match?.id || "";
   }
@@ -2066,28 +2012,6 @@ async function deleteCliproxyAuth(file) {
   }
 }
 
-function cleanConfig(obj) {
-  if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj;
-  if (typeof obj !== "object") return obj;
-
-  const out = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === null || value === undefined) continue;
-    if (typeof value === "object" && !Array.isArray(value)) {
-      const cleaned = {};
-      for (const [innerKey, innerValue] of Object.entries(value)) {
-        if (innerKey.startsWith("__new_")) continue;
-        cleaned[innerKey] = cleanConfig(innerValue);
-      }
-      if (Object.keys(cleaned).length > 0) out[key] = cleaned;
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
 function pruneProviderReferences(nextConfig, targetProvider) {
   if (!nextConfig?.route || typeof nextConfig.route !== "object") return;
 
@@ -2204,32 +2128,6 @@ function discard() {
   load();
 }
 
-async function pollUntilAlive(timeoutMs = 60000, intervalMs = 1500) {
-  const deadline = Date.now() + timeoutMs;
-  waitingAlive.value = true;
-  waitingElapsed.value = 0;
-  const startMs = Date.now();
-  const ticker = setInterval(() => {
-    waitingElapsed.value = Math.floor((Date.now() - startMs) / 1000);
-  }, 500);
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    while (Date.now() < deadline) {
-      try {
-        await fetchStatus();
-        return true;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      }
-    }
-    return false;
-  } finally {
-    clearInterval(ticker);
-    waitingAlive.value = false;
-    waitingElapsed.value = 0;
-  }
-}
-
 async function apply() {
   saving.value = true;
   message.value = "";
@@ -2289,7 +2187,7 @@ async function apply() {
       nextProviderConfig.family === "openai"
         ? providerBackend(nextProviderConfig)
         : "";
-    nextProviderConfig.backend_provider = normalizeText(
+    nextProviderConfig.backend_provider = normalizeLowerText(
       nextProviderConfig.backend_provider,
     );
     nextProviderConfig.service_protocols = normalizeServiceProtocols(
@@ -2322,7 +2220,10 @@ async function apply() {
       return;
     }
 
-    const alive = await pollUntilAlive();
+    const alive = await pollUntilAlive(
+      fetchStatus,
+      bindPollState(waitingAlive, waitingElapsed),
+    );
     if (!alive) {
       error.value = t("config.serviceTimeout");
       return;
@@ -2384,7 +2285,10 @@ async function deleteProvider() {
       return;
     }
 
-    const alive = await pollUntilAlive();
+    const alive = await pollUntilAlive(
+      fetchStatus,
+      bindPollState(waitingAlive, waitingElapsed),
+    );
     if (!alive) {
       error.value = t("config.serviceTimeout");
       return;
