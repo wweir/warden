@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	sdkcliproxy "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+	sdkcliproxy "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/wweir/warden/config"
 	"gopkg.in/yaml.v3"
 )

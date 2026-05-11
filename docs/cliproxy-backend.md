@@ -1,6 +1,6 @@
 # CLIProxy Backend
 
-Warden can route to a `github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy` deployment as an OpenAI-compatible upstream.
+Warden can route to a `github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy` deployment as an OpenAI-compatible upstream.
 
 This integration deliberately does not add `codex`, `gemini`, or `claude-cli` as Warden provider families. In Warden, `provider.*.family` describes the HTTP adapter Warden uses to talk to the upstream. The `cliproxy` process owns CLI provider authentication, token refresh, and provider-specific execution.
 
@@ -39,13 +39,17 @@ url = "http://127.0.0.1:18741/v1"
 service_protocols = ["chat"]
 ```
 
-When `cliproxy.enabled` is true, Warden defaults `cliproxy.auth_dir` to `/etc/warden` when omitted, then builds a minimal SDK config for `github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy`, starts it before the main gateway listener, waits for `/healthz`, and shuts it down before process restart or exit.
+When `cliproxy.enabled` is true, Warden defaults `cliproxy.auth_dir` to `/etc/warden` when omitted, then builds a minimal SDK config for `github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy`, starts it before the main gateway listener, waits for `/healthz`, and shuts it down before process restart or exit.
+
+Embedded Warden runs CLIProxyAPI v7 in local `auth_dir` mode, not Home control-plane mode. In this mode CLIProxyAPI loads auth JSON files through its file token store, starts the core auth auto-refresh loop, and uses the same store to persist refreshed token metadata back to the backing file. A successful refresh is applied to the in-memory auth manager immediately before the file watcher observes the write. If the filesystem write fails, the current CLIProxyAPI SDK can still keep the refreshed in-memory state; treat that as a persistence failure, not durable credential rotation.
 
 The provider admin page can import a complete CLIProxyAPI auth JSON file into this directory. The imported content is written as a plain `.json` file under `cliproxy.auth_dir`; Warden does not convert it into provider config fields.
 
 Warden validates imported auth files offline. It rejects malformed JSON, non-object payloads, and files without a non-empty `type` field. It also reports a structural status for existing and newly imported files by checking common credential indicators, disabled state, and locally encoded expiration fields. This status does not prove that the upstream account is still accepted online, because Warden does not refresh tokens or call provider APIs during import.
 
 The admin page also exposes a manual online validation action. The browser only calls Warden's admin API; Warden sends the actual validation request from the backend through the same provider request path used for normal OpenAI-compatible requests. The request targets the current saved cliproxy provider and a selected or first known model with a minimal Responses payload: `model`, `input: "ping"`, and `store: false`. This validates that the provider's CLIProxyAPI credential pool can serve a real request. It does not pin the request to a specific auth file because CLIProxyAPI's normal HTTP request surface does not expose a per-file auth selector.
+
+For each listed auth file, the admin page asynchronously asks Warden for sanitized usage state. Warden reads the selected auth JSON and returns non-secret status data. If the auth file itself lacks usage metadata, Warden also merges the latest matching cliproxy provider runtime body recorded by selector suppression, such as Codex `usage_limit_reached` reset fields from a recent 429 or auth-unavailable errors from a recent 401/503. Newer auth errors override older quota data so the page does not present stale limit windows as current usage. The summary prioritizes the account plan, current auth state, 5-hour quota, weekly quota, reset time, quota cooldown, and remaining credit fields when those fields are present; the response also passes through whitelisted usage JSON for the detail tooltip. It does not return tokens, cookies, API keys, or raw auth metadata. Results are cached briefly by auth file path so page refreshes do not repeatedly parse unchanged files; the cache is invalidated immediately when file mtime or size changes, including after CLIProxyAPI writes refreshed token metadata.
 
 The embedded service endpoint is derived from the first `backend: cliproxy` provider URL. All cliproxy-backed providers must point to the same `http://loopback:port/v1` endpoint because Warden starts one embedded cliproxy service per process.
 

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -25,7 +26,7 @@ func TestProbeProviderModelProtocolSupportsAnthropicToChatProvider(t *testing.T)
 	}))
 	defer server.Close()
 
-	probe := probeProviderModelProtocol(nil, &config.ProviderConfig{
+	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:             server.URL,
 		Protocol:        "openai",
 		APIKey:          config.SecretString("token"),
@@ -60,7 +61,7 @@ func TestProbeProviderModelProtocolChatUsesMinimalPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	probe := probeProviderModelProtocol(nil, &config.ProviderConfig{
+	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:      server.URL,
 		Protocol: "openai",
 		APIKey:   config.SecretString("token"),
@@ -101,7 +102,7 @@ func TestProbeProviderModelProtocolStatefulResponsesStoresFirstResponse(t *testi
 	}))
 	defer server.Close()
 
-	probe := probeProviderModelProtocol(nil, &config.ProviderConfig{
+	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:      server.URL,
 		Protocol: "openai",
 		APIKey:   config.SecretString("token"),

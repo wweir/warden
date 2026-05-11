@@ -43,6 +43,8 @@ type Handler struct {
 	configHash         *string
 	configMu           sync.Mutex
 	cliproxyAuthMu     sync.Mutex
+	cliproxyUsageMu    sync.Mutex
+	cliproxyUsageCache map[string]cliproxyAuthUsageCacheEntry
 	selector           Selector
 	broadcaster        Broadcaster
 	reloadFn           func() error
@@ -55,6 +57,7 @@ func NewHandler(deps Deps) *Handler {
 		cfg:                deps.Cfg,
 		configPath:         deps.ConfigPath,
 		configHash:         deps.ConfigHash,
+		cliproxyUsageCache: map[string]cliproxyAuthUsageCacheEntry{},
 		selector:           deps.Selector,
 		broadcaster:        deps.Broadcaster,
 		reloadFn:           deps.ReloadFn,

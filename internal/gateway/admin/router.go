@@ -93,6 +93,9 @@ func (h *Handler) RegisterRoutes(router *httprouter.Router) {
 	mux.HandleFunc("POST /api/cliproxy/auth-files/verify", func(w http.ResponseWriter, r *http.Request) {
 		h.HandleCLIProxyAuthFileVerify(w, r, nil)
 	})
+	mux.HandleFunc("GET /api/cliproxy/auth-files/usage", func(w http.ResponseWriter, r *http.Request) {
+		h.HandleCLIProxyAuthFileUsage(w, r, nil)
+	})
 	mux.HandleFunc("POST /api/providers/protocols/detect", func(w http.ResponseWriter, r *http.Request) {
 		h.HandleProviderProtocolDetect(w, r, nil)
 	})

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/wweir/warden/config"
 )
 
@@ -115,6 +115,12 @@ func TestBuildRuntimeConfigUsesCLIProxyProxy(t *testing.T) {
 	}
 	if got := runtimeCfg.MaxRetryCredentials; got != 3 {
 		t.Fatalf("max-retry-credentials = %d, want 3", got)
+	}
+	if runtimeCfg.Home.Enabled {
+		t.Fatal("home.enabled = true, want false so auth_dir refreshes persist to local files")
+	}
+	if got := runtimeCfg.AuthDir; got != "/tmp/auth" {
+		t.Fatalf("auth-dir = %q, want /tmp/auth", got)
 	}
 }
 

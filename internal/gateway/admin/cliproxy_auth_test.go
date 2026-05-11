@@ -1,16 +1,20 @@
 package admin
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wweir/warden/config"
+	sel "github.com/wweir/warden/internal/selector"
 )
 
 func TestHandleCLIProxyAuthFileCreateWritesAuthJSON(t *testing.T) {
@@ -288,6 +292,344 @@ func TestHandleCLIProxyAuthFileDeleteRejectsUnsafeFilename(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
+}
+
+func TestHandleCLIProxyAuthFileUsageReadsSanitizedState(t *testing.T) {
+	authDir := t.TempDir()
+	content := `{
+		"type":"codex",
+		"label":"team-a",
+		"email":"user@example.com",
+		"access_token":"secret-token",
+		"plan_type":"plus",
+		"status":"active",
+		"reset_at":"2026-05-10T13:00:00Z",
+		"usage":{
+			"five_hour":{"used":12,"limit":300,"reset_at":"2026-05-10T12:00:00Z"},
+			"weekly":{"used":120,"limit":900,"reset_at":"2026-05-12T00:00:00Z"}
+		},
+		"quota":{"exceeded":true,"reason":"quota","next_recover_at":"2026-05-10T12:00:00Z","backoff_level":2},
+		"model_states":{
+			"gpt-5.5":{"status":"error","status_message":"quota exhausted","unavailable":true,"quota":{"exceeded":true,"reason":"quota"}}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(authDir, "codex-team.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "secret-token") {
+		t.Fatalf("usage response leaked access token: %s", body)
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Provider != "codex" || resp.AccountInfo != "user@example.com" {
+		t.Fatalf("usage summary = %#v, want provider/plan/account", resp)
+	}
+	if resp.Status != "warning" {
+		t.Fatalf("status = %q, want warning", resp.Status)
+	}
+	summary := usageSummaryMap(resp.Summary)
+	if summary["plan"] != "plus" || summary["5h"] != "12/300" || summary["5h_reset"] != "2026-05-10T12:00:00Z" || summary["weekly"] != "120/900" || summary["weekly_reset"] != "2026-05-12T00:00:00Z" || summary["quota"] != "exceeded" {
+		t.Fatalf("summary = %#v, want plan and quota metrics", resp.Summary)
+	}
+	if string(resp.Data["quota"]) == "" || string(resp.Data["model_states"]) == "" || string(resp.Data["reset_at"]) != `"2026-05-10T13:00:00Z"` {
+		t.Fatalf("data = %#v, want quota and model_states passthrough", resp.Data)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsageCacheInvalidatesWhenFileChanges(t *testing.T) {
+	authDir := t.TempDir()
+	filePath := filepath.Join(authDir, "codex-team.json")
+	firstContent := []byte(`{"type":"codex","email":"user@example.com","plan_type":"first","usage":{"remaining":1},"quota":{"exceeded":true,"reason":"first"}}`)
+	if err := os.WriteFile(filePath, firstContent, 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		},
+	})
+
+	req1 := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	rec1 := httptest.NewRecorder()
+	handler.HandleCLIProxyAuthFileUsage(rec1, req1, nil)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want %d; body=%s", rec1.Code, http.StatusOK, rec1.Body.String())
+	}
+
+	reqCached := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	recCached := httptest.NewRecorder()
+	handler.HandleCLIProxyAuthFileUsage(recCached, reqCached, nil)
+	if recCached.Code != http.StatusOK {
+		t.Fatalf("cached status = %d, want %d; body=%s", recCached.Code, http.StatusOK, recCached.Body.String())
+	}
+	var cachedResp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(recCached.Body.Bytes(), &cachedResp); err != nil {
+		t.Fatalf("decode cached response: %v", err)
+	}
+	if !cachedResp.Cached {
+		t.Fatalf("cached = false, want true before file changes")
+	}
+
+	secondContent := []byte(`{"type":"codex","email":"user@example.com","plan_type":"second","usage":{"remaining":2},"quota":{"exceeded":true,"reason":"second"}}`)
+	if err := os.WriteFile(filePath, secondContent, 0o600); err != nil {
+		t.Fatalf("rewrite auth file: %v", err)
+	}
+	future := time.Now().Add(time.Second)
+	if err := os.Chtimes(filePath, future, future); err != nil {
+		t.Fatalf("touch auth file: %v", err)
+	}
+	req2 := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	rec2 := httptest.NewRecorder()
+	handler.HandleCLIProxyAuthFileUsage(rec2, req2, nil)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want %d; body=%s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec2.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Cached {
+		t.Fatalf("cached = true, want false after file changes")
+	}
+	summary := usageSummaryMap(resp.Summary)
+	if summary["plan"] != "second" {
+		t.Fatalf("summary = %#v, want refreshed plan=second", resp.Summary)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsageRedactsAPIKeyAccountInfo(t *testing.T) {
+	authDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(authDir, "openai-key.json"), []byte(`{"type":"openai","api_key":"sk-secret","usage":{"remaining":10}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=openai-key.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "sk-secret") {
+		t.Fatalf("usage response leaked api key: %s", body)
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.AccountKind != "api_key" || resp.AccountInfo != "configured" {
+		t.Fatalf("account = %q/%q, want api_key/configured", resp.AccountKind, resp.AccountInfo)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsageExtractsCodexPlanFromIDToken(t *testing.T) {
+	authDir := t.TempDir()
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"https://api.openai.com/auth":{"chatgpt_plan_type":"plus"}}`))
+	token := "header." + claims + ".signature"
+	if err := os.WriteFile(filepath.Join(authDir, "codex-oauth.json"), []byte(`{"type":"codex","email":"user@example.com","id_token":"`+token+`"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-oauth.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, token) {
+		t.Fatalf("usage response leaked id token: %s", body)
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("status = %q, want ok; note=%q", resp.Status, resp.Note)
+	}
+	if len(resp.Summary) != 1 || resp.Summary[0].Name != "plan" || resp.Summary[0].Value != "plus" {
+		t.Fatalf("summary = %#v, want plan plus", resp.Summary)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsageWithoutMetadataIsQuietUnknown(t *testing.T) {
+	authDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(authDir, "codex-basic.json"), []byte(`{"type":"codex","email":"user@example.com","access_token":"secret"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-basic.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "unknown" || resp.Note != "" {
+		t.Fatalf("status/note = %q/%q, want quiet unknown", resp.Status, resp.Note)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsageMergesRuntimeQuotaFromSelector(t *testing.T) {
+	authDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(authDir, "codex-team.json"), []byte(`{"type":"codex","email":"user@example.com","access_token":"secret","plan_type":"plus"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	cfg := &config.ConfigStruct{
+		CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		Provider: map[string]*config.ProviderConfig{
+			"codex-pro-lite": {
+				Name:            "codex-pro-lite",
+				Family:          config.ProviderProtocolOpenAI,
+				Backend:         config.ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+			},
+		},
+	}
+	selector := sel.NewSelector(cfg)
+	resetAt := time.Date(2026, 5, 10, 6, 30, 0, 0, time.UTC).Unix()
+	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+		Code: http.StatusTooManyRequests,
+		Body: `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":` + strconv.FormatInt(resetAt, 10) + `,"resets_in_seconds":1200}}`,
+	}, 10*time.Millisecond, "pre_stream")
+	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+		Code: http.StatusTooManyRequests,
+		Body: `{"error":{"code":"model_cooldown","message":"All credentials for model gpt-5.5 are cooling down via provider codex","model":"gpt-5.5","provider":"codex","reset_seconds":1200,"reset_time":"20m0s"}}`,
+	}, 10*time.Millisecond, "pre_stream")
+	handler := NewHandler(Deps{
+		Cfg:      cfg,
+		Selector: selector,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "secret") {
+		t.Fatalf("usage response leaked credential: %s", body)
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	summary := usageSummaryMap(resp.Summary)
+	if summary["plan"] != "plus" || summary["5h"] != "limited" || summary["5h_reset"] != "2026-05-10T06:30:00Z" {
+		t.Fatalf("summary = %#v, want runtime 5h quota data", resp.Summary)
+	}
+	if resp.Status != "warning" {
+		t.Fatalf("status = %q, want warning", resp.Status)
+	}
+	if string(resp.Data["runtime_quota"]) == "" {
+		t.Fatalf("data = %#v, want runtime_quota", resp.Data)
+	}
+}
+
+func TestHandleCLIProxyAuthFileUsagePrefersNewerRuntimeAuthError(t *testing.T) {
+	authDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(authDir, "codex-team.json"), []byte(`{"type":"codex","email":"user@example.com","access_token":"secret","plan_type":"plus"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	cfg := &config.ConfigStruct{
+		CLIProxy: &config.CLIProxyConfig{AuthDir: authDir},
+		Provider: map[string]*config.ProviderConfig{
+			"codex-pro-lite": {
+				Name:            "codex-pro-lite",
+				Family:          config.ProviderProtocolOpenAI,
+				Backend:         config.ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+			},
+		},
+	}
+	selector := sel.NewSelector(cfg)
+	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+		Code: http.StatusTooManyRequests,
+		Body: `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_in_seconds":1200}}`,
+	}, 10*time.Millisecond, "pre_stream")
+	time.Sleep(time.Millisecond)
+	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+		Code: http.StatusUnauthorized,
+		Body: `{"error":{"message":"Your authentication token has been invalidated. Please try signing in again.","type":"authentication_error","code":"auth_unavailable"}}`,
+	}, 10*time.Millisecond, "pre_stream")
+	handler := NewHandler(Deps{
+		Cfg:      cfg,
+		Selector: selector,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/_admin/api/cliproxy/auth-files/usage?filename=codex-team.json", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleCLIProxyAuthFileUsage(rec, req, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp cliproxyAuthFileUsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	summary := usageSummaryMap(resp.Summary)
+	if summary["auth"] != "invalidated" {
+		t.Fatalf("summary = %#v, want auth invalidated", resp.Summary)
+	}
+	if _, ok := summary["5h"]; ok {
+		t.Fatalf("summary = %#v, should not show stale 5h limit after newer auth error", resp.Summary)
+	}
+	if resp.Status != "error" {
+		t.Fatalf("status = %q, want error", resp.Status)
+	}
+	if string(resp.Data["runtime_auth"]) == "" {
+		t.Fatalf("data = %#v, want runtime_auth", resp.Data)
+	}
+}
+
+func usageSummaryMap(summary []cliproxyAuthUsageMetric) map[string]string {
+	values := make(map[string]string, len(summary))
+	for _, item := range summary {
+		values[item.Name] = item.Value
+	}
+	return values
 }
 
 func TestHandleCLIProxyAuthFileCreateRejectsMissingType(t *testing.T) {
