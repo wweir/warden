@@ -239,55 +239,32 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		}
 
 		observation := tokenusagepkg.Missing(tokenusagepkg.SourceReportedJSON)
-		if resp.StatusCode == http.StatusOK && inspectableBody {
-			if stream {
-				observation = tokenusagepkg.FromStream(serviceProtocol, provCfg.Protocol, decodedRespBody)
-			} else {
-				if serviceProtocol == config.ServiceProtocolEmbeddings {
-					observation = tokenusagepkg.FromEmbeddingsJSON(logResp)
-				} else {
-					observation = tokenusagepkg.FromJSON(logResp)
-				}
-			}
+		hasTokenUsage := resp.StatusCode == http.StatusOK && inspectableBody
+		if hasTokenUsage {
+			observation = observeProxyTokenUsage(stream, serviceProtocol, provCfg.Protocol, decodedRespBody, logResp)
 			if h.deps.RecordTokenMetrics != nil {
 				h.deps.RecordTokenMetrics(metricLabels, observation, durationMs)
 			}
 		}
 
 		if h.deps.RecordAndBroadcast != nil {
-			rec := reqlog.Record{
-				Timestamp:   startTime,
-				RequestID:   reqID,
-				Route:       route.Prefix,
-				Endpoint:    r.URL.Path,
-				Model:       model,
-				APIKey:      requestctxpkg.APIKeyNameFromContext(r.Context()),
-				Provider:    provCfg.Name,
-				UserAgent:   r.UserAgent(),
-				DurationMs:  durationMs,
-				Fingerprint: fingerprintpkg.BuildFingerprint(reqBody),
-				Request:     reqBody,
-				Response:    logResp,
-				Failovers:   currentFailovers(),
-			}
-			if stream && upErr == nil {
-				ttft := latency.Milliseconds()
-				rec.TTFTMs = &ttft
-			}
-			if resp.StatusCode == http.StatusOK && inspectableBody {
-				rec.TokenUsage = &reqlog.TokenUsage{
-					PromptTokens:     observation.PromptTokens,
-					CompletionTokens: observation.CompletionTokens,
-					CacheTokens:      observation.CacheTokens,
-					TotalTokens:      observation.TotalTokens,
-					Source:           observation.SourceLabel(),
-					Completeness:     observation.CompletenessLabel(),
-				}
-			}
-			if upErr != nil {
-				rec.Error = upErr.Error()
-			}
-			h.deps.RecordAndBroadcast(rec)
+			h.deps.RecordAndBroadcast(buildProxyRecord(proxyRecordInput{
+				startTime:     startTime,
+				requestID:     reqID,
+				route:         route,
+				request:       r,
+				model:         model,
+				provider:      provCfg.Name,
+				reqBody:       reqBody,
+				logResp:       logResp,
+				durationMs:    durationMs,
+				latency:       latency,
+				stream:        stream,
+				hasTokenUsage: hasTokenUsage,
+				observation:   observation,
+				upErr:         upErr,
+				failovers:     currentFailovers(),
+			}))
 		}
 		return
 	}
@@ -306,104 +283,6 @@ func (h *Handler) HandleModels(w http.ResponseWriter, route *config.RouteConfig)
 		"data":   models,
 		"models": codexModels,
 	})
-}
-
-func codexCompatibleModels(models []json.RawMessage) []json.RawMessage {
-	out := make([]json.RawMessage, 0, len(models))
-	for _, model := range models {
-		entry, ok := modelObject(model)
-		if !ok {
-			out = append(out, model)
-			continue
-		}
-		id := rawString(entry["id"])
-		if id == "" {
-			id = rawString(entry["slug"])
-		}
-		if id == "" {
-			out = append(out, model)
-			continue
-		}
-
-		setStringDefault(entry, "slug", id)
-		setStringDefault(entry, "display_name", id)
-		setStringDefault(entry, "description", "")
-		setStringDefault(entry, "default_reasoning_level", "medium")
-		setRawDefault(entry, "supported_reasoning_levels", codexReasoningLevels)
-		setStringDefault(entry, "shell_type", "shell_command")
-		setStringDefault(entry, "visibility", "list")
-		setRawDefault(entry, "supported_in_api", json.RawMessage("true"))
-		setRawDefault(entry, "priority", json.RawMessage("0"))
-		setRawDefault(entry, "additional_speed_tiers", json.RawMessage("[]"))
-		setRawDefault(entry, "availability_nux", json.RawMessage("null"))
-		setRawDefault(entry, "upgrade", json.RawMessage("null"))
-		setStringDefault(entry, "base_instructions", "")
-		setRawDefault(entry, "model_messages", json.RawMessage("{}"))
-		setRawDefault(entry, "supports_reasoning_summaries", json.RawMessage("true"))
-		setStringDefault(entry, "default_reasoning_summary", "none")
-		setRawDefault(entry, "support_verbosity", json.RawMessage("true"))
-		setStringDefault(entry, "default_verbosity", "medium")
-		setStringDefault(entry, "apply_patch_tool_type", "freeform")
-		setStringDefault(entry, "web_search_tool_type", "text")
-		setRawDefault(entry, "truncation_policy", json.RawMessage(`{"mode":"tokens","limit":10000}`))
-		setRawDefault(entry, "supports_parallel_tool_calls", json.RawMessage("true"))
-		setRawDefault(entry, "supports_image_detail_original", json.RawMessage("false"))
-		setRawDefault(entry, "context_window", json.RawMessage("128000"))
-		setRawDefault(entry, "max_context_window", json.RawMessage("128000"))
-		setRawDefault(entry, "effective_context_window_percent", json.RawMessage("95"))
-		setRawDefault(entry, "experimental_supported_tools", json.RawMessage("[]"))
-		setRawDefault(entry, "input_modalities", json.RawMessage(`["text"]`))
-		setRawDefault(entry, "supports_search_tool", json.RawMessage("true"))
-
-		encoded, err := json.Marshal(entry)
-		if err != nil {
-			out = append(out, model)
-			continue
-		}
-		out = append(out, encoded)
-	}
-	return out
-}
-
-var codexReasoningLevels = json.RawMessage(`[
-	{"effort":"low","description":"Fast responses with lighter reasoning"},
-	{"effort":"medium","description":"Balances speed and reasoning depth for everyday tasks"},
-	{"effort":"high","description":"Greater reasoning depth for complex problems"},
-	{"effort":"xhigh","description":"Extra high reasoning depth for complex problems"}
-]`)
-
-func modelObject(model json.RawMessage) (map[string]json.RawMessage, bool) {
-	var entry map[string]json.RawMessage
-	if err := json.Unmarshal(model, &entry); err != nil {
-		return nil, false
-	}
-	return entry, true
-}
-
-func rawString(raw json.RawMessage) string {
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
-}
-
-func setStringDefault(entry map[string]json.RawMessage, key, value string) {
-	if len(entry[key]) > 0 {
-		return
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	entry[key] = encoded
-}
-
-func setRawDefault(entry map[string]json.RawMessage, key string, value json.RawMessage) {
-	if len(entry[key]) > 0 {
-		return
-	}
-	entry[key] = value
 }
 
 func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceProtocol, explicitProvider string) *config.ProviderConfig {
@@ -429,4 +308,73 @@ func readBody(r *http.Request) ([]byte, error) {
 	}
 	defer r.Body.Close()
 	return io.ReadAll(r.Body)
+}
+
+// observeProxyTokenUsage decides how to derive token usage from a successful
+// proxy response. The caller must already have verified that the response is
+// 200 and inspectableBody (decodeErr == nil).
+func observeProxyTokenUsage(stream bool, serviceProtocol, providerProtocol string, decodedBody, logResp []byte) tokenusagepkg.Observation {
+	if stream {
+		return tokenusagepkg.FromStream(serviceProtocol, providerProtocol, decodedBody)
+	}
+	if serviceProtocol == config.ServiceProtocolEmbeddings {
+		return tokenusagepkg.FromEmbeddingsJSON(logResp)
+	}
+	return tokenusagepkg.FromJSON(logResp)
+}
+
+// proxyRecordInput aggregates the per-request inputs to buildProxyRecord so
+// the call site stays at one line.
+type proxyRecordInput struct {
+	startTime     time.Time
+	requestID     string
+	route         *config.RouteConfig
+	request       *http.Request
+	model         string
+	provider      string
+	reqBody       []byte
+	logResp       []byte
+	durationMs    int64
+	latency       time.Duration
+	stream        bool
+	hasTokenUsage bool
+	observation   tokenusagepkg.Observation
+	upErr         *sel.UpstreamError
+	failovers     []reqlog.Failover
+}
+
+func buildProxyRecord(in proxyRecordInput) reqlog.Record {
+	rec := reqlog.Record{
+		Timestamp:   in.startTime,
+		RequestID:   in.requestID,
+		Route:       in.route.Prefix,
+		Endpoint:    in.request.URL.Path,
+		Model:       in.model,
+		APIKey:      requestctxpkg.APIKeyNameFromContext(in.request.Context()),
+		Provider:    in.provider,
+		UserAgent:   in.request.UserAgent(),
+		DurationMs:  in.durationMs,
+		Fingerprint: fingerprintpkg.BuildFingerprint(in.reqBody),
+		Request:     in.reqBody,
+		Response:    in.logResp,
+		Failovers:   in.failovers,
+	}
+	if in.stream && in.upErr == nil {
+		ttft := in.latency.Milliseconds()
+		rec.TTFTMs = &ttft
+	}
+	if in.hasTokenUsage {
+		rec.TokenUsage = &reqlog.TokenUsage{
+			PromptTokens:     in.observation.PromptTokens,
+			CompletionTokens: in.observation.CompletionTokens,
+			CacheTokens:      in.observation.CacheTokens,
+			TotalTokens:      in.observation.TotalTokens,
+			Source:           in.observation.SourceLabel(),
+			Completeness:     in.observation.CompletenessLabel(),
+		}
+	}
+	if in.upErr != nil {
+		rec.Error = in.upErr.Error()
+	}
+	return rec
 }
