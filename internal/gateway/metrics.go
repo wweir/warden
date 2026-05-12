@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
+	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	requestctxpkg "github.com/wweir/warden/internal/gateway/requestctx"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
 	tokenusagepkg "github.com/wweir/warden/internal/gateway/tokenusage"
@@ -97,4 +98,17 @@ func (g *Gateway) RegisterMetricsRoutes(router interface {
 		telemetrypkg.UpdateProviderMetrics(g.selector.ProviderStatuses())
 		telemetrypkg.MetricsHandler().ServeHTTP(w, r)
 	})
+}
+
+// shouldRecordUpstreamStreamError reports whether err should count against
+// provider health. Client-side context cancellations are excluded so a
+// disconnect doesn't poison the selector.
+func shouldRecordUpstreamStreamError(r *http.Request, err error) bool {
+	if bridgepkg.ErrorSourceOf(err) != bridgepkg.SourceUpstream {
+		return false
+	}
+	if r != nil && r.Context().Err() != nil {
+		return false
+	}
+	return true
 }

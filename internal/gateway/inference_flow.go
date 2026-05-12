@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wweir/warden/config"
-	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 	inferencepkg "github.com/wweir/warden/internal/gateway/inference"
 	observepkg "github.com/wweir/warden/internal/gateway/observe"
 	telemetrypkg "github.com/wweir/warden/internal/gateway/telemetry"
@@ -150,7 +149,7 @@ func (g *Gateway) handleInferenceStreamRelay(
 	errMsg := ""
 	if streamErr != nil {
 		errMsg = streamErr.Error()
-		if bridgepkg.ErrorSourceOf(streamErr) == bridgepkg.SourceUpstream {
+		if shouldRecordUpstreamStreamError(r, streamErr) {
 			g.selector.RecordOutcomeWithSource(session.provider.Name, streamErr, latency, "in_stream")
 			g.RecordStreamErrorMetric(session.metricLabels, "in_stream")
 		}

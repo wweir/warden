@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,44 @@ import (
 	"github.com/wweir/warden/config"
 	bridgepkg "github.com/wweir/warden/internal/gateway/bridge"
 )
+
+func TestShouldRecordUpstreamStreamErrorIgnoresCanceledClientRequest(t *testing.T) {
+	upstreamErr := mustUpstreamRelayError(t)
+
+	activeReq := httptest.NewRequest(http.MethodPost, "/openai/responses", nil)
+	if !shouldRecordUpstreamStreamError(activeReq, upstreamErr) {
+		t.Fatal("active request should record upstream stream errors")
+	}
+
+	canceledReq := httptest.NewRequest(http.MethodPost, "/openai/responses", nil)
+	ctx, cancel := context.WithCancel(canceledReq.Context())
+	cancel()
+	canceledReq = canceledReq.WithContext(ctx)
+	if shouldRecordUpstreamStreamError(canceledReq, upstreamErr) {
+		t.Fatal("canceled client request should not record upstream stream errors")
+	}
+
+	if shouldRecordUpstreamStreamError(activeReq, errors.New("plain error")) {
+		t.Fatal("non-relay error should not be recorded as upstream")
+	}
+	if shouldRecordUpstreamStreamError(activeReq, nil) {
+		t.Fatal("nil error should not be recorded")
+	}
+}
+
+// mustUpstreamRelayError builds a bridgepkg.SourceUpstream relay error via an
+// empty SSE input — RelayRawStream sees no terminator and tags it as upstream.
+func mustUpstreamRelayError(t *testing.T) error {
+	t.Helper()
+	_, err := bridgepkg.RelayRawStream(strings.NewReader(""), httptest.NewRecorder())
+	if err == nil {
+		t.Fatal("setup: RelayRawStream() = nil error, want upstream error")
+	}
+	if bridgepkg.ErrorSourceOf(err) != bridgepkg.SourceUpstream {
+		t.Fatalf("setup: ErrorSourceOf(%v) = %q, want %q", err, bridgepkg.ErrorSourceOf(err), bridgepkg.SourceUpstream)
+	}
+	return err
+}
 
 func TestGatewayAnthropicToChatStreamRelaysFirstFrameWithoutBuffering(t *testing.T) {
 	firstChunkSent := make(chan struct{})
