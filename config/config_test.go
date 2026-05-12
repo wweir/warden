@@ -450,7 +450,7 @@ func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "responses_to_chat requires protocol 'openai'") {
+	if !strings.Contains(err.Error(), "responses_to_chat requires family 'openai'") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -478,7 +478,7 @@ func TestValidateAnthropicToChatRequiresOpenAI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "anthropic_to_chat requires protocol 'openai'") {
+	if !strings.Contains(err.Error(), "anthropic_to_chat requires family 'openai'") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

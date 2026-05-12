@@ -15,8 +15,11 @@ const ROUTE_PROTOCOLS = new Set(["chat", "responses", "anthropic"]);
 function defaultServiceProtocols(provider) {
   const family = normalizeText(provider?.family || provider?.protocol);
   switch (family) {
-    case "anthropic":
-      return ["chat", "anthropic"];
+    case "anthropic": {
+      const protocols = ["chat", "anthropic"];
+      if (provider?.anthropic_to_responses) protocols.push("responses");
+      return protocols;
+    }
     case "openai": {
       const protocols = ["chat", "responses", "embeddings"];
       if (provider?.anthropic_to_chat) protocols.push("anthropic");

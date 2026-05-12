@@ -30,13 +30,14 @@ type providerFormPresetMeta struct {
 }
 
 type providerFormServiceProtocolTemplateMeta struct {
-	ID               string   `json:"id"`
-	Title            string   `json:"title"`
-	Summary          string   `json:"summary"`
-	Families         []string `json:"families,omitempty"`
-	Backends         []string `json:"backends,omitempty"`
-	ServiceProtocols []string `json:"service_protocols"`
-	AnthropicToChat  bool     `json:"anthropic_to_chat,omitempty"`
+	ID                   string   `json:"id"`
+	Title                string   `json:"title"`
+	Summary              string   `json:"summary"`
+	Families             []string `json:"families,omitempty"`
+	Backends             []string `json:"backends,omitempty"`
+	ServiceProtocols     []string `json:"service_protocols"`
+	AnthropicToChat      bool     `json:"anthropic_to_chat,omitempty"`
+	AnthropicToResponses bool     `json:"anthropic_to_responses,omitempty"`
 }
 
 func (h *Handler) HandleProviderFormMeta(w http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
@@ -158,6 +159,15 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				Backends:         []string{""},
 				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolAnthropic},
 				AnthropicToChat:  true,
+			},
+			{
+				ID:                   "responses_via_messages",
+				Title:                "Responses via Messages",
+				Summary:              "Expose Responses through an Anthropic /messages upstream (stateless only).",
+				Families:             []string{config.ProviderProtocolAnthropic},
+				Backends:             []string{""},
+				ServiceProtocols:     []string{config.RouteProtocolChat, config.RouteProtocolAnthropic, config.RouteProtocolResponses},
+				AnthropicToResponses: true,
 			},
 		},
 	}

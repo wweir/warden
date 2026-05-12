@@ -317,6 +317,8 @@ export default {
 			"Route stateless responses to upstream /chat/completions endpoint (function-tools subset only)",
 		anthropicToChatHint:
 			"Route anthropic /messages to upstream /chat/completions endpoint (text + function-tools subset only)",
+		anthropicToResponsesHint:
+			"Route Responses to upstream Anthropic /messages endpoint (stateless only; previous_response_id requests return 400)",
 		clearField: "Clear",
 	},
 	logs: {
@@ -530,6 +532,9 @@ export default {
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages Compatible",
 		interfaceTemplate_anthropic_bridge_desc:
 			"Serve Anthropic /messages through an OpenAI-compatible provider and enable anthropic_to_chat.",
+		interfaceTemplate_responses_via_messages: "Responses via Anthropic Messages",
+		interfaceTemplate_responses_via_messages_desc:
+			"Serve stateless Responses through an Anthropic /messages provider; previous_response_id requests return 400.",
 		interfaceTemplateCustom: "Custom Interfaces",
 		interfaceTemplateCustomDesc: "Edit the interface list and compatibility switches directly for unusual upstreams.",
 		customInterfacesSection: "Custom Interface Fields",

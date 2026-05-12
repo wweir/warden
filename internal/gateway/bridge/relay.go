@@ -219,6 +219,22 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 	return rawChat.Bytes(), rawResp.Bytes(), nil
 }
 
+// StreamAnthropicAsResponses converts an upstream Anthropic Messages SSE
+// stream into Responses SSE. Anthropic does not expose a stateful streaming
+// converter to Chat, so the upstream body is buffered first and then routed
+// through StreamChatAsResponses. The first return value is the raw upstream
+// SSE (Anthropic format) for token-usage and tool-call observation.
+func StreamAnthropicAsResponses(src io.Reader, dst http.ResponseWriter, model string) ([]byte, []byte, error) {
+	rawAnthropic, readErr := io.ReadAll(src)
+	if readErr != nil {
+		return rawAnthropic, nil, &relayError{source: SourceUpstream, err: readErr}
+	}
+
+	chatSSE := anthproto.ConvertStreamToOpenAI(rawAnthropic)
+	_, rawResp, err := StreamChatAsResponses(bytes.NewReader(chatSSE), dst, model)
+	return rawAnthropic, rawResp, err
+}
+
 func ReadSSEFrame(r *bufio.Reader) ([]byte, error) {
 	var frame bytes.Buffer
 	for {

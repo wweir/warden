@@ -300,6 +300,8 @@ export default {
 			"将无状态 responses 路由到上游 /chat/completions 端点（仅支持 function tools 子集）",
 		anthropicToChatHint:
 			"将 anthropic /messages 路由到上游 /chat/completions 端点（仅支持文本与 function tools 子集）",
+		anthropicToResponsesHint:
+			"将 responses 路由到上游 Anthropic /messages 端点（仅支持无状态请求；带 previous_response_id 的请求会返回 400）",
 		clearField: "清空",
 	},
 	logs: {
@@ -511,6 +513,9 @@ export default {
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages 兼容",
 		interfaceTemplate_anthropic_bridge_desc:
 			"通过 OpenAI-compatible provider 承接 Anthropic /messages，并开启 anthropic_to_chat。",
+		interfaceTemplate_responses_via_messages: "Responses 走 Anthropic Messages",
+		interfaceTemplate_responses_via_messages_desc:
+			"通过 Anthropic /messages provider 承接无状态 Responses 请求；带 previous_response_id 的请求会返回 400。",
 		interfaceTemplateCustom: "自定义接口",
 		interfaceTemplateCustomDesc: "直接维护接口列表和兼容开关，用于非常规上游。",
 		customInterfacesSection: "自定义接口字段",

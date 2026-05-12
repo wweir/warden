@@ -352,11 +352,14 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			}
 		}
 
-		if prov.ResponsesToChat && prov.Protocol != "openai" {
-			return NewValidationError("provider %s: responses_to_chat requires protocol 'openai', got %q", name, prov.Protocol)
+		if prov.ResponsesToChat && prov.Protocol != ProviderProtocolOpenAI {
+			return NewValidationError("provider %s: responses_to_chat requires family 'openai', got %q", name, prov.Protocol)
 		}
-		if prov.AnthropicToChat && prov.Protocol != "openai" {
-			return NewValidationError("provider %s: anthropic_to_chat requires protocol 'openai', got %q", name, prov.Protocol)
+		if prov.AnthropicToChat && prov.Protocol != ProviderProtocolOpenAI {
+			return NewValidationError("provider %s: anthropic_to_chat requires family 'openai', got %q", name, prov.Protocol)
+		}
+		if prov.AnthropicToResponses && prov.Protocol != ProviderProtocolAnthropic {
+			return NewValidationError("provider %s: anthropic_to_responses requires family 'anthropic', got %q", name, prov.Protocol)
 		}
 	}
 

@@ -74,7 +74,11 @@ func DefaultServiceProtocols(prov *ProviderConfig) []string {
 	}
 	switch providerAdapterProtocol(prov) {
 	case ProviderProtocolAnthropic:
-		return []string{RouteProtocolChat, RouteProtocolAnthropic}
+		supported := []string{RouteProtocolChat, RouteProtocolAnthropic}
+		if prov.AnthropicToResponses {
+			supported = append(supported, RouteProtocolResponses)
+		}
+		return supported
 	case ProviderProtocolOpenAI:
 		supported := []string{
 			RouteProtocolChat,

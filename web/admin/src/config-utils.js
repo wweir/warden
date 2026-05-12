@@ -66,8 +66,11 @@ export function defaultServiceProtocolsForProvider(provider) {
       if (provider?.anthropic_to_chat) protocols.push("anthropic");
       return protocols;
     }
-    case "anthropic":
-      return ["chat", "anthropic"];
+    case "anthropic": {
+      const protocols = ["chat", "anthropic"];
+      if (provider?.anthropic_to_responses) protocols.push("responses");
+      return protocols;
+    }
     case "copilot":
       return ["chat"];
     default:

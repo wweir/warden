@@ -438,3 +438,92 @@ func TestGatewayAnthropicToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		t.Fatalf("InStreamErrors = %d, want 1", status.InStreamErrors)
 	}
 }
+
+func TestGatewayAnthropicToResponsesStreamConvertsToResponsesSSE(t *testing.T) {
+	t.Parallel()
+
+	anthropicSSE := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_xyz","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(anthropicSSE))
+		w.(http.Flusher).Flush()
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"anthropic": {
+				URL:                  upstream.URL,
+				Protocol:             "anthropic",
+				APIKey:               config.SecretString("token"),
+				AnthropicToResponses: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/anthropic": {
+				Protocol: config.RouteProtocolResponses,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-as-responses": exactModel(config.RouteProtocolResponses,
+						&config.RouteUpstreamConfig{Provider: "anthropic", Model: "claude-3-5-sonnet"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/responses", strings.NewReader(`{"model":"claude-as-responses","input":"hi","stream":true}`))
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.created") {
+		t.Fatalf("body missing response.created, body=%q", body)
+	}
+	if !strings.Contains(body, "event: response.output_text.delta") {
+		t.Fatalf("body missing response.output_text.delta, body=%q", body)
+	}
+	if !strings.Contains(body, "event: response.completed") {
+		t.Fatalf("body missing response.completed, body=%q", body)
+	}
+	if strings.Contains(body, "event: message_start") {
+		t.Fatalf("downstream leaked raw anthropic events, body=%q", body)
+	}
+}

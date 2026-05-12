@@ -44,27 +44,45 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 		return
 	}
 
-	if inferencepkg.IsStatefulResponsesRequest(req.RawBody) {
-		g.forwardResponsesTransparently(w, r, route, req.RawBody)
-		return
-	}
-
-	manager, ok := g.buildInferenceManager(w, route, serviceProtocol, "responses", req, req.ExplicitProvider == "")
+	isStateful := inferencepkg.IsStatefulResponsesRequest(req.RawBody)
+	manager, ok := g.buildInferenceManager(w, route, serviceProtocol, "responses", req, !isStateful && req.ExplicitProvider == "")
 	if !ok {
 		return
 	}
-	applyRouteModelPrompt(&req, manager.Current().Model, openai.InjectSystemPromptResponsesRaw)
-	hookGateway := g.hookGatewayTarget()
 
 	// providerNeedsChatBridge reports whether the current provider must serve
 	// Responses requests through the chat bridge instead of native /responses.
 	providerNeedsChatBridge := func(provider *config.ProviderConfig) bool {
 		return provider.ResponsesToChat && provider.Protocol == config.ProviderProtocolOpenAI
 	}
+	// providerNeedsMessagesBridge reports whether the current provider must
+	// serve Responses requests by translating through upstream Anthropic
+	// /messages instead of native /responses. Stateful requests cannot use
+	// this bridge because Anthropic does not own conversation state.
+	providerNeedsMessagesBridge := func(provider *config.ProviderConfig) bool {
+		return provider.AnthropicToResponses && provider.Protocol == config.ProviderProtocolAnthropic
+	}
+
+	if isStateful {
+		if providerNeedsMessagesBridge(manager.Current().Provider) {
+			http.Error(w, "anthropic_to_responses provider does not support stateful responses requests", http.StatusBadRequest)
+			return
+		}
+		g.forwardResponsesTransparently(w, r, route, req.RawBody)
+		return
+	}
+
+	applyRouteModelPrompt(&req, manager.Current().Model, openai.InjectSystemPromptResponsesRaw)
+	hookGateway := g.hookGatewayTarget()
 
 	for {
-		if providerNeedsChatBridge(manager.Current().Provider) {
+		current := manager.Current().Provider
+		if providerNeedsChatBridge(current) {
 			g.handleResponsesViaChat(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
+			return
+		}
+		if providerNeedsMessagesBridge(current) {
+			g.handleResponsesViaMessages(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
 
@@ -72,7 +90,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			serviceProtocol: serviceProtocol,
 			endpoint:        "responses",
 			canHandle: func(provider *config.ProviderConfig) bool {
-				return !providerNeedsChatBridge(provider)
+				return !providerNeedsChatBridge(provider) && !providerNeedsMessagesBridge(provider)
 			},
 			upstreamPath: func(providerProtocol string) string {
 				return upstreampkg.ProtocolEndpoint(providerProtocol, true)
@@ -141,16 +159,42 @@ func (g *Gateway) forwardResponsesTransparently(w http.ResponseWriter, r *http.R
 	g.proxyHandler().Handle(w, trimRoutePrefix(r, route.Prefix), route)
 }
 
-// handleResponsesViaChat handles Responses API requests by converting to/from Chat Completions.
-// This is used when responses_to_chat is enabled for a provider.
+// handleResponsesViaChat handles Responses API requests by translating
+// through upstream Chat Completions. Used when a provider enables
+// responses_to_chat (family=openai).
 func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, manager *inferencepkg.Manager, startTime time.Time, reqID string,
 ) {
+	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
+		g.responsesBridgeSpec(bridgepkg.StreamChatAsResponses, "ResponsesToChat stream terminated early"))
+}
+
+// handleResponsesViaMessages handles Responses API requests by translating
+// through upstream Anthropic Messages. Used when a provider enables
+// anthropic_to_responses (family=anthropic). Anthropic does not expose a
+// stateful streaming converter, so the upstream SSE is buffered first and
+// then refolded through Chat IR into Responses SSE.
+func (g *Gateway) handleResponsesViaMessages(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
+	rawReqBody []byte, model string, stream bool, manager *inferencepkg.Manager, startTime time.Time, reqID string,
+) {
+	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
+		g.responsesBridgeSpec(bridgepkg.StreamAnthropicAsResponses, "AnthropicToResponses stream terminated early"))
+}
+
+// responsesBridgeSpec is the shared chatBridgeSpec for both Responses bridges:
+// the only per-upstream knobs are streamRelay (SSE conversion driver) and the
+// streamWarn log message; the rest is identical because both bridges share the
+// same Responses request/response shape and rely on the upstream adapter to
+// marshal the Chat IR into the upstream's native protocol.
+func (g *Gateway) responsesBridgeSpec(
+	streamRelay func(src io.Reader, dst http.ResponseWriter, publicModel string) ([]byte, []byte, error),
+	streamWarn string,
+) chatBridgeSpec {
 	hookGateway := g.hookGatewayTarget()
-	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID, chatBridgeSpec{
+	return chatBridgeSpec{
 		serviceProtocol:   config.RouteProtocolResponses,
 		endpoint:          "responses",
-		streamWarn:        "ResponsesToChat stream terminated early",
+		streamWarn:        streamWarn,
 		writeResponseWarn: "Failed to write converted response",
 		buildChatRequest: func(rawReqBody []byte) (openai.ChatCompletionRequest, string, error) {
 			var respReq openai.ResponsesRequest
@@ -163,9 +207,7 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 			}
 			return chatReq, chatReq.Model, nil
 		},
-		streamRelay: func(src io.Reader, dst http.ResponseWriter, publicModel string) ([]byte, []byte, error) {
-			return bridgepkg.StreamChatAsResponses(src, dst, publicModel)
-		},
+		streamRelay: streamRelay,
 		streamLogAssembler: func(respBody []byte) ([]byte, []byte, error) {
 			assembled, err := openai.AssembleResponsesStream(respBody)
 			return assembled, respBody, err
@@ -193,5 +235,5 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 		writeConvertResponseError: func(w http.ResponseWriter, err error) {
 			http.Error(w, fmt.Sprintf("convert response: %v", err), http.StatusInternalServerError)
 		},
-	})
+	}
 }

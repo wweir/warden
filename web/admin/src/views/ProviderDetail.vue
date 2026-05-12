@@ -528,6 +528,20 @@
                       }}</span>
                     </div>
                   </template>
+
+                  <template v-if="providerFamily(providerConfig) === 'anthropic'">
+                    <label>anthropic_to_responses</label>
+                    <div class="form-hint-row">
+                      <input
+                        type="checkbox"
+                        v-model="providerConfig.anthropic_to_responses"
+                        class="form-checkbox"
+                      />
+                      <span class="hint">{{
+                        $t("config.anthropicToResponsesHint")
+                      }}</span>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -1035,6 +1049,7 @@ watch(
     providerConfig.value.api_key_command,
     providerConfig.value.service_protocols,
     providerConfig.value.anthropic_to_chat,
+    providerConfig.value.anthropic_to_responses,
   ],
   () => {
     if (selectedPresetId.value !== CUSTOM_ACCESS_TYPE) {
@@ -1358,8 +1373,11 @@ const serviceProtocolSuggestions = computed(() => {
       if (providerConfig.value?.anthropic_to_chat) protocols.push("anthropic");
       return protocols;
     }
-    case "anthropic":
-      return ["chat", "anthropic"];
+    case "anthropic": {
+      const protocols = ["chat", "anthropic"];
+      if (providerConfig.value?.anthropic_to_responses) protocols.push("responses");
+      return protocols;
+    }
     case "copilot":
       return ["chat"];
     default:
@@ -1377,6 +1395,7 @@ function createEmptyProviderConfig() {
     models: [],
     responses_to_chat: false,
     anthropic_to_chat: false,
+    anthropic_to_responses: false,
     proxy: "",
     timeout: "",
     config_dir: "",
@@ -1492,6 +1511,7 @@ function inferServiceTemplateID(provider) {
     )
       continue;
     if (!!provider.anthropic_to_chat !== !!template.anthropic_to_chat) continue;
+    if (!!provider.anthropic_to_responses !== !!template.anthropic_to_responses) continue;
     return template.id;
   }
   return CUSTOM_SERVICE_TEMPLATE;
@@ -1548,6 +1568,7 @@ function applyServiceProtocolTemplateByID(templateID) {
     ...(template.service_protocols || []),
   ];
   providerConfig.value.anthropic_to_chat = !!template.anthropic_to_chat;
+  providerConfig.value.anthropic_to_responses = !!template.anthropic_to_responses;
   selectedServiceTemplateId.value = templateID;
 }
 

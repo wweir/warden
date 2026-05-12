@@ -1553,6 +1553,130 @@ func TestGatewayAnthropicRouteBridgesToChatProvider(t *testing.T) {
 	}
 }
 
+func TestGatewayResponsesRouteBridgesToMessagesProvider(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	var gotBody []byte
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotPath = r.URL.Path
+			gotBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":3}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"anthropic": {
+				URL:                  upstream.URL,
+				Protocol:             "anthropic",
+				APIKey:               config.SecretString("token"),
+				AnthropicToResponses: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/anthropic": {
+				Protocol: config.RouteProtocolResponses,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-as-responses": exactModel(config.RouteProtocolResponses,
+						&config.RouteUpstreamConfig{Provider: "anthropic", Model: "claude-3-5-sonnet"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/responses", strings.NewReader(`{"model":"claude-as-responses","instructions":"be concise","input":"hello"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotPath != "/messages" {
+		t.Fatalf("upstream path = %q, want /messages", gotPath)
+	}
+	if gjson.GetBytes(gotBody, "model").String() != "claude-3-5-sonnet" {
+		t.Fatalf("upstream model = %q, want claude-3-5-sonnet", gjson.GetBytes(gotBody, "model").String())
+	}
+	if gjson.GetBytes(gotBody, "messages.0.role").String() != "user" {
+		t.Fatalf("upstream user role missing, body=%s", gotBody)
+	}
+	if gjson.Get(rec.Body.String(), "object").String() != "response" {
+		t.Fatalf("downstream object = %q, want response", gjson.Get(rec.Body.String(), "object").String())
+	}
+	if gjson.Get(rec.Body.String(), "output.0.type").String() != "message" {
+		t.Fatalf("downstream output type = %q, want message", gjson.Get(rec.Body.String(), "output.0.type").String())
+	}
+}
+
+func TestGatewayResponsesRouteRejectsStatefulOnMessagesBridge(t *testing.T) {
+	t.Parallel()
+
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			upstreamHits++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"anthropic": {
+				URL:                  upstream.URL,
+				Protocol:             "anthropic",
+				APIKey:               config.SecretString("token"),
+				AnthropicToResponses: true,
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/anthropic": {
+				Protocol: config.RouteProtocolResponses,
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"claude-as-responses": exactModel(config.RouteProtocolResponses,
+						&config.RouteUpstreamConfig{Provider: "anthropic", Model: "claude-3-5-sonnet"},
+					),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+
+	gw := NewGateway(cfg, "", "")
+	t.Cleanup(gw.Close)
+
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/responses", strings.NewReader(`{"model":"claude-as-responses","input":"hello","previous_response_id":"resp_prev"}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "anthropic_to_responses provider does not support stateful") {
+		t.Fatalf("body = %q, want stateful-rejection message", rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("upstream hits = %d, want 0", upstreamHits)
+	}
+}
+
 func TestGatewayProxyPrefersLongestMatchingRoutePrefix(t *testing.T) {
 	t.Parallel()
 

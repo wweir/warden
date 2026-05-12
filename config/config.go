@@ -111,6 +111,7 @@ type ProviderConfig struct {
 	Models               []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
 	ResponsesToChat      bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
 	AnthropicToChat      bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
+	AnthropicToResponses bool              `json:"anthropic_to_responses" usage:"Route responses to upstream /messages for anthropic protocol (stateless only)"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
