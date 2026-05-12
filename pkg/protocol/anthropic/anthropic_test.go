@@ -70,6 +70,36 @@ func TestMarshalRequest_SystemExtraction(t *testing.T) {
 	}
 }
 
+func TestMarshalRequest_DeveloperRoleFoldsIntoSystem(t *testing.T) {
+	req := openai.ChatCompletionRequest{
+		Model: "claude-3-opus-20240229",
+		Messages: []openai.Message{
+			{Role: "developer", Content: "Be terse."},
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	body, err := MarshalRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]json.RawMessage
+	json.Unmarshal(body, &result)
+
+	var system string
+	json.Unmarshal(result["system"], &system)
+	if system != "Be terse." {
+		t.Errorf("developer message not folded into system; got %q", system)
+	}
+
+	var msgs []map[string]any
+	json.Unmarshal(result["messages"], &msgs)
+	if len(msgs) != 1 || msgs[0]["role"] != "user" {
+		t.Errorf("expected single user message after developer extraction, got %+v", msgs)
+	}
+}
+
 func TestMarshalRequest_ToolCalls(t *testing.T) {
 	req := openai.ChatCompletionRequest{
 		Model: "claude-3-opus-20240229",

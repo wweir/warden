@@ -24,11 +24,14 @@ func MarshalRequest(req openai.ChatCompletionRequest) ([]byte, error) {
 	result := make(map[string]any)
 	result["model"] = req.Model
 
-	// extract system messages to top-level field
+	// extract system/developer messages to top-level field. The OpenAI
+	// Responses adapter maps top-level instructions to a developer role and
+	// retries as system only when the upstream rejects developer; Anthropic
+	// has no developer concept, so we treat the two roles identically.
 	var systemParts []string
 	var nonSystemMsgs []openai.Message
 	for _, msg := range req.Messages {
-		if msg.Role == "system" {
+		if msg.Role == "system" || msg.Role == "developer" {
 			if s, ok := msg.Content.(string); ok {
 				systemParts = append(systemParts, s)
 			}
