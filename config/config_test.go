@@ -53,6 +53,16 @@ func TestProviderConfig_HTTPClient_Caching(t *testing.T) {
 	if client3 != client4 {
 		t.Error("HTTPClient should cache instance for custom timeout")
 	}
+	transport, ok := client1.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", client1.Transport)
+	}
+	if transport.IdleConnTimeout != 30*time.Second {
+		t.Fatalf("provider HTTP client IdleConnTimeout = %s, want 30s", transport.IdleConnTimeout)
+	}
+	if transport.DisableKeepAlives {
+		t.Fatal("provider HTTP client should keep connections alive")
+	}
 }
 
 func TestProviderConfigHTTPClientUsesProviderProxy(t *testing.T) {

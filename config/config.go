@@ -184,6 +184,10 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = timeout // response-header guard; body first-token deadline is enforced in gateway/upstream.
+	// Many upstream gateways and CDNs close idle keep-alive connections sooner than Go's
+	// 90s default, leaving the local pool with half-dead sockets that fail with EPIPE on
+	// the next write. 30s is below the common 60s server-side idle window.
+	transport.IdleConnTimeout = 30 * time.Second
 	if b.Backend == ProviderBackendCLIProxy {
 		transport.Proxy = nil
 	} else if b.Proxy != "" {
@@ -192,12 +196,11 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 		}
 	}
 
+	// No http.Client.Timeout - streaming responses should not have a total time limit
+	client := &http.Client{Transport: transport}
 	if b.clientCache == nil {
 		b.clientCache = make(map[time.Duration]*http.Client)
 	}
-
-	// No http.Client.Timeout - streaming responses should not have a total time limit
-	client := &http.Client{Transport: transport}
 	b.clientCache[timeout] = client
 	return client
 }

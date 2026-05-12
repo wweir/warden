@@ -201,31 +201,12 @@ func SendRequest(ctx context.Context, clientReq *http.Request, provCfg *config.P
 		ctx = context.Background()
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, fmt.Errorf("create request: %w", err)
-	}
-
-	if clientReq != nil {
-		httpReq.Header = BuildForwardedRequestHeaders(clientReq)
-		if provCfg.Backend == config.ProviderBackendCLIProxy {
-			SanitizeCLIProxyRequestHeaders(httpReq.Header)
-		}
-		// This path parses upstream payloads as JSON/SSE.
-		// Keep net/http default gzip handling instead of forwarding client compression preferences.
-		httpReq.Header.Del("Accept-Encoding")
-	}
-
-	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
-		return nil, 0, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
-	}
-
-	timeout := provCfg.FirstTokenTimeout(0)
-	resp, deadline, err := DoWithFirstTokenTimeout(provCfg.HTTPClient(0), httpReq, timeout)
+	resp, deadline, err := sendUpstream(ctx, clientReq, provCfg, endpoint, body)
 	latency := deadline.Latency()
 	if err != nil {
-		return nil, latency, fmt.Errorf("send request: %w", err)
+		return nil, latency, err
 	}
+	timeout := provCfg.FirstTokenTimeout(0)
 	readContext := "read response body"
 	if isStreaming {
 		readContext = "read stream body"
@@ -252,29 +233,12 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		ctx = context.Background()
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, fmt.Errorf("create request: %w", err)
-	}
-
-	if clientReq != nil {
-		httpReq.Header = BuildForwardedRequestHeaders(clientReq)
-		if provCfg.Backend == config.ProviderBackendCLIProxy {
-			SanitizeCLIProxyRequestHeaders(httpReq.Header)
-		}
-		httpReq.Header.Del("Accept-Encoding")
-	}
-
-	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
-		return nil, 0, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
-	}
-
-	timeout := provCfg.FirstTokenTimeout(0)
-	resp, deadline, err := DoWithFirstTokenTimeout(provCfg.HTTPClient(0), httpReq, timeout)
+	resp, deadline, err := sendUpstream(ctx, clientReq, provCfg, endpoint, body)
 	latency := deadline.Latency()
 	if err != nil {
-		return nil, latency, fmt.Errorf("send request: %w", err)
+		return nil, latency, err
 	}
+	timeout := provCfg.FirstTokenTimeout(0)
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, latency, readErr := readHTTPResponseBodyWithDeadline(resp, deadline, timeout, "read error response body")
@@ -310,6 +274,52 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		return nil, latency, err
 	}
 	return reader, latency, nil
+}
+
+// buildUpstreamRequest constructs the POST request to the upstream provider,
+// applies header sanitization and provider authentication. Auth failures return
+// a sanitized *sel.UpstreamError so callers can surface a 401 without leaking
+// internal details.
+func buildUpstreamRequest(ctx context.Context, clientReq *http.Request, provCfg *config.ProviderConfig, endpoint string, body []byte) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if clientReq != nil {
+		httpReq.Header = BuildForwardedRequestHeaders(clientReq)
+		if provCfg.Backend == config.ProviderBackendCLIProxy {
+			SanitizeCLIProxyRequestHeaders(httpReq.Header)
+		}
+		// This path parses upstream payloads as JSON/SSE.
+		// Keep net/http default gzip handling instead of forwarding client compression preferences.
+		httpReq.Header.Del("Accept-Encoding")
+	}
+	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
+		return nil, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
+	}
+	return httpReq, nil
+}
+
+// sendUpstream sends the request once. Do not replay POST requests here: Go's
+// transport already handles the cases it can prove are safe, and exposed idle
+// connection errors may still have written request bytes.
+func sendUpstream(ctx context.Context, clientReq *http.Request, provCfg *config.ProviderConfig, endpoint string, body []byte) (*http.Response, *FirstTokenDeadline, error) {
+	timeout := provCfg.FirstTokenTimeout(0)
+	client := provCfg.HTTPClient(0)
+
+	httpReq, err := buildUpstreamRequest(ctx, clientReq, provCfg, endpoint, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, deadline, err := DoWithFirstTokenTimeout(client, httpReq, timeout)
+	if err == nil {
+		return resp, deadline, nil
+	}
+	var upErr *sel.UpstreamError
+	if errors.As(err, &upErr) {
+		return nil, deadline, err
+	}
+	return nil, deadline, fmt.Errorf("send request: %w", err)
 }
 
 func readHTTPResponseBodyWithDeadline(resp *http.Response, deadline *FirstTokenDeadline, timeout time.Duration, context string) ([]byte, time.Duration, error) {

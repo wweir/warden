@@ -191,6 +191,39 @@ func TestSendRequestSanitizesProviderAuthErrors(t *testing.T) {
 	}
 }
 
+func TestSendRequestDoesNotReplayPostOnTransportError(t *testing.T) {
+	t.Parallel()
+
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("response writer does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijack connection: %v", err)
+		}
+		_ = conn.Close()
+	}))
+	defer server.Close()
+
+	provCfg := &config.ProviderConfig{
+		URL:      server.URL,
+		Protocol: "openai",
+		APIKey:   config.SecretString("provider-token"),
+	}
+
+	_, _, err := SendRequest(context.Background(), nil, provCfg, "/v1/chat/completions", []byte(`{"model":"gpt-4o","messages":[]}`), false)
+	if err == nil {
+		t.Fatal("SendRequest() error = nil, want transport error")
+	}
+	if hits != 1 {
+		t.Fatalf("upstream hits = %d, want 1", hits)
+	}
+}
+
 func TestWriteUpstreamAwareError_PreservesUpstreamStatusAndJSONBody(t *testing.T) {
 	t.Parallel()
 
