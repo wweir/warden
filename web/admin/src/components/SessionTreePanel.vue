@@ -1,33 +1,31 @@
 <template>
 	<aside
-		v-if="routeTree.length"
+		v-if="tree.length"
 		class="session-tree-panel panel"
-		:class="{ collapsed: sessionTreeCollapsed }"
+		:class="{ collapsed: collapsed }"
 	>
 		<div class="session-tree-header">
 			<div class="session-tree-copy">
-				<div class="section-eyebrow">{{ $t('logs.sessions') }}</div>
-				<h3 class="session-tree-title">{{ $t('logs.sessionExplorer') }}</h3>
-				<p class="section-note">{{ $t('logs.sessionExplorerHint') }}</p>
+				<div class="section-eyebrow">{{ $t('logs.routes') }}</div>
+				<h3 class="session-tree-title">{{ $t('logs.sessions') }}</h3>
 			</div>
 			<div class="session-tree-actions">
-				<span class="badge">{{ chainedLogs.length }}</span>
 				<button
 					class="btn btn-secondary btn-sm session-tree-collapse-btn"
 					type="button"
-					:aria-expanded="!sessionTreeCollapsed"
-					:aria-label="sessionTreeCollapsed ? $t('logs.expandSessionTree') : $t('logs.collapseSessionTree')"
+					:aria-expanded="!collapsed"
+					:aria-label="collapsed ? $t('logs.expandSessionTree') : $t('logs.collapseSessionTree')"
 					@click="$emit('toggle-collapse')"
 				>
-					{{ sessionTreeCollapsed ? "\u25B6" : "\u25C0" }}
+					{{ collapsed ? "\u25B6" : "\u25C0" }}
 				</button>
 			</div>
 		</div>
 
-		<template v-if="!sessionTreeCollapsed">
+		<template v-if="!collapsed">
 			<button
 				class="tree-root-button"
-				:class="{ active: activeTab === '' && activeSession === null }"
+				:class="{ active: activeRoute === '' && activeSession === '' }"
 				type="button"
 				@click="$emit('select-all')"
 			>
@@ -35,99 +33,103 @@
 				<span class="tree-root-meta">{{ logCount }} {{ $t('logs.reqs') }}</span>
 			</button>
 
-			<div class="tree-scroll" role="tree" :aria-label="$t('logs.sessionExplorer')">
-			<section
-				v-for="group in routeTree"
-				:key="group.key"
-				class="route-branch"
-			>
-				<div class="route-branch-header">
-					<button
-						class="route-branch-button"
-						:class="{ active: activeTab === group.key && activeSession === null }"
-						type="button"
-						@click="$emit('select-route', group.key)"
-					>
-						<span class="route-branch-label">{{ group.key }}</span>
-						<span class="badge">{{ group.chains.length }}</span>
-					</button>
-					<button
-						class="route-branch-toggle"
-						type="button"
-						:aria-expanded="isRouteGroupExpanded(group.key)"
-						:aria-label="isRouteGroupExpanded(group.key) ? $t('logs.collapseRouteGroup') : $t('logs.expandRouteGroup')"
-						@click="$emit('toggle-route-group', group.key)"
-					>
-						{{ isRouteGroupExpanded(group.key) ? "\u2212" : "+" }}
-					</button>
-				</div>
-
-				<ul v-if="isRouteGroupExpanded(group.key)" class="session-tree-list" role="group">
-					<li
-						v-for="chain in group.chains"
-						:key="chain.id"
-						class="session-tree-item"
+			<div class="tree-routes" role="tree">
+				<div
+					v-for="group in tree"
+					:key="group.route"
+					class="route-group"
+					role="treeitem"
+					:aria-expanded="isExpanded(group.route)"
+				>
+					<div
+						class="route-branch"
+						:class="{ active: activeRoute === group.route && !activeSession }"
 					>
 						<button
-							class="session-node-button"
-							:class="{ active: activeSession === chain.id }"
+							class="route-chevron"
+							:class="{ 'route-chevron-open': isExpanded(group.route) }"
 							type="button"
-							:aria-pressed="activeSession === chain.id"
-							@click="$emit('select-session', chain, group.key)"
+							:aria-label="isExpanded(group.route) ? $t('logs.collapseRouteGroup') : $t('logs.expandRouteGroup')"
+							@click.stop="toggleExpand(group.route)"
 						>
-							<span class="session-node-main">
-								<span class="session-node-title">{{ sessionName(chain) }}</span>
-								<span class="session-node-meta">
-									{{ formatTime(chain.logs[0].timestamp) }} &middot; {{ chain.logs.length }} {{ $t('logs.reqs') }}
-								</span>
-							</span>
+							{{ isExpanded(group.route) ? '\u25BC' : '\u25B6' }}
 						</button>
-					</li>
-				</ul>
-			</section>
+						<button
+							class="route-branch-button"
+							type="button"
+							@click="$emit('select-route', group.route)"
+						>
+							<span class="route-branch-label">{{ group.route }}</span>
+							<span class="badge">{{ group.sessions.length }}</span>
+						</button>
+					</div>
+
+					<div v-if="isExpanded(group.route)" class="route-sessions">
+						<button
+							v-for="session in group.sessions"
+							:key="session.fingerprint"
+							class="session-button"
+							:class="{
+								active: activeSession === session.fingerprint,
+								'session-pending': session.log.pending,
+								'session-error': session.log.error,
+							}"
+							type="button"
+							@click.stop="$emit('select-session', { route: group.route, fingerprint: session.fingerprint })"
+						>
+							<span class="session-preview">{{ session.preview }}</span>
+							<span v-if="session.log.pending" class="session-pulse" aria-hidden="true"></span>
+						</button>
+					</div>
+				</div>
 			</div>
 		</template>
 	</aside>
 </template>
 
 <script setup>
-import { useI18n } from "vue-i18n";
-
-const { locale } = useI18n();
+import { ref } from "vue";
 
 const props = defineProps({
-	routeTree: { type: Array, required: true },
-	chainedLogs: { type: Array, required: true },
-	activeTab: { type: String, required: true },
-	activeSession: { default: null },
-	sessionTreeCollapsed: { type: Boolean, required: true },
-	collapsedRouteGroups: { type: Set, required: true },
+	tree: { type: Array, required: true },
+	activeRoute: { type: String, required: true },
+	activeSession: { type: String, required: true },
+	collapsed: { type: Boolean, required: true },
 	logCount: { type: Number, required: true },
-	sessionTitlePreview: { type: Function, required: true },
 });
 
-defineEmits(["select-all", "select-route", "select-session", "toggle-collapse", "toggle-route-group"]);
+const emit = defineEmits(["select-all", "select-route", "select-session", "toggle-collapse"]);
 
-function isRouteGroupExpanded(routeKey) {
-	return !props.collapsedRouteGroups.has(routeKey);
+const STORAGE_KEY = "warden:logs:collapsedRoutes";
+
+function loadCollapsed() {
+	try {
+		const raw = localStorage.getItem(STORAGE_KEY);
+		return raw ? new Set(JSON.parse(raw)) : new Set();
+	} catch {
+		return new Set();
+	}
 }
 
-function formatTime(t) {
-	if (!t) return "";
-	const date = new Date(t);
-	if (Number.isNaN(date.getTime())) return "";
-	return new Intl.DateTimeFormat(locale.value, {
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-	}).format(date);
+const collapsedRoutes = ref(loadCollapsed());
+
+function saveCollapsed() {
+	try {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsedRoutes.value]));
+	} catch { /* ignore */ }
 }
 
-function sessionName(chain) {
-	const preview = props.sessionTitlePreview(chain);
-	return preview || formatTime(chain.logs[0].timestamp);
+function isExpanded(route) {
+	return !collapsedRoutes.value.has(route);
+}
+
+function toggleExpand(route) {
+	if (collapsedRoutes.value.has(route)) {
+		collapsedRoutes.value.delete(route);
+	} else {
+		collapsedRoutes.value.add(route);
+	}
+	saveCollapsed();
 }
 </script>
 
@@ -139,6 +141,8 @@ function sessionName(chain) {
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
 }
 
 .session-tree-panel.collapsed {
@@ -180,13 +184,6 @@ function sessionName(chain) {
 	margin-bottom: 4px;
 }
 
-.section-note {
-	font-size: 12px;
-	line-height: 1.5;
-	color: var(--c-text-3);
-	max-width: 28ch;
-}
-
 .session-tree-title {
 	margin: 0;
 	font-size: 18px;
@@ -194,8 +191,7 @@ function sessionName(chain) {
 }
 
 .tree-root-button,
-.route-branch-button,
-.session-node-button {
+.session-button {
 	width: 100%;
 	text-align: left;
 	border: 1px solid transparent;
@@ -203,7 +199,6 @@ function sessionName(chain) {
 	background: transparent;
 	color: inherit;
 	cursor: pointer;
-	padding: 10px 12px;
 	transition:
 		background-color 0.15s,
 		border-color 0.15s,
@@ -211,33 +206,9 @@ function sessionName(chain) {
 }
 
 .tree-root-button:hover,
-.route-branch-button:hover,
-.session-node-button:hover {
+.session-button:hover {
 	background: var(--c-surface-tint);
 	border-color: var(--c-border);
-}
-
-.tree-root-button.active,
-.route-branch-button.active,
-.session-node-button.active {
-	background: color-mix(in srgb, var(--c-primary-bg) 82%, white);
-	border-color: color-mix(in srgb, var(--c-primary) 24%, var(--c-border));
-	box-shadow: inset 3px 0 0 var(--c-primary);
-}
-
-.tree-root-title,
-.route-branch-label,
-.session-node-title {
-	display: block;
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--c-text);
-}
-
-.tree-root-meta,
-.session-node-meta {
-	font-size: 12px;
-	color: var(--c-text-3);
 }
 
 .tree-root-button {
@@ -245,95 +216,166 @@ function sessionName(chain) {
 	flex-direction: column;
 	align-items: flex-start;
 	gap: 4px;
-	background: color-mix(in srgb, var(--c-surface-tint) 58%, white);
+	padding: 10px 12px;
+	background: var(--c-surface);
 	border-color: var(--c-border-light);
 }
 
-.tree-scroll {
+.tree-root-button.active,
+.route-branch.active,
+.session-button.active {
+	background: var(--c-primary-bg);
+	border-color: var(--c-primary);
+}
+
+.tree-root-button.active {
+	padding-left: 10px;
+}
+
+.tree-root-title,
+.route-branch-label {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--c-text);
+}
+
+.tree-root-meta {
+	font-size: 12px;
+	color: var(--c-text-3);
+}
+
+.tree-routes {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-	max-height: calc(100vh - 180px);
-	overflow-y: auto;
-	padding-right: 4px;
+	gap: 4px;
+}
+
+.route-group {
+	display: flex;
+	flex-direction: column;
 }
 
 .route-branch {
 	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.route-branch-header {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 36px;
-	gap: 8px;
-	align-items: stretch;
-}
-
-.route-branch-button {
-	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
+	gap: 2px;
+	border-radius: var(--radius-sm);
+	border: 1px solid transparent;
+	transition: background-color 0.15s, border-color 0.15s;
 }
 
-.route-branch-toggle {
+.route-branch:hover {
+	background: var(--c-surface-tint);
+	border-color: var(--c-border);
+}
+
+.route-branch.active {
+	padding-left: 7px;
+}
+
+.route-branch {
+	cursor: pointer;
+}
+
+.route-chevron {
+	font-size: 10px;
+	color: var(--c-text-3);
+	width: 26px;
+	height: 32px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	border: 1px solid var(--c-border);
 	border-radius: var(--radius-sm);
-	background: var(--c-surface);
-	color: var(--c-text-2);
+	background: transparent;
+	border: none;
 	cursor: pointer;
-	font-size: 18px;
-	line-height: 1;
-	min-width: 40px;
-	min-height: 40px;
-	transition:
-		background-color 0.15s,
-		border-color 0.15s,
-		color 0.15s;
+	flex-shrink: 0;
+	transition: background-color 0.15s;
 }
 
-.route-branch-toggle:hover {
-	background: var(--c-surface-tint);
-	border-color: var(--c-primary);
-	color: var(--c-text);
+.route-chevron:hover {
+	background: var(--c-border-light);
 }
 
-.session-tree-panel.collapsed .section-eyebrow,
-.session-tree-panel.collapsed .session-tree-title,
-.session-tree-panel.collapsed .badge {
-	display: none;
-}
-
-.session-tree-panel.collapsed .session-tree-header {
-	justify-content: center;
-}
-
-.session-tree-list {
-	list-style: none;
-	padding: 0;
-	margin: 0;
+.route-branch-button {
+	flex: 1 1 auto;
 	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	padding-left: 10px;
-	border-left: 1px solid var(--c-border-light);
-}
-
-.session-tree-item {
-	display: flex;
-	flex-direction: column;
+	align-items: center;
 	gap: 6px;
+	padding: 8px 10px 8px 0;
+	font-size: 13px;
+	font-weight: 600;
+	background: transparent;
+	border: none;
+	color: inherit;
+	cursor: pointer;
+	text-align: left;
+	min-width: 0;
 }
 
-.session-node-main {
+.route-branch-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.route-sessions {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 2px;
+	padding-left: 20px;
+	margin-top: 2px;
+}
+
+.session-button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--c-text-2);
+}
+
+.session-button.active {
+	padding-left: 6px;
+}
+
+.session-preview {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.session-pulse {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--c-primary);
+	animation: pulse 1.5s infinite;
+	flex-shrink: 0;
+}
+
+@keyframes pulse {
+	0% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.5; transform: scale(0.85); }
+	100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-pulse {
+		animation: none;
+		opacity: 1;
+	}
+}
+
+.session-error .session-preview {
+	color: var(--c-danger);
 }
 
 .badge {
@@ -342,26 +384,47 @@ function sessionName(chain) {
 	padding: 1px 7px;
 	border-radius: 10px;
 	background: var(--c-border-light);
+	flex-shrink: 0;
+}
+
+.session-tree-panel.collapsed .section-eyebrow,
+.session-tree-panel.collapsed .session-tree-title,
+.session-tree-panel.collapsed .badge,
+.session-tree-panel.collapsed .route-chevron,
+.session-tree-panel.collapsed .route-sessions,
+.session-tree-panel.collapsed .tree-root-meta {
+	display: none;
+}
+
+.session-tree-panel.collapsed .session-tree-header {
+	justify-content: center;
+}
+
+.session-tree-panel.collapsed .tree-root-button {
+	justify-content: center;
+	padding-inline: 0;
+}
+
+.session-tree-panel.collapsed .route-branch {
+	justify-content: center;
+	padding-inline: 0;
+}
+
+.session-tree-panel.collapsed .route-branch-label,
+.session-tree-panel.collapsed .route-chevron {
+	display: none;
 }
 
 @media (max-width: 768px) {
 	.session-tree-panel {
 		position: static;
 		padding: 14px;
+		max-height: none;
 	}
 
-	.session-tree-collapse-btn,
-	.route-branch-toggle {
+	.session-tree-collapse-btn {
 		min-width: 44px;
 		min-height: 44px;
-	}
-
-	.tree-scroll {
-		max-height: 360px;
-	}
-
-	.section-note {
-		max-width: none;
 	}
 }
 </style>

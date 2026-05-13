@@ -22,8 +22,10 @@ import NavBar from './components/NavBar.vue'
   --c-success-bg: #d1fae5;
   --c-warning: #f59e0b;
   --c-warning-bg: #fef3c7;
+  --c-warning-text: #92400e;
   --c-danger: #ef4444;
   --c-danger-bg: #fee2e2;
+  --c-danger-text: #991b1b;
   --c-bg: #f1f5f9;
   --c-surface: #ffffff;
   --c-surface-soft: #f8fafc;

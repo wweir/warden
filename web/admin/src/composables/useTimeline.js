@@ -27,9 +27,17 @@ function maybeParseJSONObjectString(value) {
 	}
 }
 
-function normalizeLogJSON(value) {
+const MAX_ARRAY_LEN = 128;
+
+function normalizeLogJSON(value, depth = 0) {
+	if (depth > 10) return "[Depth limit exceeded]";
 	if (Array.isArray(value)) {
-		return value.map((item) => normalizeLogJSON(item));
+		if (value.length > MAX_ARRAY_LEN) {
+			const head = value.slice(0, MAX_ARRAY_LEN).map((item) => normalizeLogJSON(item, depth + 1));
+			head.push(`... (${value.length - MAX_ARRAY_LEN} more items)`);
+			return head;
+		}
+		return value.map((item) => normalizeLogJSON(item, depth + 1));
 	}
 	if (!value || typeof value !== "object") {
 		return maybeParseJSONObjectString(value);
@@ -39,7 +47,7 @@ function normalizeLogJSON(value) {
 	for (const [key, raw] of Object.entries(value)) {
 		const parsed = maybeParseJSONObjectString(raw);
 		normalized[key] = parsed && typeof parsed === "object"
-			? normalizeLogJSON(parsed)
+			? normalizeLogJSON(parsed, depth + 1)
 			: parsed;
 	}
 	return normalized;
@@ -238,6 +246,12 @@ function extractAssembledText(log) {
 			return extractTextFromSSE(resp);
 		}
 	}
+	// Embedding response
+	if (resp.data && Array.isArray(resp.data) && resp.data[0]?.embedding) {
+		const count = resp.data.length;
+		const dims = Array.isArray(resp.data[0].embedding) ? resp.data[0].embedding.length : "?";
+		return `[Embedding: ${count} vector(s), ${dims} dimensions]`;
+	}
 	if (resp.choices && Array.isArray(resp.choices) && resp.choices.length > 0) {
 		const msg = resp.choices[0].message || resp.choices[0].delta;
 		if (msg) {
@@ -306,8 +320,8 @@ function extractTextFromSSE(text) {
 			if (chunk.type === "content_block_delta" && chunk.delta?.type === "text_delta" && chunk.delta?.text) {
 				deltaParts.push(chunk.delta.text);
 			}
-		} catch {
-			// ignore parse errors
+		} catch (err) {
+			console.warn("[useTimeline] SSE chunk parse failed:", data.slice(0, 200), err);
 		}
 	}
 	return deltaParts.length ? deltaParts.join("") : completedText;
@@ -326,8 +340,12 @@ export function useTimeline(selected) {
 		}
 	}
 
+	let lastReqId = null;
+	let lastChain = [];
+
 	const messageChain = computed(() => {
 		if (!selected.value) return [];
+		const reqId = selected.value.request_id;
 		let req = selected.value.request;
 		if (!req) return [];
 		if (typeof req === "string") {
@@ -338,13 +356,17 @@ export function useTimeline(selected) {
 			}
 		}
 
-		const fmt = detectRequestFormat(req);
-		if (fmt === "anthropic") return parseAnthropicMessages(req);
-		if (fmt === "responses") return parseResponsesMessages(req);
+		if (reqId === lastReqId) return lastChain;
 
-		const msgs = req.messages;
-		if (!Array.isArray(msgs)) return [];
-		return msgs.map(normalizeMsg);
+		const fmt = detectRequestFormat(req);
+		if (fmt === "anthropic") lastChain = parseAnthropicMessages(req);
+		else if (fmt === "responses") lastChain = parseResponsesMessages(req);
+		else {
+			const msgs = req.messages;
+			lastChain = Array.isArray(msgs) ? msgs.map(normalizeMsg) : [];
+		}
+		lastReqId = reqId;
+		return lastChain;
 	});
 
 	const timelineNodes = computed(() => {
