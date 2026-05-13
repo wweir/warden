@@ -118,6 +118,17 @@ func GenerateID() string
 
 支持 Chat Completions API（`messages[]`）和 Responses API（`input[]`）两种协议。
 
+### SessionKey
+
+```go
+func (r Record) SessionKey() string
+```
+
+从 `Route` 和 `Fingerprint[:6]`（sysHash）派生 session key，用于跨请求去重：
+- fingerprint 为空或长度不足 6 时返回空串，回退到 `request_id` 级去重
+- sysHash 碰撞概率约 1/16M，实际可忽略
+- 同一 session 的多轮请求 fingerprint 是前缀增长关系，但 sysHash 始终相同
+
 ### Sanitize
 
 ```go
@@ -136,7 +147,9 @@ func NewFileLogger(dir string) (*FileLogger, error)
 
 将每条 `Record` 序列化为缩进 JSON，写入 `dir` 目录下的独立文件。
 
-文件名格式：`{route}_{月日-时分秒.毫秒}_{request_id}.json`
+文件名格式：
+- 默认：`{route}_{月日-时分秒.毫秒}_{request_id}.json`
+- 当记录存在 session key 时：`{route}_{sysHash}.json`（固定文件名，同一 session 的旧日志被覆盖；route 中的路径分隔符会转成 `_`）
 
 例：`anthropic_0115-143022.123_a1b2c3d4.json`
 
@@ -186,7 +199,9 @@ func (b *Broadcaster) Recent() []Record
 
 内存广播器，供 SSE 实时日志推送使用：
 
-- **环形缓冲**：保留最近 50 条记录，新 SSE 连接建立时通过 `Recent()` 回放历史；相同 `request_id` 的新事件会覆盖旧记录，避免 pending/final 重复堆积
+- **环形缓冲**：保留最近 50 条记录，新 SSE 连接建立时通过 `Recent()` 回放历史
+- **`request_id` 级去重**：相同 `request_id` 的新事件会覆盖旧记录，避免 pending -> final 重复堆积
+- **session 级去重**：不同 `request_id` 但同 session（`Route + Fingerprint[:6]` sysHash 相同）的新记录会覆盖旧记录；长会话的多轮请求在 broadcaster 中只保留最新一条，50 条环形缓冲从"50 个请求"升级为"50 个 session"
 - **非阻塞 fan-out**：`Publish` 向所有订阅者 channel 发送，慢消费者丢弃该事件（不阻塞发布方）
 - 每个订阅者 channel 缓冲 64 条
 - `Unsubscribe` 关闭 channel，SSE handler 通过 range 感知断开

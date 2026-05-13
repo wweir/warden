@@ -72,6 +72,7 @@ Go 标准项目结构：
 1. 使用 Makefile 作为统一构建入口，封装 build、test、package、release 等流程
 2. 构建产物通过 `ldflags` 注入版本和构建日期信息
 3. 部署参数、权限和运行能力默认遵循 `Security Specifications` 中的最小权限原则
+4. `make install` 用于在开发/测试机器上快速更新本地服务：先执行 `make build` 生成二进制，再通过 `warden -i -y` 完成托管安装（systemd 服务重启），无需手动复制二进制或重启进程
 
 ## Security Specifications
 
