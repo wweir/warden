@@ -72,42 +72,48 @@
 							<div class="chain-label">{{ node.label }}</div>
 
 							<div
-								v-if="node.preview"
+								v-if="nodePreviewText(node)"
 								class="chain-preview"
-								:class="{ 'chain-preview-oneline': node.dotType === 'system' }"
-							>{{ node.preview }}</div>
+								:class="{ 'chain-preview-oneline': node.dotType === 'system' || node.dotType === 'assistant' }"
+							>{{ nodePreviewText(node) }}</div>
 
 							<!-- Response text for last assistant node (when not streaming) -->
-							<div v-if="node.dotType === 'assistant' && !log.pending && assembledText" class="chain-response">
-								{{ assembledText }}
-							</div>
+							<details v-if="node.dotType === 'assistant' && isLastAssistantNode(i) && !log.pending && assembledText" class="response-disclosure">
+								<summary class="response-summary">
+									<span class="response-summary-kind">{{ $t('logs.response') }}</span>
+									<span class="response-summary-preview">{{ responsePreview }}</span>
+								</summary>
+								<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
+							</details>
 
 							<!-- tool call + result pair -->
 							<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
-								<div class="tool-chip">
-									<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
-									<code>{{ node.toolName }}</code>
-								</div>
-								<details class="tool-pair-details">
-									<summary>{{ $t('logs.arguments') }}</summary>
+								<details class="tool-disclosure">
+									<summary class="tool-summary">
+										<span class="tool-summary-kind">{{ $t('logs.toolCall') }}</span>
+										<code>{{ node.toolName }}</code>
+										<span class="tool-summary-preview">{{ payloadPreview(node.toolArgs) }}</span>
+									</summary>
 									<pre class="code-block">{{ formatJSON(node.toolArgs) }}</pre>
 								</details>
-								<div class="tool-chip" v-if="node.toolResult !== undefined">
-									<span class="tool-arrow" :class="{ 'text-error': node.toolError }">{{ node.toolError ? $t('logs.toolFail') : $t('logs.toolResult') }}</span>
-								</div>
-								<details v-if="node.toolResult !== undefined" class="tool-pair-details">
-									<summary>{{ $t('logs.output') }}</summary>
+								<details v-if="node.toolResult !== undefined" class="tool-disclosure">
+									<summary class="tool-summary">
+										<span class="tool-summary-kind" :class="{ 'text-error': node.toolError }">{{ node.toolError ? $t('logs.toolFail') : $t('logs.toolResult') }}</span>
+										<span class="tool-summary-preview">{{ payloadPreview(node.toolResult) }}</span>
+									</summary>
 									<pre class="code-block code-block-raw">{{ renderEscapes(node.toolResult) }}</pre>
 								</details>
 							</div>
 
 							<!-- tool_calls from assistant (unpaired) -->
 							<div v-if="node.toolCalls?.length" class="chain-tools">
-								<div v-for="(tc, j) in node.toolCalls" :key="j" class="tool-chip">
-									<span class="tool-arrow">{{ $t('logs.toolCall') }}</span>
-									<code>{{ tc.function?.name || tc.name }}</code>
-									<details>
-										<summary>{{ $t('logs.arguments') }}</summary>
+								<div v-for="(tc, j) in node.toolCalls" :key="j">
+									<details class="tool-disclosure">
+										<summary class="tool-summary">
+											<span class="tool-summary-kind">{{ $t('logs.toolCall') }}</span>
+											<code>{{ tc.function?.name || tc.name }}</code>
+											<span class="tool-summary-preview">{{ payloadPreview(tc.function?.arguments || tc.arguments) }}</span>
+										</summary>
 										<pre class="code-block">{{ formatJSON(tc.function?.arguments || tc.arguments) }}</pre>
 									</details>
 								</div>
@@ -174,6 +180,15 @@ const hasAssistantNode = computed(() =>
 	timelineNodes.value.some((n) => n.dotType === "assistant"),
 );
 
+const responsePreview = computed(() => singleLine(assembledText.value, 180));
+
+function isLastAssistantNode(index) {
+	for (let i = timelineNodes.value.length - 1; i >= 0; i--) {
+		if (timelineNodes.value[i].dotType === "assistant") return i === index;
+	}
+	return false;
+}
+
 function responseClass(log) {
 	if (log?.pending) return "response-streaming";
 	if (log?.error) return "response-error";
@@ -191,6 +206,30 @@ function responseStatusText(log) {
 		return t("logs.failoverRecovered", { n: log.failovers.length });
 	}
 	return t("common.ok");
+}
+
+function nodePreviewText(node) {
+	if (node?.dotType === "assistant") return assistantSummary(node);
+	return node?.preview || "";
+}
+
+function assistantSummary(node) {
+	const parts = [];
+	const chars = String(node?.preview || "").length;
+	if (chars > 0) parts.push(t("logs.contentChars", { n: chars }));
+	if (node?.toolCalls?.length) parts.push(t("logs.tools", { n: node.toolCalls.length }));
+	return parts.join(" · ");
+}
+
+function payloadPreview(value) {
+	const text = value == null ? "" : renderEscapes(formatJSON(value));
+	return singleLine(text, 160);
+}
+
+function singleLine(value, maxLen) {
+	const text = String(value || "").replace(/\s+/g, " ").trim();
+	if (!text) return "";
+	return text.length > maxLen ? text.slice(0, maxLen) + "..." : text;
 }
 
 async function copyJSON() {
@@ -437,19 +476,44 @@ summary:hover {
 	text-overflow: ellipsis;
 }
 
-.chain-response {
-	font-size: 13px;
-	line-height: 1.55;
-	color: var(--c-text);
-	white-space: pre-wrap;
-	word-break: break-word;
-	margin-top: 4px;
-	padding: 8px 10px;
-	background: var(--c-bg);
-	border: 1px solid var(--c-border-light);
-	border-radius: var(--radius-sm);
-	max-height: 200px;
-	overflow-y: auto;
+.response-disclosure {
+	margin: 3px 0 0 0;
+	min-width: 0;
+}
+
+.response-summary {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	padding: 2px 0;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--c-text-2);
+	white-space: nowrap;
+}
+
+.response-summary::marker {
+	color: var(--c-text-3);
+	font-size: 10px;
+}
+
+.response-summary-kind {
+	flex: 0 0 auto;
+	color: var(--c-text-3);
+	font-family: var(--font-mono);
+}
+
+.response-summary-preview {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--c-text-2);
+}
+
+.response-disclosure[open] .response-summary {
+	margin-bottom: 4px;
 }
 
 .chain-response-standalone {
@@ -506,42 +570,58 @@ summary:hover {
 .chain-tools {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
-	margin: 3px 0;
-}
-.tool-chip {
-	display: flex;
-	align-items: baseline;
-	gap: 5px;
-	font-size: 12px;
-}
-.tool-chip details { margin: 0; }
-.tool-chip summary {
-	font-weight: 400;
-	font-size: 11px;
-	color: var(--c-text-3);
-	padding: 0;
-	display: inline;
-}
-.tool-arrow {
-	color: var(--c-text-3);
-	font-family: monospace;
-	flex-shrink: 0;
+	gap: 2px;
+	margin: 2px 0;
 }
 .tool-pair-block {
-	margin: 3px 0 4px 0;
-	padding: 6px 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 2px 0 3px 0;
+	padding: 4px 6px;
 	background: var(--c-bg);
 	border: 1px solid var(--c-border-light);
 	border-radius: var(--radius-sm);
 }
-.tool-pair-block .tool-chip { margin-bottom: 2px; }
-.tool-pair-details { margin: 2px 0 3px 0; }
-.tool-pair-details summary {
-	font-size: 11px;
+.tool-disclosure {
+	margin: 0;
+	min-width: 0;
+}
+.tool-summary {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	padding: 1px 0;
+	font-size: 12px;
 	font-weight: 400;
+	color: var(--c-text-2);
+	white-space: nowrap;
+}
+.tool-summary::marker {
 	color: var(--c-text-3);
-	padding: 2px 0;
+	font-size: 10px;
+}
+.tool-summary-kind {
+	color: var(--c-text-3);
+	font-family: var(--font-mono);
+	flex: 0 0 auto;
+}
+.tool-summary code {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.tool-summary-preview {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--c-text-3);
+}
+.tool-disclosure[open] .tool-summary {
+	margin-bottom: 3px;
 }
 
 .fp-str {

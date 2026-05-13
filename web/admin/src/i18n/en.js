@@ -383,6 +383,7 @@ export default {
 		request: "request",
 		response: "Response",
 		content: "content",
+		contentChars: "{n} chars",
 		body: "Body",
 		raw: "Raw",
 		arguments: "Arguments",

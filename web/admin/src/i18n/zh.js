@@ -366,6 +366,7 @@ export default {
 		request: "请求",
 		response: "响应",
 		content: "内容",
+		contentChars: "{n} 字内容",
 		body: "请求体",
 		raw: "原始内容",
 		arguments: "参数",
