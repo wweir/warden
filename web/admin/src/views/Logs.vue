@@ -74,15 +74,15 @@
 					/>
 				</div>
 
-				<div v-if="activeSession && selectedSessionLog" class="detail-inline panel">
+				<div v-if="selectedDetailLog" class="detail-inline panel">
 					<div class="detail-inline-header">
 						<span class="detail-inline-label">{{ $t('logs.requestDetail') }}</span>
-						<button class="btn btn-secondary btn-sm" @click="activeSession = ''">
+						<button class="btn btn-secondary btn-sm" @click="closeDetail">
 							{{ $t('logs.collapse') }}
 						</button>
 					</div>
 					<LogDetailPanel
-						:log="selectedSessionLog"
+						:log="selectedDetailLog"
 						:lastUserPreview="lastUserPreview"
 					/>
 				</div>
@@ -106,16 +106,16 @@
 									v-for="log in filteredLogs"
 									:key="log.request_id"
 									class="log-row"
-									:class="{ 'log-row-active': activeSession === (log.fingerprint || '') }"
+									:class="{ 'log-row-active': isDetailOpen(log) }"
 								>
 									<td class="cell-actions">
 										<button
 											class="btn btn-secondary btn-sm"
 											type="button"
 											:aria-label="$t('logs.viewLogDetails')"
-											@click="selectSession({ route: log.route || '(unknown)', fingerprint: log.fingerprint || '' })"
+											@click="toggleDetail(log)"
 										>
-											{{ activeSession === (log.fingerprint || '') ? $t('logs.collapse') : $t('logs.view') }}
+											{{ isDetailOpen(log) ? $t('logs.collapse') : $t('logs.view') }}
 										</button>
 									</td>
 									<td class="cell-time">{{ formatTime(log.timestamp) }}</td>
@@ -141,16 +141,16 @@
 								v-for="log in filteredLogs"
 								:key="log.request_id + '-m'"
 								class="mobile-log-card"
-								:class="{ 'mobile-log-card-active': activeSession === (log.fingerprint || '') }"
+								:class="{ 'mobile-log-card-active': isDetailOpen(log) }"
 							>
 								<div class="mobile-log-top">
 									<div class="mobile-log-time">{{ formatTime(log.timestamp) }}</div>
 									<button
 										class="btn btn-secondary btn-sm"
 										type="button"
-										@click="selectSession({ route: log.route || '(unknown)', fingerprint: log.fingerprint || '' })"
+										@click="toggleDetail(log)"
 									>
-										{{ activeSession === (log.fingerprint || '') ? $t('logs.collapse') : $t('logs.view') }}
+										{{ isDetailOpen(log) ? $t('logs.collapse') : $t('logs.view') }}
 									</button>
 								</div>
 								<div class="mobile-log-prompt">
@@ -186,11 +186,6 @@
 			</section>
 		</div>
 
-		<LogDetailModal
-			:log="modalLog"
-			:lastUserPreview="lastUserPreview"
-			@close="modalLog = null"
-		/>
 	</div>
 </template>
 
@@ -212,9 +207,11 @@ const { logs, paused, error, togglePause, clearLogs, setAutoScroll } = useLogStr
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 const activeRoute = ref("");
 const activeSession = ref("");
+const activeDetailRequestID = ref("");
+const selectedDetailLog = ref(null);
 const sessionTreeCollapsed = ref(false);
 
-watch(activeSession, (val) => {
+watch(activeDetailRequestID, (val) => {
 	setAutoScroll(!val);
 });
 
@@ -268,22 +265,15 @@ const filteredLogs = computed(() => {
 	});
 });
 
-const selectedSessionLog = computed(() => {
-	if (!activeSession.value) return null;
-	// Exact match by full fingerprint.
-	const exact = logs.value.find((l) => l.fingerprint === activeSession.value);
-	if (exact) return exact;
-	// Fallback: match by session key (first 6 chars of fingerprint + same route).
-	// This handles the case where a new request for the same session overwrote
-	// the old log with a different full fingerprint.
-	const fp = activeSession.value;
-	if (fp.length < 6) return null;
-	const sysHash = fp.slice(0, 6);
-	const route = activeRoute.value || "(unknown)";
-	return logs.value.find((l) => {
-		const lFp = l.fingerprint || "";
-		return lFp.slice(0, 6) === sysHash && (l.route || "(unknown)") === route;
-	}) || null;
+const liveDetailLog = computed(() => {
+	if (!activeDetailRequestID.value) return null;
+	return logs.value.find((log) => log.request_id === activeDetailRequestID.value) || null;
+});
+
+watch(liveDetailLog, (log) => {
+	if (log) {
+		selectedDetailLog.value = log;
+	}
 });
 
 const showRouteChip = computed(() => {
@@ -299,7 +289,8 @@ const showRouteChip = computed(() => {
 // --- Stats bar ---
 const scopeLabel = computed(() => {
 	if (activeSession.value) {
-		const preview = selectedSessionLog.value ? lastUserPreview(selectedSessionLog.value) : "";
+		const scopedLog = filteredLogs.value[0];
+		const preview = scopedLog ? lastUserPreview(scopedLog) : "";
 		return preview || activeSession.value.slice(0, 12) || t("logs.session");
 	}
 	if (activeRoute.value) return activeRoute.value;
@@ -355,28 +346,51 @@ function handleClear() {
 	clearLogs();
 	activeRoute.value = "";
 	activeSession.value = "";
+	closeDetail();
 }
 
 function selectAll() {
 	activeRoute.value = "";
 	activeSession.value = "";
+	closeDetail();
 	sessionTreeCollapsed.value = false;
 }
 
 function selectRoute(routeKey) {
 	activeRoute.value = routeKey;
 	activeSession.value = "";
+	closeDetail();
 	sessionTreeCollapsed.value = false;
 }
 
 function selectSession({ route, fingerprint }) {
 	activeRoute.value = route || "";
 	activeSession.value = fingerprint || "";
+	closeDetail();
 	sessionTreeCollapsed.value = false;
 }
 
 function toggleSessionTree() {
 	sessionTreeCollapsed.value = !sessionTreeCollapsed.value;
+}
+
+function isDetailOpen(log) {
+	return Boolean(log?.request_id && activeDetailRequestID.value === log.request_id);
+}
+
+function toggleDetail(log) {
+	if (!log?.request_id) return;
+	if (isDetailOpen(log)) {
+		closeDetail();
+		return;
+	}
+	activeDetailRequestID.value = log.request_id;
+	selectedDetailLog.value = log;
+}
+
+function closeDetail() {
+	activeDetailRequestID.value = "";
+	selectedDetailLog.value = null;
 }
 
 function statusClass(log) {
