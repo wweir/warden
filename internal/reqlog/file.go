@@ -22,7 +22,9 @@ func NewFileLogger(dir string) (*FileLogger, error) {
 	return &FileLogger{dir: dir}, nil
 }
 
-// Log writes a Record as a JSON file. Failures are logged but do not block.
+// Log writes a Record as a JSON file. When a session key is present the file
+// name is fixed per session so that older requests in the same conversation
+// are overwritten, keeping only the latest complete log.
 func (f *FileLogger) Log(r Record) {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -30,13 +32,22 @@ func (f *FileLogger) Log(r Record) {
 		return
 	}
 
-	route := strings.Trim(r.Route, "/")
+	route := sanitizeFilenamePart(strings.Trim(r.Route, "/"))
 	filename := route + "_" + r.Timestamp.Format("0102-150405.000") + "_" + r.RequestID + ".json"
+
+	if sysHash := r.sessionSysHash(); sysHash != "" {
+		filename = route + "_" + sysHash + ".json"
+	}
+
 	path := filepath.Join(f.dir, filename)
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		slog.Warn("Failed to write request log", "path", path, "error", err)
 	}
+}
+
+func sanitizeFilenamePart(s string) string {
+	return strings.NewReplacer("/", "_", "\\", "_", "\x00", "_").Replace(s)
 }
 
 // Close is a no-op for file-based logging.

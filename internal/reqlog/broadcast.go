@@ -29,19 +29,36 @@ func NewBroadcaster() *Broadcaster {
 // Publish stores a Record in the ring buffer and sends it to all subscribers (non-blocking).
 func (b *Broadcaster) Publish(r Record) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// 1. Same request_id takes precedence (pending -> final updates within one request).
 	if idx, ok := b.findRecentIndexLocked(r.RequestID); ok {
 		b.recent[idx] = r
-	} else {
-		b.recent[b.pos] = r
-		b.pos++
-		if b.pos >= recentSize {
-			b.pos = 0
-			b.full = true
+		b.fanOutLocked(r)
+		return
+	}
+
+	// 2. Same session replaces older requests from the same conversation.
+	if sessionKey := r.SessionKey(); sessionKey != "" {
+		if idx, ok := b.findSessionIndexLocked(sessionKey); ok {
+			b.recent[idx] = r
+			b.fanOutLocked(r)
+			return
 		}
 	}
 
-	// Fan-out stays under lock so a concurrent Unsubscribe cannot close a channel
-	// after it has been selected for delivery but before the non-blocking send runs.
+	// 3. New record.
+	b.recent[b.pos] = r
+	b.pos++
+	if b.pos >= recentSize {
+		b.pos = 0
+		b.full = true
+	}
+
+	b.fanOutLocked(r)
+}
+
+func (b *Broadcaster) fanOutLocked(r Record) {
 	for ch := range b.subscribers {
 		select {
 		case ch <- r:
@@ -49,7 +66,6 @@ func (b *Broadcaster) Publish(r Record) {
 			// subscriber too slow, drop this event
 		}
 	}
-	b.mu.Unlock()
 }
 
 func (b *Broadcaster) findRecentIndexLocked(requestID string) (int, bool) {
@@ -63,6 +79,23 @@ func (b *Broadcaster) findRecentIndexLocked(requestID string) (int, bool) {
 	}
 	for i := 0; i < limit; i++ {
 		if b.recent[i].RequestID == requestID {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (b *Broadcaster) findSessionIndexLocked(sessionKey string) (int, bool) {
+	if sessionKey == "" {
+		return 0, false
+	}
+
+	limit := b.pos
+	if b.full {
+		limit = recentSize
+	}
+	for i := 0; i < limit; i++ {
+		if b.recent[i].SessionKey() == sessionKey {
 			return i, true
 		}
 	}

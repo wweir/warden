@@ -72,6 +72,23 @@ type ToolResultEntry struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
+// SessionKey returns a stable session identifier for cross-request deduplication.
+// An empty result means the record should fall back to request-id-level dedup.
+func (r Record) SessionKey() string {
+	sysHash := r.sessionSysHash()
+	if sysHash == "" {
+		return ""
+	}
+	return r.Route + "\x00" + sysHash
+}
+
+func (r Record) sessionSysHash() string {
+	if r.Fingerprint == "" || len(r.Fingerprint) < 6 {
+		return ""
+	}
+	return r.Fingerprint[:6]
+}
+
 // Logger defines the interface for request/response logging backends.
 type Logger interface {
 	Log(Record)
