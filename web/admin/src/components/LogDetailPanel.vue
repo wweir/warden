@@ -69,16 +69,27 @@
 					>
 						<div class="chain-dot" :class="'dot-' + node.dotType"></div>
 						<div class="chain-content">
-							<div class="chain-label">{{ node.label }}</div>
+							<div class="chain-label-row">
+								<div class="chain-label">{{ node.label }}</div>
+								<button
+									v-if="node.raw"
+									class="raw-toggle"
+									type="button"
+									:aria-expanded="isRawOpen(i)"
+									@click="toggleRaw(i)"
+								>
+									{{ isRawOpen(i) ? $t('logs.hideRaw') : $t('logs.raw') }}
+								</button>
+							</div>
 
 							<div
 								v-if="nodePreviewText(node)"
 								class="chain-preview"
-								:class="{ 'chain-preview-oneline': node.dotType === 'system' || node.dotType === 'assistant' }"
+								:class="{ 'chain-preview-oneline': isRolePreviewNode(node) }"
 							>{{ nodePreviewText(node) }}</div>
 
 							<!-- Response text for last assistant node (when not streaming) -->
-							<details v-if="node.dotType === 'assistant' && isLastAssistantNode(i) && !log.pending && assembledText" class="response-disclosure">
+							<details v-if="node.dotType === 'assistant' && isLastAssistantNode(i) && !log.pending && responseHasText" class="response-disclosure">
 								<summary class="response-summary">
 									<span class="response-summary-kind">{{ $t('logs.response') }}</span>
 									<span class="response-summary-preview">{{ responsePreview }}</span>
@@ -119,11 +130,25 @@
 								</div>
 							</div>
 
-							<!-- expandable raw content -->
-							<details v-if="node.raw" class="chain-raw">
-								<summary>{{ $t('logs.raw') }}</summary>
-								<pre class="code-block code-block-raw">{{ renderEscapes(typeof node.raw === 'string' ? node.raw : formatJSON(node.raw)) }}</pre>
-							</details>
+							<div v-if="node.raw && isRawOpen(i)" class="chain-raw">
+								<div class="json-viewer">
+									<div
+										v-for="row in jsonRows(node.raw, `raw-${i}`)"
+										:key="row.id"
+										class="json-row"
+										:style="{ '--json-depth': row.depth }"
+									>
+										<div class="json-field">
+											<span v-if="row.fieldKey" class="json-key">&quot;{{ row.fieldKey }}&quot;</span>
+											<span v-if="row.fieldKey" class="json-token json-token-punctuation">:</span>
+											<span
+												class="json-value"
+												:class="`json-token-${row.kind}`"
+											>{{ row.displayValue }}</span>
+										</div>
+									</div>
+								</div>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -142,7 +167,7 @@
 				</div>
 
 				<!-- Final response (when no timeline nodes or for non-chat formats) -->
-				<div v-if="!log.pending && assembledText && !hasAssistantNode" class="chain-response-standalone">
+				<div v-if="!log.pending && responseHasText && !hasAssistantNode" class="chain-response-standalone">
 					<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
 				</div>
 			</section>
@@ -164,6 +189,7 @@ const props = defineProps({
 const { t } = useI18n();
 const detailView = ref("timeline");
 const copied = ref(false);
+const openRawNodes = ref(new Set());
 let copyTimer = null;
 
 const selected = computed(() => props.log);
@@ -171,6 +197,7 @@ const selected = computed(() => props.log);
 const {
 	timelineNodes,
 	assembledText,
+	responseHasText,
 	selectedJSON,
 	formatJSON,
 	renderEscapes,
@@ -209,16 +236,103 @@ function responseStatusText(log) {
 }
 
 function nodePreviewText(node) {
-	if (node?.dotType === "assistant") return assistantSummary(node);
-	return node?.preview || "";
-}
-
-function assistantSummary(node) {
-	const parts = [];
-	const chars = String(node?.preview || "").length;
-	if (chars > 0) parts.push(t("logs.contentChars", { n: chars }));
+	const preview = node?.type === "tool-pair" ? node.assistantPreview : node?.preview;
+	const text = singleLine(preview, 180);
+	const parts = [text ? `${previewPrefix(node)}: ${text}` : ""].filter(Boolean);
 	if (node?.toolCalls?.length) parts.push(t("logs.tools", { n: node.toolCalls.length }));
 	return parts.join(" · ");
+}
+
+function previewPrefix(node) {
+	if (node?.type === "tool-pair") return t("logs.assistant");
+	return node?.label || t("logs.unknown");
+}
+
+function isRolePreviewNode(node) {
+	return ["system", "user", "assistant", "tool"].includes(node?.dotType);
+}
+
+function isRawOpen(index) {
+	return openRawNodes.value.has(index);
+}
+
+function toggleRaw(index) {
+	const next = new Set(openRawNodes.value);
+	if (next.has(index)) {
+		next.delete(index);
+	} else {
+		next.add(index);
+	}
+	openRawNodes.value = next;
+}
+
+function normalizeRawValue(value) {
+	if (typeof value !== "string") return value;
+	const rendered = renderEscapes(value);
+	const trimmed = rendered.trim();
+	if (!trimmed) return rendered;
+	if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return rendered;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return rendered;
+	}
+}
+
+function jsonRows(value, pathPrefix) {
+	const normalized = normalizeRawValue(value);
+	const rows = [];
+	appendJSONRows(rows, "", normalized, pathPrefix, "", 0);
+	return rows;
+}
+
+function appendJSONRows(rows, key, value, pathPrefix, keyPath, depth) {
+	const normalized = normalizeRawValue(value);
+	if (normalized == null || typeof normalized !== "object") {
+		rows.push(jsonPrimitiveRow(key, normalized, pathPrefix, keyPath, depth));
+		return;
+	}
+	const isArray = Array.isArray(normalized);
+	rows.push(jsonContainerRow(key, pathPrefix, keyPath, depth, isArray ? "[" : "{"));
+	for (const [childKey, child] of Object.entries(normalized)) {
+		const childPath = keyPath ? `${keyPath}.${childKey}` : childKey;
+		appendJSONRows(rows, childKey, child, pathPrefix, childPath, depth + 1);
+	}
+	rows.push(jsonContainerRow("", pathPrefix, keyPath, depth, isArray ? "]" : "}"));
+}
+
+function jsonContainerRow(key, pathPrefix, keyPath, depth, token) {
+	return jsonRow(key, pathPrefix, keyPath, depth, "punctuation", token);
+}
+
+function jsonPrimitiveRow(key, value, pathPrefix, keyPath, depth) {
+	return jsonRow(key, pathPrefix, keyPath, depth, jsonValueKind(value), jsonDisplayValue(value));
+}
+
+function jsonRow(key, pathPrefix, keyPath, depth, kind, displayValue) {
+	const rowPath = `${pathPrefix}-${keyPath || "root"}-${depth}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+	return {
+		id: rowPath,
+		fieldKey: key,
+		depth,
+		kind,
+		displayValue,
+	};
+}
+
+function jsonValueKind(value) {
+	if (typeof value === "string") return "string";
+	if (typeof value === "number") return "number";
+	if (typeof value === "boolean") return "boolean";
+	if (value == null) return "null";
+	return "punctuation";
+}
+
+function jsonDisplayValue(value) {
+	if (typeof value === "string") return JSON.stringify(value);
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (value == null) return "null";
+	return Array.isArray(value) ? "[]" : "{}";
 }
 
 function payloadPreview(value) {
@@ -459,10 +573,38 @@ summary:hover {
 .chain-content {
 	min-height: 16px;
 }
+.chain-label-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	margin-bottom: 2px;
+}
+
 .chain-label {
 	font-weight: 600;
 	font-size: 12px;
-	margin-bottom: 2px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.raw-toggle {
+	flex: 0 0 auto;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--c-text-3);
+	font-size: 11px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.raw-toggle:hover,
+.raw-toggle:focus-visible {
+	color: var(--c-primary);
+	outline: none;
 }
 .chain-preview {
 	font-size: 12px;
@@ -521,7 +663,74 @@ summary:hover {
 }
 
 .chain-raw {
-	margin-top: 2px;
+	margin-top: 4px;
+}
+
+.json-viewer {
+	max-height: 240px;
+	overflow: auto;
+	padding: 8px 0;
+	background: #fbfcfe;
+	border: 1px solid #dbe4ef;
+	border-radius: var(--radius-sm);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.55;
+}
+
+.json-row {
+	display: flex;
+	align-items: baseline;
+	padding: 1px 10px 1px calc(10px + var(--json-depth) * 16px);
+	min-width: max-content;
+}
+
+.json-row:hover {
+	background: #eef4ff;
+}
+
+.json-field {
+	display: flex;
+	align-items: baseline;
+	gap: 4px;
+	min-width: 0;
+	white-space: pre;
+}
+
+.json-key {
+	color: #7c3aed;
+	font-weight: 600;
+}
+
+.json-value {
+	min-width: 0;
+}
+
+.json-token-string,
+.json-value.json-token-string {
+	color: #047857;
+}
+
+.json-token-number,
+.json-value.json-token-number {
+	color: #b45309;
+}
+
+.json-token-boolean,
+.json-value.json-token-boolean {
+	color: #2563eb;
+	font-weight: 600;
+}
+
+.json-token-null,
+.json-value.json-token-null {
+	color: #64748b;
+	font-style: italic;
+}
+
+.json-token-punctuation,
+.json-value.json-token-punctuation {
+	color: #475569;
 }
 
 .response-block {

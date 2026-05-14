@@ -1,104 +1,86 @@
 <template>
-	<aside
-		v-if="tree.length"
-		class="session-tree-panel panel"
-		:class="{ collapsed: collapsed }"
-	>
+	<aside v-if="tree.length" class="session-tree-panel panel">
 		<div class="session-tree-header">
 			<div class="session-tree-copy">
 				<div class="section-eyebrow">{{ $t('logs.routes') }}</div>
 				<h3 class="session-tree-title">{{ $t('logs.sessions') }}</h3>
 			</div>
-			<div class="session-tree-actions">
-				<button
-					class="btn btn-secondary btn-sm session-tree-collapse-btn"
-					type="button"
-					:aria-expanded="!collapsed"
-					:aria-label="collapsed ? $t('logs.expandSessionTree') : $t('logs.collapseSessionTree')"
-					@click="$emit('toggle-collapse')"
-				>
-					{{ collapsed ? "\u25B6" : "\u25C0" }}
-				</button>
-			</div>
 		</div>
 
-		<template v-if="!collapsed">
-			<button
-				class="tree-root-button"
-				:class="{ active: activeRoute === '' && activeSession === '' }"
-				type="button"
-				@click="$emit('select-all')"
+		<button
+			class="tree-root-button"
+			:class="{ active: activeRoute === '' && activeSession === '' }"
+			type="button"
+			@click="$emit('select-all')"
+		>
+			<span class="tree-root-title">{{ $t('logs.allRequests') }}</span>
+			<span class="tree-root-meta">{{ logCount }} {{ $t('logs.reqs') }}</span>
+		</button>
+
+		<div class="tree-routes" role="tree">
+			<div
+				v-for="group in tree"
+				:key="group.route"
+				class="route-group"
+				role="treeitem"
+				:aria-expanded="isExpanded(group.route)"
 			>
-				<span class="tree-root-title">{{ $t('logs.allRequests') }}</span>
-				<span class="tree-root-meta">{{ logCount }} {{ $t('logs.reqs') }}</span>
-			</button>
-
-			<div class="tree-routes" role="tree">
 				<div
-					v-for="group in tree"
-					:key="group.route"
-					class="route-group"
-					role="treeitem"
-					:aria-expanded="isExpanded(group.route)"
+					class="route-branch"
+					:class="{ active: activeRoute === group.route && !activeSession }"
 				>
-					<div
-						class="route-branch"
-						:class="{ active: activeRoute === group.route && !activeSession }"
+					<button
+						class="route-chevron"
+						:class="{ 'route-chevron-open': isExpanded(group.route) }"
+						type="button"
+						:aria-label="isExpanded(group.route) ? $t('logs.collapseRouteGroup') : $t('logs.expandRouteGroup')"
+						@click.stop="toggleExpand(group.route)"
 					>
-						<button
-							class="route-chevron"
-							:class="{ 'route-chevron-open': isExpanded(group.route) }"
-							type="button"
-							:aria-label="isExpanded(group.route) ? $t('logs.collapseRouteGroup') : $t('logs.expandRouteGroup')"
-							@click.stop="toggleExpand(group.route)"
-						>
-							{{ isExpanded(group.route) ? '\u25BC' : '\u25B6' }}
-						</button>
-						<button
-							class="route-branch-button"
-							type="button"
-							@click="$emit('select-route', group.route)"
-						>
-							<span class="route-branch-label">{{ group.route }}</span>
-							<span class="badge">{{ group.sessions.length }}</span>
-						</button>
-					</div>
+						{{ isExpanded(group.route) ? '\u25BC' : '\u25B6' }}
+					</button>
+					<button
+						class="route-branch-button"
+						type="button"
+						@click="$emit('select-route', group.route)"
+					>
+						<span class="route-branch-label">{{ group.route }}</span>
+						<span class="badge">{{ group.sessions.length }}</span>
+					</button>
+				</div>
 
-					<div v-if="isExpanded(group.route)" class="route-sessions">
-						<button
-							v-for="session in group.sessions"
-							:key="session.fingerprint"
-							class="session-button"
-							:class="{
-								active: activeSession === session.fingerprint,
-								'session-pending': session.log.pending,
-								'session-error': session.log.error,
-							}"
-							type="button"
-							@click.stop="$emit('select-session', { route: group.route, fingerprint: session.fingerprint })"
-						>
-							<span class="session-preview">{{ session.preview }}</span>
-							<span v-if="session.log.pending" class="session-pulse" aria-hidden="true"></span>
-						</button>
-					</div>
+				<div v-if="isExpanded(group.route)" class="route-sessions">
+					<button
+						v-for="session in group.sessions"
+						:key="session.fingerprint"
+						class="session-button"
+						:class="{
+							active: activeSession === session.fingerprint,
+							'session-pending': session.log.pending,
+							'session-error': session.log.error,
+						}"
+						type="button"
+						@click.stop="$emit('select-session', { route: group.route, fingerprint: session.fingerprint })"
+					>
+						<span class="session-preview">{{ session.preview }}</span>
+						<span v-if="session.log.pending" class="session-pulse" aria-hidden="true"></span>
+					</button>
 				</div>
 			</div>
-		</template>
+		</div>
 	</aside>
 </template>
 
 <script setup>
 import { ref } from "vue";
 
-const props = defineProps({
+defineProps({
 	tree: { type: Array, required: true },
 	activeRoute: { type: String, required: true },
 	activeSession: { type: String, required: true },
-	collapsed: { type: Boolean, required: true },
 	logCount: { type: Number, required: true },
 });
 
-const emit = defineEmits(["select-all", "select-route", "select-session", "toggle-collapse"]);
+defineEmits(["select-all", "select-route", "select-session"]);
 
 const STORAGE_KEY = "warden:logs:collapsedRoutes";
 
@@ -145,21 +127,10 @@ function toggleExpand(route) {
 	overflow-y: auto;
 }
 
-.session-tree-panel.collapsed {
-	padding: 14px 10px;
-}
-
 .session-tree-header {
 	display: flex;
 	align-items: flex-start;
-	justify-content: space-between;
-	gap: 12px;
-}
-
-.session-tree-actions {
-	display: flex;
-	align-items: center;
-	gap: 8px;
+	justify-content: flex-start;
 }
 
 .session-tree-copy {
@@ -167,12 +138,6 @@ function toggleExpand(route) {
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
-}
-
-.session-tree-collapse-btn {
-	min-width: 40px;
-	min-height: 40px;
-	padding-inline: 0;
 }
 
 .section-eyebrow {
@@ -387,44 +352,11 @@ function toggleExpand(route) {
 	flex-shrink: 0;
 }
 
-.session-tree-panel.collapsed .section-eyebrow,
-.session-tree-panel.collapsed .session-tree-title,
-.session-tree-panel.collapsed .badge,
-.session-tree-panel.collapsed .route-chevron,
-.session-tree-panel.collapsed .route-sessions,
-.session-tree-panel.collapsed .tree-root-meta {
-	display: none;
-}
-
-.session-tree-panel.collapsed .session-tree-header {
-	justify-content: center;
-}
-
-.session-tree-panel.collapsed .tree-root-button {
-	justify-content: center;
-	padding-inline: 0;
-}
-
-.session-tree-panel.collapsed .route-branch {
-	justify-content: center;
-	padding-inline: 0;
-}
-
-.session-tree-panel.collapsed .route-branch-label,
-.session-tree-panel.collapsed .route-chevron {
-	display: none;
-}
-
 @media (max-width: 768px) {
 	.session-tree-panel {
 		position: static;
 		padding: 14px;
 		max-height: none;
-	}
-
-	.session-tree-collapse-btn {
-		min-width: 44px;
-		min-height: 44px;
 	}
 }
 </style>

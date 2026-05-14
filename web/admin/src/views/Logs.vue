@@ -18,7 +18,6 @@
 		<div
 			class="logs-workspace"
 			:class="{
-				'logs-workspace-tree-collapsed': sessionTreeCollapsed,
 				'logs-workspace-no-tree': !sessionTree.length,
 			}"
 		>
@@ -26,12 +25,10 @@
 				:tree="sessionTree"
 				:activeRoute="activeRoute"
 				:activeSession="activeSession"
-				:collapsed="sessionTreeCollapsed"
 				:logCount="logs.length"
 				@select-all="selectAll"
 				@select-route="selectRoute"
 				@select-session="selectSession"
-				@toggle-collapse="toggleSessionTree"
 			/>
 
 			<section class="logs-content">
@@ -209,7 +206,6 @@ const activeRoute = ref("");
 const activeSession = ref("");
 const activeDetailRequestID = ref("");
 const selectedDetailLog = ref(null);
-const sessionTreeCollapsed = ref(false);
 
 watch(activeDetailRequestID, (val) => {
 	setAutoScroll(!val);
@@ -353,25 +349,18 @@ function selectAll() {
 	activeRoute.value = "";
 	activeSession.value = "";
 	closeDetail();
-	sessionTreeCollapsed.value = false;
 }
 
 function selectRoute(routeKey) {
 	activeRoute.value = routeKey;
 	activeSession.value = "";
 	closeDetail();
-	sessionTreeCollapsed.value = false;
 }
 
 function selectSession({ route, fingerprint }) {
 	activeRoute.value = route || "";
 	activeSession.value = fingerprint || "";
 	closeDetail();
-	sessionTreeCollapsed.value = false;
-}
-
-function toggleSessionTree() {
-	sessionTreeCollapsed.value = !sessionTreeCollapsed.value;
 }
 
 function isDetailOpen(log) {
@@ -459,10 +448,6 @@ function statusText(log) {
 	grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
 	gap: 20px;
 	align-items: start;
-}
-
-.logs-workspace-tree-collapsed {
-	grid-template-columns: 88px minmax(0, 1fr);
 }
 
 .logs-workspace-no-tree {
