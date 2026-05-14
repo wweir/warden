@@ -12,8 +12,47 @@ import (
 // BuildFingerprint constructs a compact fingerprint string from a parsed request body.
 // Returns empty string if rawBody is not valid JSON or contains no user messages.
 func BuildFingerprint(rawBody json.RawMessage) string {
-	if len(rawBody) == 0 {
+	sysTexts, fsmInputs := conversationParts(rawBody, true)
+	if len(fsmInputs) == 0 {
 		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(hashN(strings.Join(sysTexts, ""), 6))
+	for i, input := range fsmInputs {
+		width := 6 - i
+		if width < 2 {
+			width = 2
+		}
+		b.WriteString(hashN(input, width))
+	}
+	return b.String()
+}
+
+// ConversationText returns normalized full conversation text for continuation
+// checks. It is intentionally full text, not the compact fingerprint prefix.
+func ConversationText(rawBody json.RawMessage) string {
+	sysTexts, fsmInputs := conversationParts(rawBody, false)
+	if len(fsmInputs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(sysTexts)+len(fsmInputs))
+	for _, text := range sysTexts {
+		if text != "" {
+			parts = append(parts, "system:"+text)
+		}
+	}
+	for _, text := range fsmInputs {
+		if text != "" {
+			parts = append(parts, "turn:"+text)
+		}
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func conversationParts(rawBody json.RawMessage, truncateAssistant bool) ([]string, []string) {
+	if len(rawBody) == 0 {
+		return nil, nil
 	}
 	jsonStr := string(rawBody)
 
@@ -39,7 +78,7 @@ func BuildFingerprint(rawBody json.RawMessage) string {
 					fsmInputs = append(fsmInputs, s)
 				}
 			case "assistant":
-				if s := assistantMessageText(msg); s != "" {
+				if s := assistantMessageText(msg, truncateAssistant); s != "" {
 					fsmInputs = append(fsmInputs, s)
 				}
 			case "tool", "function":
@@ -56,25 +95,12 @@ func BuildFingerprint(rawBody json.RawMessage) string {
 			if input.Type == gjson.String {
 				fsmInputs = append(fsmInputs, input.String())
 			} else if input.IsArray() {
-				fsmInputs = append(fsmInputs, extractResponsesInput(input.Array(), &sysTexts)...)
+				fsmInputs = append(fsmInputs, extractResponsesInput(input.Array(), &sysTexts, truncateAssistant)...)
 			}
 		}
 	}
 
-	if len(fsmInputs) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.WriteString(hashN(strings.Join(sysTexts, ""), 6))
-	for i, input := range fsmInputs {
-		width := 6 - i
-		if width < 2 {
-			width = 2
-		}
-		b.WriteString(hashN(input, width))
-	}
-	return b.String()
+	return sysTexts, fsmInputs
 }
 
 func contentText(raw json.RawMessage) string {
@@ -186,7 +212,7 @@ func anthropicToolUseText(raw json.RawMessage) string {
 	return strings.Join(parts, "")
 }
 
-func assistantMessageText(msg gjson.Result) string {
+func assistantMessageText(msg gjson.Result, truncateText bool) string {
 	var parts []string
 
 	toolCalls := msg.Get("tool_calls")
@@ -201,7 +227,10 @@ func assistantMessageText(msg gjson.Result) string {
 	content := msg.Get("content")
 	if content.Exists() {
 		contentRaw := json.RawMessage(content.Raw)
-		text := contentTextTruncated(contentRaw, 100)
+		text := contentTextFromResult(content)
+		if truncateText {
+			text = contentTextTruncated(contentRaw, 100)
+		}
 		if content.IsArray() {
 			if tu := anthropicToolUseText(contentRaw); tu != "" {
 				parts = append(parts, tu)
@@ -229,7 +258,7 @@ func filterBillingHeader(s string) string {
 	return b.String()
 }
 
-func extractResponsesInput(items []gjson.Result, sysTexts *[]string) []string {
+func extractResponsesInput(items []gjson.Result, sysTexts *[]string, truncateAssistant bool) []string {
 	var inputs []string
 	for _, item := range items {
 		typ := item.Get("type").String()
@@ -241,20 +270,39 @@ func extractResponsesInput(items []gjson.Result, sysTexts *[]string) []string {
 			switch role {
 			case "system":
 				*sysTexts = append(*sysTexts, text)
-			case "user", "assistant":
+			case "user":
+				if text != "" {
+					inputs = append(inputs, text)
+				}
+			case "assistant":
+				if truncateAssistant && len(text) > 100 {
+					text = text[:100]
+				}
 				if text != "" {
 					inputs = append(inputs, text)
 				}
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			name := item.Get("name").String()
+			if name == "" {
+				name = item.Get("tool_name").String()
+			}
 			args := item.Get("arguments").String()
+			if args == "" {
+				args = item.Get("input").Raw
+			}
 			if s := name + args; s != "" {
 				inputs = append(inputs, s)
 			}
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
 			callID := item.Get("call_id").String()
 			output := item.Get("output").String()
+			if output == "" {
+				output = item.Get("content").String()
+			}
+			if output == "" {
+				output = item.Get("result").String()
+			}
 			if s := callID + output; s != "" {
 				inputs = append(inputs, s)
 			}

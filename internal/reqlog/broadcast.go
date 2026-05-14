@@ -38,13 +38,13 @@ func (b *Broadcaster) Publish(r Record) {
 		return
 	}
 
-	// 2. Same session replaces older requests from the same conversation.
-	if sessionKey := r.SessionKey(); sessionKey != "" {
-		if idx, ok := b.findSessionIndexLocked(sessionKey); ok {
-			b.recent[idx] = r
-			b.fanOutLocked(r)
-			return
-		}
+	// 2. A later request whose full normalized conversation contains an older
+	// request replaces that older request. Shared system or agent prefixes alone
+	// are not enough; concurrent independent sessions must remain separate.
+	if idx, ok := b.findContinuationIndexLocked(r); ok {
+		b.recent[idx] = r
+		b.fanOutLocked(r)
+		return
 	}
 
 	// 3. New record.
@@ -85,17 +85,13 @@ func (b *Broadcaster) findRecentIndexLocked(requestID string) (int, bool) {
 	return 0, false
 }
 
-func (b *Broadcaster) findSessionIndexLocked(sessionKey string) (int, bool) {
-	if sessionKey == "" {
-		return 0, false
-	}
-
+func (b *Broadcaster) findContinuationIndexLocked(r Record) (int, bool) {
 	limit := b.pos
 	if b.full {
 		limit = recentSize
 	}
 	for i := 0; i < limit; i++ {
-		if b.recent[i].SessionKey() == sessionKey {
+		if r.Continues(b.recent[i]) {
 			return i, true
 		}
 	}

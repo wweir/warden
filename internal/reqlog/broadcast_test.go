@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,7 +46,7 @@ func TestBroadcasterPublishReplacesRecentByRequestID(t *testing.T) {
 	}
 }
 
-func TestBroadcasterPublishReplacesRecentBySessionKey(t *testing.T) {
+func TestBroadcasterPublishKeepsSameAgentPrefixSessions(t *testing.T) {
 	t.Parallel()
 
 	b := NewBroadcaster()
@@ -55,6 +55,7 @@ func TestBroadcasterPublishReplacesRecentBySessionKey(t *testing.T) {
 		RequestID:   "req_1",
 		Route:       "chat/completions",
 		Fingerprint: "abcdef1111",
+		Request:     json.RawMessage(`{"messages":[{"role":"system","content":"same agent prefix"},{"role":"user","content":"first task"}]}`),
 		Model:       "gpt-4o",
 	}
 	second := Record{
@@ -62,7 +63,36 @@ func TestBroadcasterPublishReplacesRecentBySessionKey(t *testing.T) {
 		RequestID:   "req_2",
 		Route:       "chat/completions",
 		Fingerprint: "abcdef2222",
+		Request:     json.RawMessage(`{"messages":[{"role":"system","content":"same agent prefix"},{"role":"user","content":"second task"}]}`),
 		Model:       "gpt-4o-mini",
+	}
+
+	b.Publish(first)
+	b.Publish(second)
+
+	recent := b.Recent()
+	if len(recent) != 2 {
+		t.Fatalf("recent count = %d, want 2", len(recent))
+	}
+}
+
+func TestBroadcasterPublishReplacesContinuedConversation(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	first := Record{
+		Timestamp: time.Unix(100, 0),
+		RequestID: "req_1",
+		Route:     "chat/completions",
+		Request:   json.RawMessage(`{"messages":[{"role":"system","content":"agent"},{"role":"user","content":"first task"}]}`),
+		Model:     "gpt-4o",
+	}
+	second := Record{
+		Timestamp: time.Unix(101, 0),
+		RequestID: "req_2",
+		Route:     "chat/completions",
+		Request:   json.RawMessage(`{"messages":[{"role":"system","content":"agent"},{"role":"user","content":"first task"},{"role":"assistant","content":"answer"},{"role":"user","content":"follow up"}]}`),
+		Model:     "gpt-4o-mini",
 	}
 
 	b.Publish(first)
@@ -75,12 +105,9 @@ func TestBroadcasterPublishReplacesRecentBySessionKey(t *testing.T) {
 	if recent[0].RequestID != "req_2" {
 		t.Fatalf("recent[0].RequestID = %q, want req_2", recent[0].RequestID)
 	}
-	if recent[0].Model != "gpt-4o-mini" {
-		t.Fatalf("recent[0].Model = %q, want gpt-4o-mini", recent[0].Model)
-	}
 }
 
-func TestFileLoggerOverwritesBySessionKey(t *testing.T) {
+func TestFileLoggerKeepsDistinctRequests(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -111,23 +138,13 @@ func TestFileLoggerOverwritesBySessionKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("file count = %d, want 1", len(files))
+	if len(files) != 2 {
+		t.Fatalf("file count = %d, want 2", len(files))
 	}
-	if got, want := files[0].Name(), "chat_completions_abcdef.json"; got != want {
-		t.Fatalf("file name = %q, want %q", got, want)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	var got Record
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if got.RequestID != "req_2" {
-		t.Fatalf("RequestID = %q, want req_2", got.RequestID)
+	for _, file := range files {
+		if !strings.Contains(file.Name(), "req_") {
+			t.Fatalf("file name = %q, want request id in name", file.Name())
+		}
 	}
 }
 

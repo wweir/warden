@@ -2,8 +2,10 @@ package reqlog
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
+	fingerprintpkg "github.com/wweir/warden/internal/reqlog/fingerprint"
 	"github.com/wweir/warden/pkg/toolhook"
 )
 
@@ -72,21 +74,19 @@ type ToolResultEntry struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
-// SessionKey returns a stable session identifier for cross-request deduplication.
-// An empty result means the record should fall back to request-id-level dedup.
-func (r Record) SessionKey() string {
-	sysHash := r.sessionSysHash()
-	if sysHash == "" {
-		return ""
+func (r Record) Continues(prev Record) bool {
+	if r.RequestID == "" || prev.RequestID == "" || r.RequestID == prev.RequestID {
+		return false
 	}
-	return r.Route + "\x00" + sysHash
-}
-
-func (r Record) sessionSysHash() string {
-	if r.Fingerprint == "" || len(r.Fingerprint) < 6 {
-		return ""
+	if r.Route != prev.Route {
+		return false
 	}
-	return r.Fingerprint[:6]
+	current := fingerprintpkg.ConversationText(r.Request)
+	previous := fingerprintpkg.ConversationText(prev.Request)
+	if current == "" || previous == "" || len(current) <= len(previous) {
+		return false
+	}
+	return strings.Contains(current, previous)
 }
 
 // Logger defines the interface for request/response logging backends.

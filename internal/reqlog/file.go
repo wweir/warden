@@ -22,9 +22,7 @@ func NewFileLogger(dir string) (*FileLogger, error) {
 	return &FileLogger{dir: dir}, nil
 }
 
-// Log writes a Record as a JSON file. When a session key is present the file
-// name is fixed per session so that older requests in the same conversation
-// are overwritten, keeping only the latest complete log.
+// Log writes a Record as a JSON file.
 func (f *FileLogger) Log(r Record) {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -34,10 +32,6 @@ func (f *FileLogger) Log(r Record) {
 
 	route := sanitizeFilenamePart(strings.Trim(r.Route, "/"))
 	filename := route + "_" + r.Timestamp.Format("0102-150405.000") + "_" + r.RequestID + ".json"
-
-	if sysHash := r.sessionSysHash(); sysHash != "" {
-		filename = route + "_" + sysHash + ".json"
-	}
 
 	path := filepath.Join(f.dir, filename)
 
