@@ -33,37 +33,44 @@ function extractUserMessageText(message) {
 	if (message == null) return "";
 	if (typeof message === "string") return message;
 
-	const content = message.content;
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		const text = content
-			.filter((part) => ["text", "input_text", "output_text"].includes(part?.type) && typeof part.text === "string")
-			.map((part) => part.text)
-			.join(" ");
-		if (text) return text;
-	}
+	const content = extractTextParts(message.content);
+	if (content) return content;
 
-	if (Array.isArray(message.input_text)) {
-		const text = message.input_text.filter((p) => typeof p === "string").join(" ");
-		if (text) return text;
+	return extractTextParts(message.input_text) ||
+		extractTextParts(message.output_text) ||
+		extractTextParts(message.text);
+}
+
+function extractTextParts(value) {
+	if (value == null) return "";
+	if (typeof value === "string") return value;
+	if (Array.isArray(value)) {
+		return value
+			.map((part) => {
+				if (typeof part === "string") return part;
+				if (!part || typeof part !== "object") return "";
+				if (["text", "input_text", "output_text"].includes(part.type) && typeof part.text === "string") return part.text;
+				if (typeof part.input_text === "string") return part.input_text;
+				if (typeof part.output_text === "string") return part.output_text;
+				return "";
+			})
+			.filter(Boolean)
+			.join(" ");
 	}
-	if (typeof message.input_text === "string") return message.input_text;
-	if (typeof message.text === "string") return message.text;
+	if (typeof value === "object") {
+		if (typeof value.text === "string") return value.text;
+		if (typeof value.input_text === "string") return value.input_text;
+		if (typeof value.output_text === "string") return value.output_text;
+	}
 	return "";
 }
 
 function extractPreview(msg) {
-	const c = msg.content;
-	if (!c) return "";
-	if (typeof c === "string") return truncate(c, 120);
-	if (Array.isArray(c)) {
-		const text = c
-			.filter((part) => ["text", "input_text", "output_text"].includes(part?.type) && typeof part.text === "string")
-			.map((part) => part.text)
-			.join(" ");
-		if (text) return truncate(text, 120);
-		const types = [...new Set(c.map((p) => p.type))];
-		return "[" + types.join(", ") + "]";
+	const text = extractUserMessageText(msg);
+	if (text) return truncate(text.replace(/\s+/g, " "), 120);
+	if (Array.isArray(msg?.content)) {
+		const types = [...new Set(msg.content.map((p) => p?.type).filter(Boolean))];
+		if (types.length) return "[" + types.join(", ") + "]";
 	}
 	return "";
 }
@@ -106,7 +113,12 @@ export function lastUserPreview(log) {
 			return preview;
 		}
 		if (Array.isArray(req.input)) {
-			const users = req.input.filter((m) => m.role === "user" || typeof m === "string");
+			const users = req.input.filter((m) => {
+				if (typeof m === "string") return true;
+				if (!m || typeof m !== "object") return false;
+				if (m.role === "user") return true;
+				return m.type === "message" && !m.role;
+			});
 			if (users.length) lastMsg = users[users.length - 1];
 		}
 	}
