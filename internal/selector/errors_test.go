@@ -45,6 +45,7 @@ func TestIsRetryableError_UpstreamRetryable(t *testing.T) {
 		{429, true},
 		{404, true},
 		{403, true},
+		{402, true},
 		{400, false},
 		{401, true},
 		{422, false},
@@ -140,6 +141,16 @@ func TestIsRetryableError_OpenAIInsufficientQuota(t *testing.T) {
 	}
 	if !IsRetryableError(err) {
 		t.Error("IsRetryableError(OpenAI insufficient_quota) = false, want true")
+	}
+}
+
+func TestIsRetryableError_PaymentRequired(t *testing.T) {
+	err := &UpstreamError{
+		Code: 402,
+		Body: `{"error":{"type":"payment_required","message":"billing or quota required"}}`,
+	}
+	if !IsRetryableError(err) {
+		t.Error("IsRetryableError(402 payment required) = false, want true")
 	}
 }
 

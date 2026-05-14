@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,6 +27,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 		fallbackProto  string
 		mutatePrimary  func(*config.ProviderConfig)
 		mutateFallback func(*config.ProviderConfig)
+		failStatus     int
 		exactModel     string
 		primaryModel   string
 		fallbackModel  string
@@ -48,6 +50,24 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 			fallbackModel: "gpt-4o-fallback",
 			successBody:   `{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o-fallback","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
 			failBody:      `{"error":{"type":"server_error","message":"primary failed"}}`,
+		},
+		{
+			name:          "chat direct payment required",
+			routePrefix:   "/openai-chat-402",
+			routeProtocol: config.RouteProtocolChat,
+			requestPath:   "/openai-chat-402/chat/completions",
+			requestBody:   `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			upstreamPath:  "/chat/completions",
+			primaryURL:    func(url string) string { return url },
+			fallbackURL:   func(url string) string { return url },
+			primaryProto:  "openai",
+			fallbackProto: "openai",
+			failStatus:    http.StatusPaymentRequired,
+			exactModel:    "gpt-4o",
+			primaryModel:  "gpt-4o-primary",
+			fallbackModel: "gpt-4o-fallback",
+			successBody:   `{"id":"chatcmpl_402","object":"chat.completion","created":1,"model":"gpt-4o-fallback","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+			failBody:      `{"error":{"type":"payment_required","message":"billing or quota required"}}`,
 		},
 		{
 			name:          "responses direct",
@@ -108,7 +128,11 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			primary := newFailoverUpstream(t, tt.upstreamPath, http.StatusInternalServerError, tt.failBody)
+			failStatus := tt.failStatus
+			if failStatus == 0 {
+				failStatus = http.StatusInternalServerError
+			}
+			primary := newFailoverUpstream(t, tt.upstreamPath, failStatus, tt.failBody)
 			defer primary.Close()
 			fallback := newFailoverUpstream(t, tt.upstreamPath, http.StatusOK, tt.successBody)
 			defer fallback.Close()
@@ -184,7 +208,7 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 			if failover.NextProviderModel != tt.fallbackModel {
 				t.Fatalf("next provider model = %q, want %q", failover.NextProviderModel, tt.fallbackModel)
 			}
-			if !strings.Contains(failover.Error, "500") {
+			if !strings.Contains(failover.Error, strconv.Itoa(failStatus)) {
 				t.Fatalf("failover error = %q, want status code", failover.Error)
 			}
 		})

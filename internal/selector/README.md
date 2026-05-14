@@ -13,7 +13,7 @@
 - Guards model discovery pagination against empty or repeated cursors so a broken upstream cannot trap startup/background refresh in an endless `/models` loop.
 - Stores admin-facing protocol probe state.
 - Classifies wrapped downstream cancellation/deadline errors as non-retryable so request termination does not masquerade as a network failover signal.
-- Treats plain upstream `400` request validation errors as non-retryable while still retrying explicit transient, quota, entitlement, model-not-found, gateway, and 5xx signals.
+- Treats plain upstream `400` request validation errors as non-retryable while still retrying explicit transient, payment/quota, entitlement, model-not-found, gateway, and 5xx signals. Upstream `402 Payment Required` is retryable because account billing or quota state can differ across providers.
 
 ## File Layout
 

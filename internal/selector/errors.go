@@ -34,6 +34,7 @@ func (e *UpstreamError) IsAuthError() bool {
 //
 // Retryable by HTTP status code:
 //   - 401: credentials/model entitlements may differ across providers
+//   - 402: provider account payment/quota state may differ across providers
 //   - 403: provider may reject specific models/keys, another provider may accept
 //   - 404: endpoint not found or model missing on this provider
 //   - 429: rate limit / quota exhausted
@@ -48,7 +49,8 @@ func (e *UpstreamError) IsAuthError() bool {
 // Plain 400 request validation errors are not retryable. They usually require
 // client-side request changes, for example provider-specific embeddings fields.
 func (e *UpstreamError) IsRetryable() bool {
-	if e.Code >= 500 || e.Code == 401 || e.Code == 429 || e.Code == 404 || e.Code == 403 {
+	if e.Code >= 500 || e.Code == http.StatusUnauthorized || e.Code == http.StatusPaymentRequired ||
+		e.Code == http.StatusForbidden || e.Code == http.StatusNotFound || e.Code == http.StatusTooManyRequests {
 		return true
 	}
 
