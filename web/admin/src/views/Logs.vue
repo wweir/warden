@@ -216,16 +216,16 @@ const sessionTree = computed(() => {
 	const map = new Map();
 	for (const log of logs.value) {
 		const route = log.route || "(unknown)";
-		const fp = log.fingerprint || "";
+		const sessionID = log.request_id || log.fingerprint || "";
 		if (!map.has(route)) map.set(route, new Map());
-		map.get(route).set(fp, log);
+		map.get(route).set(sessionID, log);
 	}
 	return Array.from(map.entries()).map(([route, sessionMap]) => ({
 		route,
-		sessions: Array.from(sessionMap.entries()).map(([fp, log]) => ({
-			fingerprint: fp,
+		sessions: Array.from(sessionMap.entries()).map(([sessionID, log]) => ({
+			fingerprint: sessionID,
 			log,
-			preview: lastUserPreview(log) || fp.slice(0, 8) || t("logs.unknown"),
+			preview: lastUserPreview(log) || sessionID.slice(0, 8) || t("logs.unknown"),
 		})),
 	}));
 });
@@ -246,7 +246,7 @@ const filteredLogs = computed(() => {
 		result = result.filter((log) => (log.route || "(unknown)") === route);
 	}
 	if (sessionFp) {
-		result = result.filter((log) => log.fingerprint === sessionFp);
+		result = result.filter((log) => (log.request_id || log.fingerprint || "") === sessionFp);
 	}
 	if (!f.prompt && !f.model && !f.provider && !f.status) return result;
 	return result.filter((log) => {
