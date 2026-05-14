@@ -9,10 +9,10 @@
 - Tool Hooks：route-scoped hook 编辑与建议
 - Logs：SSE 请求日志流
 - Logs 流按 `request_id` 合并事件；流式请求会先显示 pending，再在同一条记录上补全最终响应
-- **Session 级去重**：前端本地数组同样按 `Route + Fingerprint[:6]` 做 session key 去重，同 session 的旧记录被新完整记录替换；这保证长会话不会撑满 500 条日志上限
+- **后续轮次去重**：前端本地数组只在新请求完整对话包含旧请求完整对话时替换旧记录；相同 agent/system 前缀的并发 session 会保留为独立记录
 - Logs 详情弹层展示 `ttft_ms`，有流式首 token 数据时与总耗时并列显示；非流式请求不会伪造该字段
 - Logs 页面整合会话时，优先按 Responses API 的 `previous_response_id -> response.id` 显式续接整合；没有显式续接时，只在同 route 下按 fingerprint 前缀做保守归并，不再使用旧的 prompt 哈希 + 时间窗启发式，避免把独立请求误并成同一 session
-- Logs 页面桌面端采用"左侧 route 过滤器 + 右侧日志表"的主从布局；顶部动作区单独成组，右侧表格上方只有一行简洁的统计条（当前 route / 时间范围 / 请求数）；后端 session 去重后每条记录自然平铺，前端不再维护 chain 展开/折叠状态，已删除 `useSessionChaining` composable；状态指示改用 pill badge 替代整行背景色；左侧过滤器支持整栏收起；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段
+- Logs 页面桌面端采用"左侧 route/session 过滤器 + 右侧日志表"的主从布局；顶部动作区单独成组，右侧表格上方只有一行简洁的统计条（当前 route / 时间范围 / 请求数）；状态指示改用 pill badge 替代整行背景色；移动端切换为纵向卡片视图；详情弹层拆分摘要、会话过程和响应结果三段
 - Chat：根据 `route.protocol` 自动选择 `/chat/completions`、`/responses` 或 `/messages` 发起请求，并按对应 SSE 格式解析文本输出；发起 Responses 请求时显式携带 `store=false`；对 `responses` 协议会本地保存上一轮 `response.id` 并在下一轮带上 `previous_response_id`，由网关透明转发到上游
 - Provider 详情页的 cliproxy 认证导入面板只写 `cliproxy.auth_dir` 下的 auth JSON 文件，不回填 provider 配置字段；导入和列表状态只做离线结构校验，不证明账号在线可用；页面会异步读取每个 auth 文件中可展示的用量状态，并优先直接展示计划、认证状态、5 小时限额、周限额和重置时间，后端只返回脱敏后的 quota cooldown、model state、selector 最近记录的 cliproxy 运行态错误响应和白名单用量字段；在线验证按钮只调用 Warden 后端，由后端沿当前 cliproxy provider 的正常 Responses 探测链路发起请求
 - Config：结构化配置编辑、客户端 API 密钥、验证、应用
