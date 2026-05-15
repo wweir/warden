@@ -23,11 +23,13 @@
 		>
 			<SessionTreePanel
 				:tree="sessionTree"
-				:activeRoute="activeRoute"
-				:activeSession="activeSession"
+				:activeRoute="scope.route"
+				:activeSession="scope.leaf"
+				:activePrefix="scope.prefix"
 				:logCount="logs.length"
 				@select-all="selectAll"
 				@select-route="selectRoute"
+				@select-prefix="selectPrefix"
 				@select-session="selectSession"
 			/>
 
@@ -71,12 +73,20 @@
 					/>
 				</div>
 
-				<div v-if="selectedDetailLog" class="detail-inline panel">
+				<div v-if="selectedDetailLog" ref="detailPanel" class="detail-inline panel">
 					<div class="detail-inline-header">
 						<span class="detail-inline-label">{{ $t('logs.requestDetail') }}</span>
-						<button class="btn btn-secondary btn-sm" @click="closeDetail">
-							{{ $t('logs.collapse') }}
-						</button>
+						<div class="detail-inline-actions">
+							<button class="btn btn-secondary btn-sm" type="button" @click="scrollDetailToStart">
+								{{ $t('logs.jumpToStart') }}
+							</button>
+							<button class="btn btn-secondary btn-sm" type="button" @click="scrollDetailToLatest('smooth')">
+								{{ $t('logs.jumpToLatest') }}
+							</button>
+							<button class="btn btn-secondary btn-sm" type="button" @click="closeDetail">
+								{{ $t('logs.collapse') }}
+							</button>
+						</div>
 					</div>
 					<LogDetailPanel
 						:log="selectedDetailLog"
@@ -89,13 +99,13 @@
 						<table class="data-table desktop-log-table">
 							<thead>
 								<tr>
-									<th class="th-actions"></th>
-									<th>{{ $t('logs.time') }}</th>
-									<th>{{ $t('logs.prompt') }}</th>
-									<th>{{ $t('logs.model') }}</th>
-									<th>{{ $t('logs.provider') }}</th>
-									<th>{{ $t('logs.duration') }}</th>
-									<th>{{ $t('logs.status') }}</th>
+									<th class="th-actions" scope="col"></th>
+									<th scope="col">{{ $t('logs.time') }}</th>
+									<th scope="col">{{ $t('logs.prompt') }}</th>
+									<th scope="col">{{ $t('logs.model') }}</th>
+									<th scope="col">{{ $t('logs.provider') }}</th>
+									<th scope="col">{{ $t('logs.duration') }}</th>
+									<th scope="col">{{ $t('logs.status') }}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -182,55 +192,135 @@
 				</div>
 			</section>
 		</div>
-
 	</div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { formatDuration } from "../utils.js";
 import { useLogStream } from "../composables/useLogStream.js";
 import { lastUserPreview, failoverCount, isRecoveredByFailover, hasRejectedVerdict, getTimestampMs } from "../log-utils.js";
+import { continuesLog } from "../composables/useLogStream.js";
 import SessionTreePanel from "../components/SessionTreePanel.vue";
 import LogDetailPanel from "../components/LogDetailPanel.vue";
 
 const { t, locale } = useI18n();
-
-// --- Log stream ---
 const { logs, paused, error, togglePause, clearLogs, setAutoScroll } = useLogStream();
 
-// --- UI state ---
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
-const activeRoute = ref("");
-const activeSession = ref("");
+const scope = ref({ route: "", prefix: "", leaf: "" });
 const activeDetailRequestID = ref("");
+const activeDetailFingerprint = ref("");
 const selectedDetailLog = ref(null);
+const detailPanel = ref(null);
 
 watch(activeDetailRequestID, (val) => {
 	setAutoScroll(!val);
 });
 
-// --- Session tree ---
-const sessionTree = computed(() => {
-	const map = new Map();
-	for (const log of logs.value) {
-		const route = log.route || "(unknown)";
-		const sessionID = log.request_id || log.fingerprint || "";
-		if (!map.has(route)) map.set(route, new Map());
-		map.get(route).set(sessionID, log);
+function syncScopeToLogs() {
+	if (scope.value.route && !logs.value.some((log) => routeName(log.route) === scope.value.route)) {
+		scope.value = { route: "", prefix: "", leaf: "" };
+		return;
 	}
-	return Array.from(map.entries()).map(([route, sessionMap]) => ({
-		route,
-		sessions: Array.from(sessionMap.entries()).map(([sessionID, log]) => ({
-			fingerprint: sessionID,
-			log,
-			preview: lastUserPreview(log) || sessionID.slice(0, 8) || t("logs.unknown"),
-		})),
-	}));
+	if (scope.value.leaf && !logs.value.some((log) => (log.fingerprint || "") === scope.value.leaf)) {
+		scope.value = { ...scope.value, leaf: "" };
+	}
+	if (scope.value.prefix && !logs.value.some((log) => (log.fingerprint || "").startsWith(scope.value.prefix))) {
+		scope.value = { ...scope.value, prefix: "" };
+	}
+	if (activeDetailRequestID.value && !logs.value.some((log) => log.request_id === activeDetailRequestID.value)) {
+		const nextLog = findDetailContinuation();
+		if (nextLog) {
+			attachDetailLog(nextLog);
+			return;
+		}
+		closeDetail();
+	}
+}
+
+watch(
+	() => {
+		const last = logs.value[logs.value.length - 1];
+		return `${logs.value.length}|${last?.request_id || ""}|${last?.fingerprint || ""}|${last?.route || ""}`;
+	},
+	syncScopeToLogs,
+	{ immediate: true },
+);
+
+const FINGERPRINT_WIDTH = 6;
+
+function routeName(route) {
+	if (typeof route === "string" && route.trim()) return route;
+	return "(unknown)";
+}
+
+function routeItems(logsByRoute) {
+	return logsByRoute.sort((a, b) => getTimestampMs(b) - getTimestampMs(a));
+}
+
+function latestTimestamp(items) {
+	let latest = 0;
+	for (const log of items) {
+		const ts = getTimestampMs(log);
+		if (ts > latest) latest = ts;
+	}
+	return latest;
+}
+
+function fingerprintKey(log) {
+	return (log.fingerprint || "").trim();
+}
+
+function buildFingerprintTree(items) {
+	if (!items.length) return [];
+	const groups = new Map();
+
+	for (const log of items) {
+		const fp = fingerprintKey(log);
+		const prefix = fp ? fp.slice(0, Math.min(FINGERPRINT_WIDTH, fp.length)) : "";
+		if (!groups.has(prefix)) groups.set(prefix, []);
+		groups.get(prefix).push(log);
+	}
+
+	return Array.from(groups.entries())
+		.sort((a, b) => latestTimestamp(b[1]) - latestTimestamp(a[1]))
+		.map(([prefix, groupItems]) => {
+			const sortedItems = routeItems(groupItems);
+			return {
+				key: prefix || sortedItems[0]?.request_id || "unknown",
+				prefix,
+				label: prefix || t("logs.unknown"),
+				count: sortedItems.length,
+				preview: lastUserPreview(sortedItems[0]) || prefix || t("logs.unknown"),
+				children: [],
+				sessions: sortedItems.map((log) => ({
+					fingerprint: fingerprintKey(log),
+					log,
+					preview: lastUserPreview(log) || fingerprintKey(log).slice(0, 12) || t("logs.unknown"),
+				})),
+			};
+		});
+}
+
+const sessionTree = computed(() => {
+	const buckets = new Map();
+	for (const log of logs.value) {
+		const route = routeName(log.route);
+		if (!buckets.has(route)) buckets.set(route, []);
+		buckets.get(route).push(log);
+	}
+
+	return Array.from(buckets.entries())
+		.sort((a, b) => latestTimestamp(b[1]) - latestTimestamp(a[1]))
+		.map(([route, items]) => ({
+			route,
+			count: items.length,
+			children: buildFingerprintTree(routeItems(items)),
+		}));
 });
 
-// --- Filtering ---
 function colMatch(query, ...fields) {
 	if (!query) return true;
 	const q = query.toLowerCase();
@@ -239,14 +329,15 @@ function colMatch(query, ...fields) {
 
 const filteredLogs = computed(() => {
 	const f = filters.value;
-	const route = activeRoute.value;
-	const sessionFp = activeSession.value;
 	let result = logs.value;
-	if (route) {
-		result = result.filter((log) => (log.route || "(unknown)") === route);
+	if (scope.value.route) {
+		result = result.filter((log) => routeName(log.route) === scope.value.route);
 	}
-	if (sessionFp) {
-		result = result.filter((log) => (log.request_id || log.fingerprint || "") === sessionFp);
+	if (scope.value.prefix) {
+		result = result.filter((log) => (log.fingerprint || "").startsWith(scope.value.prefix));
+	}
+	if (scope.value.leaf) {
+		result = result.filter((log) => (log.fingerprint || "") === scope.value.leaf);
 	}
 	if (!f.prompt && !f.model && !f.provider && !f.status) return result;
 	return result.filter((log) => {
@@ -263,7 +354,7 @@ const filteredLogs = computed(() => {
 
 const liveDetailLog = computed(() => {
 	if (!activeDetailRequestID.value) return null;
-	return logs.value.find((log) => log.request_id === activeDetailRequestID.value) || null;
+	return logs.value.find((log) => log.request_id === activeDetailRequestID.value) || findDetailContinuation();
 });
 
 watch(liveDetailLog, (log) => {
@@ -272,8 +363,16 @@ watch(liveDetailLog, (log) => {
 	}
 });
 
+watch(selectedDetailLog, async (log, previousLog) => {
+	if (!log) return;
+	const sameRequest = previousLog?.request_id === log.request_id;
+	const shouldFollow = sameRequest ? isDetailNearBottom() : false;
+	await nextTick();
+	if (shouldFollow) scrollDetailToLatest("auto");
+});
+
 const showRouteChip = computed(() => {
-	if (activeRoute.value) return false;
+	if (scope.value.route) return false;
 	const routes = new Set();
 	for (const log of filteredLogs.value) {
 		routes.add(log.route || "(unknown)");
@@ -282,14 +381,14 @@ const showRouteChip = computed(() => {
 	return false;
 });
 
-// --- Stats bar ---
 const scopeLabel = computed(() => {
-	if (activeSession.value) {
+	if (scope.value.leaf) {
 		const scopedLog = filteredLogs.value[0];
 		const preview = scopedLog ? lastUserPreview(scopedLog) : "";
-		return preview || activeSession.value.slice(0, 12) || t("logs.session");
+		return preview || scope.value.leaf.slice(0, 12) || t("logs.session");
 	}
-	if (activeRoute.value) return activeRoute.value;
+	if (scope.value.prefix) return scope.value.prefix;
+	if (scope.value.route) return scope.value.route;
 	return t("logs.allRoutes");
 });
 
@@ -303,9 +402,9 @@ const timeFormatter = computed(() =>
 	}),
 );
 
-function formatTime(t) {
-	if (!t) return "";
-	const date = new Date(t);
+function formatTime(timestamp) {
+	if (!timestamp) return "";
+	const date = new Date(timestamp);
 	if (Number.isNaN(date.getTime())) return "";
 	return timeFormatter.value.format(date);
 }
@@ -331,36 +430,37 @@ const emptyMessage = computed(() => {
 	return hasFilters ? t("logs.noMatchingLogs") : t("logs.noLogsYet");
 });
 
-// --- Actions ---
-function routeName(route) {
-	if (typeof route === "string" && route.trim()) return route;
-	return "(unknown)";
-}
-
 function handleClear() {
 	if (!confirm(t("logs.confirmClear"))) return;
 	clearLogs();
-	activeRoute.value = "";
-	activeSession.value = "";
+	scope.value = { route: "", prefix: "", leaf: "" };
 	closeDetail();
 }
 
 function selectAll() {
-	activeRoute.value = "";
-	activeSession.value = "";
+	scope.value = { route: "", prefix: "", leaf: "" };
 	closeDetail();
 }
 
-function selectRoute(routeKey) {
-	activeRoute.value = routeKey;
-	activeSession.value = "";
+function selectRoute(route) {
+	scope.value = { route, prefix: "", leaf: "" };
+	closeDetail();
+}
+
+function selectPrefix({ route, prefix }) {
+	scope.value = { route: route || "", prefix: prefix || "", leaf: "" };
 	closeDetail();
 }
 
 function selectSession({ route, fingerprint }) {
-	activeRoute.value = route || "";
-	activeSession.value = fingerprint || "";
+	scope.value = { route: route || "", prefix: fingerprint || "", leaf: fingerprint || "" };
 	closeDetail();
+	nextTick(() => {
+		const items = filteredLogs.value;
+		if (items.length === 1 && items[0]?.request_id) {
+			toggleDetail(items[0]);
+		}
+	});
 }
 
 function isDetailOpen(log) {
@@ -373,13 +473,47 @@ function toggleDetail(log) {
 		closeDetail();
 		return;
 	}
-	activeDetailRequestID.value = log.request_id;
-	selectedDetailLog.value = log;
+	attachDetailLog(log);
+}
+
+function isDetailNearBottom() {
+	const el = detailPanel.value;
+	if (!el) return false;
+	return el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
+}
+
+function scrollDetailToStart(behavior = "smooth") {
+	detailPanel.value?.scrollTo({ top: 0, behavior });
+}
+
+function scrollDetailToLatest(behavior = "smooth") {
+	const el = detailPanel.value;
+	if (!el) return;
+	el.scrollTo({ top: el.scrollHeight, behavior });
 }
 
 function closeDetail() {
 	activeDetailRequestID.value = "";
+	activeDetailFingerprint.value = "";
 	selectedDetailLog.value = null;
+}
+
+function attachDetailLog(log) {
+	activeDetailRequestID.value = log.request_id || "";
+	activeDetailFingerprint.value = log.fingerprint || "";
+	selectedDetailLog.value = log;
+}
+
+function findDetailContinuation() {
+	if (!activeDetailFingerprint.value) return null;
+	const sameFingerprint = logs.value.filter((log) => (log.fingerprint || "") === activeDetailFingerprint.value);
+	if (!sameFingerprint.length) return null;
+	const current = sameFingerprint.find((log) => log.request_id === activeDetailRequestID.value) || null;
+	if (!current) return sameFingerprint[sameFingerprint.length - 1] || null;
+	for (let i = sameFingerprint.length - 1; i >= 0; i--) {
+		if (continuesLog(sameFingerprint[i], current)) return sameFingerprint[i];
+	}
+	return sameFingerprint[sameFingerprint.length - 1] || null;
 }
 
 function statusClass(log) {
@@ -401,12 +535,9 @@ function statusText(log) {
 	if (!parts.length) return t("common.ok");
 	return t("common.ok") + " \u00B7 " + parts.join(" \u00B7 ");
 }
-
-
 </script>
 
 <style scoped>
-/* Header */
 .header-row {
 	display: flex;
 	align-items: flex-end;
@@ -442,7 +573,6 @@ function statusText(log) {
 	margin-left: auto;
 }
 
-/* Workspace */
 .logs-workspace {
 	display: grid;
 	grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
@@ -461,7 +591,6 @@ function statusText(log) {
 	min-width: 0;
 }
 
-/* Stats bar */
 .logs-stats {
 	display: flex;
 	align-items: center;
@@ -504,7 +633,6 @@ function statusText(log) {
 	flex-shrink: 0;
 }
 
-/* Inline detail panel */
 .detail-inline {
 	padding: 12px;
 	max-height: 55vh;
@@ -530,6 +658,14 @@ function statusText(log) {
 	color: var(--c-text-2);
 }
 
+.detail-inline-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
 .log-row-active {
 	background: var(--c-primary-bg);
 }
@@ -539,7 +675,6 @@ function statusText(log) {
 	box-shadow: 0 0 0 1px var(--c-primary);
 }
 
-/* Filters */
 .filters-bar {
 	display: flex;
 	gap: 8px;
@@ -550,6 +685,7 @@ function statusText(log) {
 	flex: 1 1 140px;
 	min-width: 120px;
 	max-width: 220px;
+	min-height: 44px;
 	padding: 6px 10px;
 	border: 1px solid var(--c-border);
 	border-radius: var(--radius-sm);
@@ -571,7 +707,6 @@ function statusText(log) {
 	background: var(--c-primary-bg);
 }
 
-/* Table */
 .table-wrap {
 	overflow: hidden;
 	border-radius: var(--radius);
@@ -611,7 +746,6 @@ function statusText(log) {
 	min-width: 56px;
 }
 
-/* Rows */
 .log-row {
 	transition: background-color 0.12s;
 }
@@ -649,7 +783,6 @@ function statusText(log) {
 	font-variant-numeric: tabular-nums;
 }
 
-/* Route chip */
 .row-route-chip {
 	display: inline-block;
 	max-width: 100%;
@@ -668,7 +801,6 @@ function statusText(log) {
 	vertical-align: middle;
 }
 
-/* Status pills */
 .status-pill {
 	display: inline-flex;
 	align-items: center;
@@ -702,14 +834,12 @@ function statusText(log) {
 	color: var(--c-danger-text);
 }
 
-/* Empty */
 .empty-hint {
 	padding: 28px;
 	text-align: center;
 	color: var(--c-text-3);
 }
 
-/* Desktop / Mobile toggle */
 .desktop-log-table {
 	display: table;
 }
@@ -718,7 +848,6 @@ function statusText(log) {
 	display: none;
 }
 
-/* Mobile cards */
 .mobile-log-card {
 	padding: 14px;
 	border: 1px solid var(--c-border);
@@ -766,7 +895,13 @@ function statusText(log) {
 	overflow-wrap: anywhere;
 }
 
-/* Responsive */
+@media (max-width: 1024px) {
+	.logs-workspace {
+		grid-template-columns: 260px minmax(0, 1fr);
+		gap: 16px;
+	}
+}
+
 @media (max-width: 768px) {
 	.logs-workspace {
 		grid-template-columns: 1fr;

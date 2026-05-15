@@ -12,6 +12,7 @@ export default {
 	common: {
 		close: "Close",
 		copy: "Copy",
+		copied: "Copied",
 		edit: "Edit",
 		delete: "Delete",
 		actions: "Actions",
@@ -373,6 +374,8 @@ export default {
 		noLogsYet: "No logs yet.",
 		noPrompt: "No prompt preview available",
 		requestDetail: "Row Detail",
+		jumpToStart: "Start",
+		jumpToLatest: "Latest",
 		timeline: "Timeline",
 		json: "JSON",
 		requestId: "Request ID",

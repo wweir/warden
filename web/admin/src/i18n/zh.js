@@ -12,6 +12,7 @@ export default {
 	common: {
 		close: "关闭",
 		copy: "复制",
+		copied: "已复制",
 		edit: "编辑",
 		delete: "删除",
 		actions: "操作",
@@ -356,6 +357,8 @@ export default {
 		noLogsYet: "暂无日志。",
 		noPrompt: "无可显示的提示内容",
 		requestDetail: "当前行详情",
+		jumpToStart: "开头",
+		jumpToLatest: "最新",
 		timeline: "时间线",
 		json: "JSON",
 		requestId: "请求 ID",

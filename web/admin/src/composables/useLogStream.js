@@ -1,7 +1,7 @@
 import { ref, nextTick, onMounted, onUnmounted, watch } from "vue";
 import { createLogStream } from "../api.js";
 
-const MAX_LOGS = 500;
+const MAX_SESSIONS_PER_ROUTE = 20;
 
 function textParts(value) {
 	if (value == null) return "";
@@ -68,12 +68,16 @@ function conversationTextFromRequest(request) {
 	return parts.filter(Boolean).join("\x1f");
 }
 
-function continuesLog(current, previous) {
+export function continuesLog(current, previous) {
 	if (!current?.request_id || !previous?.request_id || current.request_id === previous.request_id) return false;
 	if ((current.route || "(unknown)") !== (previous.route || "(unknown)")) return false;
 	const currentText = conversationTextFromRequest(current.request);
 	const previousText = conversationTextFromRequest(previous.request);
 	return Boolean(currentText && previousText && currentText.length > previousText.length && currentText.includes(previousText));
+}
+
+function routeKey(route) {
+	return route || "(unknown)";
 }
 
 export function useLogStream() {
@@ -110,6 +114,26 @@ attachScrollListener();
 		}
 	}
 
+	function trimRouteSessions(route) {
+		const key = routeKey(route);
+		const routeLogs = logs.value.filter((log) => routeKey(log.route) === key);
+		const pendingLogs = routeLogs.filter((log) => log.pending);
+		const completedLogs = routeLogs.filter((log) => !log.pending);
+		if (routeLogs.length <= MAX_SESSIONS_PER_ROUTE) return;
+		const keepCompleted = Math.max(0, MAX_SESSIONS_PER_ROUTE - pendingLogs.length);
+		const keep = new Set(pendingLogs.map((log) => log.request_id));
+		if (keepCompleted > 0) {
+			for (const log of completedLogs.slice(-keepCompleted)) {
+				keep.add(log.request_id);
+			}
+		}
+		const next = logs.value.filter((log) => routeKey(log.route) !== key || keep.has(log.request_id));
+		if (next.length !== logs.value.length) {
+			logs.value = next;
+			rebuildRequestIndex();
+		}
+	}
+
 	function findContinuationIndex(log) {
 		for (let i = 0; i < logs.value.length; i++) {
 			if (continuesLog(log, logs.value[i])) return i;
@@ -140,10 +164,7 @@ attachScrollListener();
 		logs.value.push(log);
 		requestIndexMap.set(log.request_id, idx);
 
-		if (logs.value.length > MAX_LOGS) {
-			logs.value = logs.value.slice(-MAX_LOGS);
-			rebuildRequestIndex();
-		}
+		trimRouteSessions(log.route);
 	}
 
 	function isNearBottom() {

@@ -5,7 +5,7 @@
 				<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
 				<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
 			</div>
-			<button class="btn btn-secondary btn-sm" @click="copyJSON">{{ copied ? '\u2713' : $t('common.copy') }}</button>
+			<button class="btn btn-secondary btn-sm" @click="copyJSON">{{ copied ? $t('common.copied') : $t('common.copy') }}</button>
 		</div>
 
 		<!-- === JSON View === -->
@@ -46,18 +46,6 @@
 				</div>
 			</section>
 
-			<!-- Streaming output (top, for pending logs) -->
-			<section v-if="log.pending && assembledText" class="detail-section panel streaming-pane">
-				<div class="streaming-header">
-					<span class="section-eyebrow">{{ $t('logs.response') }}</span>
-					<span class="streaming-indicator">
-						<span class="streaming-dot"></span>
-						{{ $t('logs.streaming') }}
-					</span>
-				</div>
-				<pre class="streaming-text">{{ assembledText }}</pre>
-			</section>
-
 			<!-- Unified timeline -->
 			<section class="detail-section">
 				<div v-if="timelineNodes.length" class="chain">
@@ -71,15 +59,6 @@
 						<div class="chain-content">
 							<div class="chain-label-row">
 								<div class="chain-label">{{ node.label }}</div>
-								<button
-									v-if="node.raw"
-									class="raw-toggle"
-									type="button"
-									:aria-expanded="isRawOpen(i)"
-									@click="toggleRaw(i)"
-								>
-									{{ isRawOpen(i) ? $t('logs.hideRaw') : $t('logs.raw') }}
-								</button>
 							</div>
 
 							<div
@@ -87,15 +66,6 @@
 								class="chain-preview"
 								:class="{ 'chain-preview-oneline': isRolePreviewNode(node) }"
 							>{{ nodePreviewText(node) }}</div>
-
-							<!-- Response text for last assistant node (when not streaming) -->
-							<details v-if="node.dotType === 'assistant' && isLastAssistantNode(i) && !log.pending && responseHasText" class="response-disclosure">
-								<summary class="response-summary">
-									<span class="response-summary-kind">{{ $t('logs.response') }}</span>
-									<span class="response-summary-preview">{{ responsePreview }}</span>
-								</summary>
-								<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
-							</details>
 
 							<!-- tool call + result pair -->
 							<div v-if="node.type === 'tool-pair'" class="tool-pair-block">
@@ -130,25 +100,28 @@
 								</div>
 							</div>
 
-							<div v-if="node.raw && isRawOpen(i)" class="chain-raw">
-								<div class="json-viewer">
-									<div
-										v-for="row in jsonRows(node.raw, `raw-${i}`)"
-										:key="row.id"
-										class="json-row"
-										:style="{ '--json-depth': row.depth }"
-									>
-										<div class="json-field">
-											<span v-if="row.fieldKey" class="json-key">&quot;{{ row.fieldKey }}&quot;</span>
-											<span v-if="row.fieldKey" class="json-token json-token-punctuation">:</span>
-											<span
-												class="json-value"
-												:class="`json-token-${row.kind}`"
-											>{{ row.displayValue }}</span>
+							<details v-if="node.raw" class="raw-disclosure">
+								<summary class="raw-summary">{{ $t('logs.raw') }}</summary>
+								<div class="chain-raw">
+									<div class="json-viewer">
+										<div
+											v-for="row in jsonRows(node.raw, `raw-${i}`)"
+											:key="row.id"
+											class="json-row"
+											:style="{ '--json-depth': row.depth }"
+										>
+											<div class="json-field">
+												<span v-if="row.fieldKey" class="json-key">&quot;{{ row.fieldKey }}&quot;</span>
+												<span v-if="row.fieldKey" class="json-token json-token-punctuation">:</span>
+												<span
+													class="json-value"
+													:class="`json-token-${row.kind}`"
+												>{{ row.displayValue }}</span>
+											</div>
 										</div>
 									</div>
 								</div>
-							</div>
+							</details>
 						</div>
 					</div>
 				</div>
@@ -166,17 +139,25 @@
 					</div>
 				</div>
 
-				<!-- Final response (when no timeline nodes or for non-chat formats) -->
-				<div v-if="!log.pending && responseHasText && !hasAssistantNode" class="chain-response-standalone">
-					<pre class="code-block code-block-assembled">{{ assembledText }}</pre>
+			</section>
+
+			<!-- Response output stays after the fixed request timeline so updates only append at the tail. -->
+			<section v-if="responseHasText" class="detail-section panel response-output-pane">
+				<div class="streaming-header">
+					<span class="section-eyebrow">{{ $t('logs.response') }}</span>
+					<span v-if="log.pending" class="streaming-indicator">
+						<span class="streaming-dot"></span>
+						{{ $t('logs.streaming') }}
+					</span>
 				</div>
+				<pre class="streaming-text">{{ assembledText }}</pre>
 			</section>
 		</div>
 	</div>
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTimeline } from "../composables/useTimeline.js";
 import { formatDuration } from "../utils.js";
@@ -189,8 +170,12 @@ const props = defineProps({
 const { t } = useI18n();
 const detailView = ref("timeline");
 const copied = ref(false);
-const openRawNodes = ref(new Set());
 let copyTimer = null;
+
+watch(() => props.log, () => {
+	copied.value = false;
+	clearTimeout(copyTimer);
+});
 
 const selected = computed(() => props.log);
 
@@ -202,20 +187,6 @@ const {
 	formatJSON,
 	renderEscapes,
 } = useTimeline(selected);
-
-const hasAssistantNode = computed(() =>
-	timelineNodes.value.some((n) => n.dotType === "assistant"),
-);
-
-const responsePreview = computed(() => singleLine(assembledText.value, 180));
-
-function isLastAssistantNode(index) {
-	for (let i = timelineNodes.value.length - 1; i >= 0; i--) {
-		if (timelineNodes.value[i].dotType === "assistant") return i === index;
-	}
-	return false;
-}
-
 function responseClass(log) {
 	if (log?.pending) return "response-streaming";
 	if (log?.error) return "response-error";
@@ -250,20 +221,6 @@ function previewPrefix(node) {
 
 function isRolePreviewNode(node) {
 	return ["system", "user", "assistant", "tool"].includes(node?.dotType);
-}
-
-function isRawOpen(index) {
-	return openRawNodes.value.has(index);
-}
-
-function toggleRaw(index) {
-	const next = new Set(openRawNodes.value);
-	if (next.has(index)) {
-		next.delete(index);
-	} else {
-		next.add(index);
-	}
-	openRawNodes.value = next;
 }
 
 function normalizeRawValue(value) {
@@ -467,7 +424,7 @@ async function copyJSON() {
 }
 
 /* Streaming pane */
-.streaming-pane {
+.response-output-pane {
 	padding: 10px 12px;
 	background: var(--c-surface);
 	border: 1px solid var(--c-border);
@@ -496,6 +453,7 @@ async function copyJSON() {
 	border-radius: 50%;
 	background: var(--c-primary);
 	animation: pulse-dot 1.2s ease-in-out infinite;
+	will-change: opacity, transform;
 }
 
 @keyframes pulse-dot {
@@ -546,10 +504,18 @@ summary:hover {
 .chain-node {
 	position: relative;
 	padding: 0 0 10px 12px;
-	border-left: 2px solid var(--c-border-light);
 }
-.chain-node-last {
-	border-left-color: transparent;
+.chain-node::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 2px;
+	bottom: 0;
+	width: 2px;
+	background: var(--c-border-light);
+}
+.chain-node-last::before {
+	display: none;
 }
 .chain-dot {
 	position: absolute;
@@ -590,21 +556,31 @@ summary:hover {
 	white-space: nowrap;
 }
 
-.raw-toggle {
-	flex: 0 0 auto;
-	padding: 0;
-	border: none;
-	background: transparent;
-	color: var(--c-text-3);
-	font-size: 11px;
-	font-weight: 500;
+.raw-disclosure {
+	margin: 3px 0 0 0;
+	min-width: 0;
+}
+.raw-summary {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	padding: 2px 0;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--c-text-2);
+	white-space: nowrap;
 	cursor: pointer;
 }
-
-.raw-toggle:hover,
-.raw-toggle:focus-visible {
+.raw-summary:hover {
 	color: var(--c-primary);
-	outline: none;
+}
+.raw-summary::marker {
+	color: var(--c-text-3);
+	font-size: 10px;
+}
+.raw-disclosure[open] .raw-summary {
+	margin-bottom: 4px;
 }
 .chain-preview {
 	font-size: 12px;
@@ -618,50 +594,6 @@ summary:hover {
 	text-overflow: ellipsis;
 }
 
-.response-disclosure {
-	margin: 3px 0 0 0;
-	min-width: 0;
-}
-
-.response-summary {
-	display: flex;
-	align-items: baseline;
-	gap: 6px;
-	min-width: 0;
-	padding: 2px 0;
-	font-size: 12px;
-	font-weight: 400;
-	color: var(--c-text-2);
-	white-space: nowrap;
-}
-
-.response-summary::marker {
-	color: var(--c-text-3);
-	font-size: 10px;
-}
-
-.response-summary-kind {
-	flex: 0 0 auto;
-	color: var(--c-text-3);
-	font-family: var(--font-mono);
-}
-
-.response-summary-preview {
-	flex: 1 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	color: var(--c-text-2);
-}
-
-.response-disclosure[open] .response-summary {
-	margin-bottom: 4px;
-}
-
-.chain-response-standalone {
-	margin-top: 8px;
-}
-
 .chain-raw {
 	margin-top: 4px;
 }
@@ -670,8 +602,8 @@ summary:hover {
 	max-height: 240px;
 	overflow: auto;
 	padding: 8px 0;
-	background: #fbfcfe;
-	border: 1px solid #dbe4ef;
+	background: var(--c-bg);
+	border: 1px solid var(--c-border);
 	border-radius: var(--radius-sm);
 	font-family: var(--font-mono);
 	font-size: 12px;
@@ -686,7 +618,7 @@ summary:hover {
 }
 
 .json-row:hover {
-	background: #eef4ff;
+	background: var(--c-primary-bg);
 }
 
 .json-field {
@@ -698,7 +630,7 @@ summary:hover {
 }
 
 .json-key {
-	color: #7c3aed;
+	color: var(--c-primary);
 	font-weight: 600;
 }
 
@@ -708,29 +640,29 @@ summary:hover {
 
 .json-token-string,
 .json-value.json-token-string {
-	color: #047857;
+	color: var(--c-success-text);
 }
 
 .json-token-number,
 .json-value.json-token-number {
-	color: #b45309;
+	color: var(--c-warning-text);
 }
 
 .json-token-boolean,
 .json-value.json-token-boolean {
-	color: #2563eb;
+	color: var(--c-primary);
 	font-weight: 600;
 }
 
 .json-token-null,
 .json-value.json-token-null {
-	color: #64748b;
+	color: var(--c-text-3);
 	font-style: italic;
 }
 
 .json-token-punctuation,
 .json-value.json-token-punctuation {
-	color: #475569;
+	color: var(--c-text-2);
 }
 
 .response-block {
