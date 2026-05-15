@@ -356,7 +356,7 @@ export default {
 		noMatchingLogs: "没有匹配的日志。",
 		noLogsYet: "暂无日志。",
 		noPrompt: "无可显示的提示内容",
-		requestDetail: "当前行详情",
+		requestDetail: "会话详情",
 		jumpToStart: "开头",
 		jumpToLatest: "最新",
 		timeline: "时间线",

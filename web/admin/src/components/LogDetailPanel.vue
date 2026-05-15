@@ -1,38 +1,12 @@
 <template>
 	<div>
-		<div class="detail-toolbar">
-			<div class="view-toggle">
-				<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
-				<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
-			</div>
-			<button class="btn btn-secondary btn-sm" @click="copyJSON">{{ copied ? $t('common.copied') : $t('common.copy') }}</button>
-		</div>
-
 		<!-- === JSON View === -->
-		<div v-if="detailView === 'json'">
+		<div v-if="view === 'json'">
 			<pre class="code-block code-block-json">{{ selectedJSON }}</pre>
 		</div>
 
 		<!-- === Timeline View === -->
 		<div v-else class="detail-layout">
-			<!-- Compact header -->
-			<div class="detail-compact-header">
-				<div class="detail-compact-main">
-					<span class="detail-status-pill" :class="responseClass(log)">
-						{{ log.error || responseStatusText(log) }}
-					</span>
-					<span v-if="log.model" class="detail-meta-text">{{ log.model }}</span>
-					<span v-if="log.provider" class="detail-meta-text">{{ log.provider }}</span>
-					<span v-if="log.duration_ms != null" class="detail-meta-text">{{ formatDuration(log.duration_ms) }}</span>
-					<span v-if="log.ttft_ms != null" class="detail-meta-text detail-meta-muted">TTFT {{ formatDuration(log.ttft_ms) }}</span>
-				</div>
-				<div class="detail-compact-sub">
-					<span v-if="log.route" class="detail-meta-muted">{{ log.route }}</span>
-					<span v-if="log.fingerprint" class="detail-meta-muted">{{ log.fingerprint.slice(0, 16) }}</span>
-					<span class="detail-meta-muted">{{ log.request_id }}</span>
-				</div>
-			</div>
-
 			<!-- Tool verdicts -->
 			<section v-if="log.tool_verdicts?.length" class="detail-section panel">
 				<div class="verdict-list">
@@ -157,25 +131,17 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTimeline } from "../composables/useTimeline.js";
-import { formatDuration } from "../utils.js";
 
 const props = defineProps({
 	log: { type: Object, required: true },
 	lastUserPreview: { type: Function, required: true },
+	view: { type: String, default: "timeline" },
 });
 
 const { t } = useI18n();
-const detailView = ref("timeline");
-const copied = ref(false);
-let copyTimer = null;
-
-watch(() => props.log, () => {
-	copied.value = false;
-	clearTimeout(copyTimer);
-});
 
 const selected = computed(() => props.log);
 
@@ -187,25 +153,6 @@ const {
 	formatJSON,
 	renderEscapes,
 } = useTimeline(selected);
-function responseClass(log) {
-	if (log?.pending) return "response-streaming";
-	if (log?.error) return "response-error";
-	if (Array.isArray(log?.tool_verdicts) && log.tool_verdicts.some((v) => v.rejected)) return "response-warn";
-	if (!log?.error && Array.isArray(log?.failovers) && log.failovers.length > 0) return "response-warn";
-	return "response-ok";
-}
-
-function responseStatusText(log) {
-	if (log?.pending) return t("logs.streaming");
-	if (Array.isArray(log?.tool_verdicts) && log.tool_verdicts.some((v) => v.rejected)) {
-		return t("logs.toolRejected");
-	}
-	if (!log?.error && Array.isArray(log?.failovers) && log.failovers.length > 0) {
-		return t("logs.failoverRecovered", { n: log.failovers.length });
-	}
-	return t("common.ok");
-}
-
 function nodePreviewText(node) {
 	const preview = node?.type === "tool-pair" ? node.assistantPreview : node?.preview;
 	const text = singleLine(preview, 180);
@@ -309,100 +256,15 @@ async function copyJSON() {
 		await navigator.clipboard.writeText(text);
 	} catch {
 		// clipboard API not available or permission denied
-		return;
+		return false;
 	}
-	copied.value = true;
-	clearTimeout(copyTimer);
-	copyTimer = setTimeout(() => { copied.value = false; }, 2000);
+	return true;
 }
+
+defineExpose({ copyJSON });
 </script>
 
 <style scoped>
-.detail-toolbar {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 10px;
-}
-.view-toggle {
-	display: flex;
-	gap: 2px;
-	border: 1px solid var(--c-border-light);
-	border-radius: var(--radius);
-	overflow: hidden;
-}
-.view-toggle .btn {
-	border-radius: 0;
-	border: none;
-}
-.btn-primary {
-	background: var(--c-primary);
-	color: var(--c-text-inverse);
-}
-
-/* Compact header */
-.detail-compact-header {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	padding: 10px 12px;
-	background: var(--c-surface);
-	border: 1px solid var(--c-border);
-	border-radius: var(--radius);
-	margin-bottom: 10px;
-}
-
-.detail-compact-main {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.detail-compact-sub {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex-wrap: wrap;
-}
-
-.detail-status-pill {
-	display: inline-flex;
-	align-items: center;
-	padding: 3px 8px;
-	border-radius: 999px;
-	font-size: 11px;
-	font-weight: 600;
-	white-space: nowrap;
-}
-
-.detail-status-pill.response-ok {
-	background: var(--c-success-soft);
-	color: var(--c-success-text);
-}
-
-.detail-status-pill.response-warn {
-	background: var(--c-warning-bg);
-	color: var(--c-warning-text);
-}
-
-.detail-status-pill.response-error {
-	background: var(--c-danger-bg);
-	color: var(--c-danger-text);
-}
-
-.detail-meta-text {
-	font-size: 12px;
-	font-weight: 500;
-	color: var(--c-text);
-}
-
-.detail-meta-muted {
-	font-size: 11px;
-	color: var(--c-text-3);
-	font-family: var(--font-mono);
-}
-
 /* Layout */
 .detail-layout {
 	display: flex;
@@ -810,9 +672,4 @@ summary:hover {
 	color: var(--c-text-2);
 }
 
-@media (max-width: 768px) {
-	.detail-compact-main {
-		gap: 6px;
-	}
-}
 </style>

@@ -75,13 +75,34 @@
 
 				<div v-if="selectedDetailLog" ref="detailPanel" class="detail-inline panel">
 					<div class="detail-inline-header">
-						<span class="detail-inline-label">{{ $t('logs.requestDetail') }}</span>
+						<div class="detail-inline-main">
+							<div class="detail-inline-title-row">
+								<span class="detail-inline-label">{{ $t('logs.requestDetail') }}</span>
+								<span class="status-pill" :class="statusClass(selectedDetailLog)">{{ statusText(selectedDetailLog) }}</span>
+								<span v-if="selectedDetailLog.route" class="detail-inline-route">{{ selectedDetailLog.route }}</span>
+							</div>
+							<div class="detail-inline-meta">
+								<span v-if="selectedDetailLog.fingerprint" class="detail-inline-meta-item">fp {{ selectedDetailLog.fingerprint.slice(0, 16) }}</span>
+								<span class="detail-inline-meta-item">req {{ selectedDetailLog.request_id }}</span>
+								<span v-if="selectedDetailLog.model" class="detail-inline-meta-item">model {{ selectedDetailLog.model }}</span>
+								<span v-if="selectedDetailLog.provider" class="detail-inline-meta-item">provider {{ selectedDetailLog.provider }}</span>
+								<span v-if="selectedDetailLog.duration_ms != null" class="detail-inline-meta-item">duration {{ formatDuration(selectedDetailLog.duration_ms) }}</span>
+								<span v-if="selectedDetailLog.ttft_ms != null" class="detail-inline-meta-item">ttft {{ formatDuration(selectedDetailLog.ttft_ms) }}</span>
+							</div>
+						</div>
 						<div class="detail-inline-actions">
-							<button class="btn btn-secondary btn-sm" type="button" @click="scrollDetailToStart">
-								{{ $t('logs.jumpToStart') }}
+							<div class="detail-view-toggle" role="group" :aria-label="$t('logs.requestDetail')">
+								<button class="btn btn-sm" :class="detailView === 'timeline' ? 'btn-primary' : 'btn-secondary'" type="button" @click="detailView = 'timeline'">{{ $t('logs.timeline') }}</button>
+								<button class="btn btn-sm" :class="detailView === 'json' ? 'btn-primary' : 'btn-secondary'" type="button" @click="detailView = 'json'">{{ $t('logs.json') }}</button>
+							</div>
+							<button class="btn btn-secondary btn-sm" type="button" @click="copyDetailJSON">
+								{{ detailCopied ? $t('common.copied') : $t('common.copy') }}
 							</button>
-							<button class="btn btn-secondary btn-sm" type="button" @click="scrollDetailToLatest('smooth')">
-								{{ $t('logs.jumpToLatest') }}
+							<button class="btn btn-secondary btn-sm detail-icon-button" type="button" :aria-label="$t('logs.jumpToStart')" :title="$t('logs.jumpToStart')" @click="scrollDetailToStart">
+								<span aria-hidden="true">↑</span>
+							</button>
+							<button class="btn btn-secondary btn-sm detail-icon-button" type="button" :aria-label="$t('logs.jumpToLatest')" :title="$t('logs.jumpToLatest')" @click="scrollDetailToLatest('smooth')">
+								<span aria-hidden="true">↓</span>
 							</button>
 							<button class="btn btn-secondary btn-sm" type="button" @click="closeDetail">
 								{{ $t('logs.collapse') }}
@@ -89,12 +110,14 @@
 						</div>
 					</div>
 					<LogDetailPanel
+						ref="detailContent"
 						:log="selectedDetailLog"
 						:lastUserPreview="lastUserPreview"
+						:view="detailView"
 					/>
 				</div>
 
-				<div class="table-wrap panel">
+				<div v-if="!selectedDetailLog" class="table-wrap panel">
 					<template v-if="logs.length">
 						<table class="data-table desktop-log-table">
 							<thead>
@@ -211,12 +234,20 @@ const { logs, paused, error, togglePause, clearLogs, setAutoScroll } = useLogStr
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 const scope = ref({ route: "", prefix: "", leaf: "" });
 const activeDetailRequestID = ref("");
-const activeDetailFingerprint = ref("");
 const selectedDetailLog = ref(null);
 const detailPanel = ref(null);
+const detailContent = ref(null);
+const detailView = ref("timeline");
+const detailCopied = ref(false);
+let detailCopyTimer = 0;
 
 watch(activeDetailRequestID, (val) => {
 	setAutoScroll(!val);
+});
+
+watch(selectedDetailLog, () => {
+	detailCopied.value = false;
+	clearTimeout(detailCopyTimer);
 });
 
 function syncScopeToLogs() {
@@ -231,9 +262,9 @@ function syncScopeToLogs() {
 		scope.value = { ...scope.value, prefix: "" };
 	}
 	if (activeDetailRequestID.value && !logs.value.some((log) => log.request_id === activeDetailRequestID.value)) {
-		const nextLog = findDetailContinuation();
+		const nextLog = findDetailContinuation(selectedDetailLog.value);
 		if (nextLog) {
-			attachDetailLog(nextLog);
+			focusDetailLog(nextLog);
 			return;
 		}
 		closeDetail();
@@ -354,19 +385,23 @@ const filteredLogs = computed(() => {
 
 const liveDetailLog = computed(() => {
 	if (!activeDetailRequestID.value) return null;
-	return logs.value.find((log) => log.request_id === activeDetailRequestID.value) || findDetailContinuation();
+	return logs.value.find((log) => log.request_id === activeDetailRequestID.value) || findDetailContinuation(selectedDetailLog.value);
 });
 
 watch(liveDetailLog, (log) => {
-	if (log) {
-		selectedDetailLog.value = log;
+	if (!log) return;
+	if (log.request_id !== activeDetailRequestID.value) {
+		focusDetailLog(log);
+		return;
 	}
+	selectedDetailLog.value = log;
 });
 
 watch(selectedDetailLog, async (log, previousLog) => {
 	if (!log) return;
 	const sameRequest = previousLog?.request_id === log.request_id;
-	const shouldFollow = sameRequest ? isDetailNearBottom() : false;
+	const sameConversation = previousLog ? continuesLog(log, previousLog) : false;
+	const shouldFollow = (sameRequest || sameConversation) ? isDetailNearBottom() : false;
 	await nextTick();
 	if (shouldFollow) scrollDetailToLatest("auto");
 });
@@ -494,26 +529,48 @@ function scrollDetailToLatest(behavior = "smooth") {
 
 function closeDetail() {
 	activeDetailRequestID.value = "";
-	activeDetailFingerprint.value = "";
 	selectedDetailLog.value = null;
+	detailView.value = "timeline";
+	detailCopied.value = false;
+	clearTimeout(detailCopyTimer);
 }
 
 function attachDetailLog(log) {
 	activeDetailRequestID.value = log.request_id || "";
-	activeDetailFingerprint.value = log.fingerprint || "";
 	selectedDetailLog.value = log;
 }
 
-function findDetailContinuation() {
-	if (!activeDetailFingerprint.value) return null;
-	const sameFingerprint = logs.value.filter((log) => (log.fingerprint || "") === activeDetailFingerprint.value);
-	if (!sameFingerprint.length) return null;
-	const current = sameFingerprint.find((log) => log.request_id === activeDetailRequestID.value) || null;
-	if (!current) return sameFingerprint[sameFingerprint.length - 1] || null;
-	for (let i = sameFingerprint.length - 1; i >= 0; i--) {
-		if (continuesLog(sameFingerprint[i], current)) return sameFingerprint[i];
+async function copyDetailJSON() {
+	const ok = await detailContent.value?.copyJSON?.();
+	if (!ok) return;
+	detailCopied.value = true;
+	clearTimeout(detailCopyTimer);
+	detailCopyTimer = setTimeout(() => {
+		detailCopied.value = false;
+	}, 2000);
+}
+
+function findDetailContinuation(sourceLog = selectedDetailLog.value) {
+	if (!sourceLog) return null;
+	if (activeDetailRequestID.value) {
+		const current = logs.value.find((log) => log.request_id === activeDetailRequestID.value) || null;
+		if (current) return current;
 	}
-	return sameFingerprint[sameFingerprint.length - 1] || null;
+	const sameRoute = logs.value.filter((log) => routeName(log.route) === routeName(sourceLog.route));
+	for (let i = sameRoute.length - 1; i >= 0; i--) {
+		if (continuesLog(sameRoute[i], sourceLog)) return sameRoute[i];
+	}
+	return null;
+}
+
+function focusDetailLog(log) {
+	const nextScope = {
+		route: routeName(log.route),
+		prefix: log.fingerprint || "",
+		leaf: log.fingerprint || "",
+	};
+	scope.value = nextScope;
+	attachDetailLog(log);
 }
 
 function statusClass(log) {
@@ -634,36 +691,112 @@ function statusText(log) {
 }
 
 .detail-inline {
-	padding: 12px;
-	max-height: 55vh;
+	padding: 0;
+	height: calc(100vh - 254px);
+	min-height: 460px;
 	overflow-y: auto;
 }
 
 .detail-inline-header {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
-	gap: 12px;
-	margin-bottom: 10px;
+	gap: 16px;
 	position: sticky;
 	top: 0;
 	background: var(--c-surface);
 	z-index: 2;
-	padding: 4px 0;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--c-border);
 }
 
 .detail-inline-label {
-	font-size: 13px;
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--c-text);
+	line-height: 1.3;
+}
+
+.detail-inline-main {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.detail-inline-title-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+
+.detail-inline-route {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	color: var(--c-primary);
 	font-weight: 600;
-	color: var(--c-text-2);
+}
+
+.detail-inline-meta {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	min-width: 0;
+	font-size: 10px;
+	color: var(--c-text-3);
+	font-family: var(--font-mono);
+}
+
+.detail-inline-meta-item {
+	white-space: nowrap;
+	padding: 1px 6px;
+	border: 1px solid var(--c-border-light);
+	border-radius: 999px;
+	background: var(--c-bg);
 }
 
 .detail-inline-actions {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
-	gap: 8px;
+	gap: 6px;
 	flex-wrap: wrap;
+	flex: 0 0 auto;
+}
+
+.detail-view-toggle {
+	display: flex;
+	gap: 2px;
+	border: 1px solid var(--c-border-light);
+	border-radius: var(--radius);
+	overflow: hidden;
+	flex: 0 0 auto;
+}
+
+.detail-view-toggle .btn {
+	border: 0;
+	border-radius: 0;
+}
+
+.detail-inline-actions .btn {
+	box-shadow: none;
+}
+
+.detail-icon-button {
+	width: 32px;
+	min-width: 32px;
+	padding-inline: 0;
+	font-size: 15px;
+	line-height: 1;
+}
+
+.detail-inline :deep(.detail-layout),
+.detail-inline :deep(.code-block-json) {
+	padding: 12px 14px 14px;
 }
 
 .log-row-active {

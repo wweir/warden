@@ -373,7 +373,7 @@ export default {
 		noMatchingLogs: "No matching logs.",
 		noLogsYet: "No logs yet.",
 		noPrompt: "No prompt preview available",
-		requestDetail: "Row Detail",
+		requestDetail: "Session Detail",
 		jumpToStart: "Start",
 		jumpToLatest: "Latest",
 		timeline: "Timeline",
