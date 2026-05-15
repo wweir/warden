@@ -252,7 +252,7 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - SSE 广播
 - 管理端日志流消费
 - 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
-- **session 级去重**：同一会话的多轮请求（`Route + Fingerprint[:6]` sysHash 相同）在内存广播器和文件日志中只保留最新一条完整记录，旧记录被覆盖；这大幅降低长会话场景下的内存与磁盘占用
+- **session 级去重**：同一会话的多轮请求（`Route + Fingerprint[:6]` sysHash 相同）在内存广播器和文件日志中只保留最新一条完整记录，旧记录被覆盖；内存广播器再按 route 只保留最近 20 个 session，避免单路由长会话把日志页和 SSE 初始回放撑大
 - 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
 - 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
 - 最终请求日志会附带 `token_usage` 观测结果（prompt/completion/cache/source/completeness）；其中 `cache` 记录 provider 返回的 cache 相关 token 明细，便于把请求 token、响应 token、cache token 分开看

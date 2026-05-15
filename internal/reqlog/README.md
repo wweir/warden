@@ -198,7 +198,7 @@ func (b *Broadcaster) Recent() []Record
 
 内存广播器，供 SSE 实时日志推送使用：
 
-- **环形缓冲**：保留最近 50 条记录，新 SSE 连接建立时通过 `Recent()` 回放历史
+- **路由会话窗口**：按 route 保留最近 20 个 session，新 SSE 连接建立时通过 `Recent()` 回放历史
 - **`request_id` 级去重**：相同 `request_id` 的新事件会覆盖旧记录，避免 pending -> final 重复堆积
 - **后续轮次去重**：不同 `request_id` 只有在新请求完整对话包含旧请求完整对话时才覆盖旧记录；相同 agent 前缀的并发请求不会被合并
 - **非阻塞 fan-out**：`Publish` 向所有订阅者 channel 发送，慢消费者丢弃该事件（不阻塞发布方）

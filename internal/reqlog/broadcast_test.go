@@ -76,6 +76,101 @@ func TestBroadcasterPublishKeepsSameAgentPrefixSessions(t *testing.T) {
 	}
 }
 
+func TestBroadcasterPublishCapsSessionsPerRoute(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	for i := 0; i < maxSessionsPerRoute+5; i++ {
+		b.Publish(Record{
+			Timestamp: time.Unix(int64(100+i), 0),
+			RequestID: fmt.Sprintf("req_%d", i),
+			Route:     "chat/completions",
+			Request:   json.RawMessage(fmt.Sprintf(`{"messages":[{"role":"user","content":"task-%02d"}]}`, i)),
+		})
+	}
+
+	recent := b.Recent()
+	if len(recent) != maxSessionsPerRoute {
+		t.Fatalf("recent count = %d, want %d", len(recent), maxSessionsPerRoute)
+	}
+	if got := recent[0].RequestID; got != "req_5" {
+		t.Fatalf("recent[0].RequestID = %q, want req_5", got)
+	}
+	if got := recent[len(recent)-1].RequestID; got != fmt.Sprintf("req_%d", maxSessionsPerRoute+4) {
+		t.Fatalf("recent[last].RequestID = %q, want req_%d", got, maxSessionsPerRoute+4)
+	}
+}
+
+func TestBroadcasterPublishCapsSessionsPerRouteIndependently(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	for i := 0; i < maxSessionsPerRoute+3; i++ {
+		b.Publish(Record{
+			Timestamp: time.Unix(int64(100+i), 0),
+			RequestID: fmt.Sprintf("chat_%d", i),
+			Route:     "chat/completions",
+			Request:   json.RawMessage(fmt.Sprintf(`{"messages":[{"role":"user","content":"chat-%02d"}]}`, i)),
+		})
+		b.Publish(Record{
+			Timestamp: time.Unix(int64(200+i), 0),
+			RequestID: fmt.Sprintf("resp_%d", i),
+			Route:     "responses",
+			Request:   json.RawMessage(fmt.Sprintf(`{"input":"resp-%02d"}`, i)),
+		})
+	}
+
+	recent := b.Recent()
+	if len(recent) != maxSessionsPerRoute*2 {
+		t.Fatalf("recent count = %d, want %d", len(recent), maxSessionsPerRoute*2)
+	}
+	for _, rec := range recent {
+		if rec.Route == "chat/completions" && strings.HasPrefix(rec.RequestID, "chat_") {
+			continue
+		}
+		if rec.Route == "responses" && strings.HasPrefix(rec.RequestID, "resp_") {
+			continue
+		}
+		t.Fatalf("unexpected record in recent set: %#v", rec)
+	}
+}
+
+func TestBroadcasterPublishKeepsPendingRecordsWhenCappingRouteSessions(t *testing.T) {
+	t.Parallel()
+
+	b := NewBroadcaster()
+	pending := Record{
+		Timestamp: time.Unix(50, 0),
+		RequestID: "req_pending",
+		Route:     "chat/completions",
+		Pending:   true,
+		Request:   json.RawMessage(`{"messages":[{"role":"user","content":"live"}]}`),
+	}
+	b.Publish(pending)
+	for i := 0; i < maxSessionsPerRoute+5; i++ {
+		b.Publish(Record{
+			Timestamp: time.Unix(int64(100+i), 0),
+			RequestID: fmt.Sprintf("req_%d", i),
+			Route:     "chat/completions",
+			Request:   json.RawMessage(fmt.Sprintf(`{"messages":[{"role":"user","content":"task-%02d"}]}`, i)),
+		})
+	}
+
+	recent := b.Recent()
+	foundPending := false
+	for _, rec := range recent {
+		if rec.RequestID == pending.RequestID {
+			foundPending = true
+			if !rec.Pending {
+				t.Fatalf("pending record was replaced: %#v", rec)
+			}
+		}
+	}
+	if !foundPending {
+		t.Fatalf("pending record was dropped from recent set")
+	}
+}
+
 func TestBroadcasterPublishReplacesContinuedConversation(t *testing.T) {
 	t.Parallel()
 
