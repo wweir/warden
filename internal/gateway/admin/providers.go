@@ -150,6 +150,7 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"candidate_protocols":   config.CandidateRouteProtocols(provCfg),
 		"configured_protocols":  config.SupportedRouteProtocols(provCfg),
 		"supported_protocols":   config.SupportedRouteProtocols(provCfg),
+		"service_protocols":     config.SupportedServiceProtocols(provCfg),
 		"display_protocols":     status.DisplayProtocols,
 		"last_protocol_probe":   status.LastProtocolProbe,
 		"timeout":               provCfg.Timeout,

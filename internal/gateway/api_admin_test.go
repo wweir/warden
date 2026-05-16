@@ -953,6 +953,7 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 	var payload struct {
 		SupportedProtocols  []string `json:"supported_protocols"`
 		ConfiguredProtocols []string `json:"configured_protocols"`
+		ServiceProtocols    []string `json:"service_protocols"`
 		DisplayProtocols    []string `json:"display_protocols"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -968,6 +969,14 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 	}
 	if got := payload.ConfiguredProtocols; !sameStrings(got, wantSupported) {
 		t.Fatalf("configured_protocols = %v, want %v", got, wantSupported)
+	}
+	wantServiceProtocols := []string{
+		config.RouteProtocolChat,
+		config.RouteProtocolResponses,
+		config.ServiceProtocolEmbeddings,
+	}
+	if got := payload.ServiceProtocols; !sameStrings(got, wantServiceProtocols) {
+		t.Fatalf("service_protocols = %v, want %v", got, wantServiceProtocols)
 	}
 	if got := payload.DisplayProtocols; !sameStrings(got, []string{config.RouteProtocolChat}) {
 		t.Fatalf("display_protocols = %v, want [chat]", got)
