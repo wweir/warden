@@ -25,6 +25,7 @@ Use Simplified Chinese to answer my questions.
 12. git 使用 commitizen 规范，英文提交信息
 13. commit 前先执行 lint format 操作，确保代码质量、风格一致
 14. 代码模块需要有单元测试、集成测试
+15. 文件过大或混杂多业务时主动拆分模块，拒绝代码坏味道
 
 ## Design Preferences
 
