@@ -44,7 +44,7 @@
 - `Providers` 页面卡片支持直接跳到“基于该 provider 模型创建 route”的新建入口；新 route 会默认生成该 provider 已配置/已发现模型的 `exact_models`，并预选单个协议
 - `Tool Hooks` 页面负责 route hooks 编辑
 - `Providers` 页面负责单个 provider 配置编辑；`provider.models` 在 UI 中被明确当作“静态模型基线/兜底”，直接展示在配置表单中，并复用运行时已发现模型作为录入建议，不等同于 route 对外暴露模型定义
-- provider 创建页采用 intent-first 结构：先选 provider type，再填写连接 / 认证 / 能力；认证配置内联在“认证来源”选择器下，选中静态 API Key、命令、配置目录或无认证时只展示该来源需要的字段；静态模型基线和高级字段直接展示，底层 `family`、`backend`、`backend_provider` 只在自定义接入中出现，原始 `service_protocols` 只在自定义接口中出现
+- provider 创建页采用 intent-first 结构：先选 provider type preset，再填写连接 / 认证 / 能力；provider type 下拉不包含“自定义接入”。底层 `family`、`backend`、`backend_provider` 由独立的底层适配字段高级区维护，当前字段无法匹配任何 preset 时自动展开；`backend`、`backend_provider` 只对 `family: openai` 有效。认证配置内联在“认证来源”选择器下，选中静态 API Key、命令、配置目录或无认证时只展示该来源需要的字段，保存前必须按当前 provider 字段重新归一化有效认证来源；静态模型基线和高级字段直接展示，原始 `service_protocols` 只在自定义接口中出现
 - provider 创建页消费后端 `/_admin/api/providers/form-meta` 元数据接口，使用 provider presets 和 capability templates 派生默认值，但最终仍写回现有 `provider.*` schema
 - provider 详情页的配置规范化、协议能力推导、保存前清理和重启轮询应复用 `src/config-utils.js` / `src/runtime-utils.js` 等公共 helper；页面组件只负责装配视图和当前表单状态，避免复制后端配置能力规则
 - provider 编辑器仍允许直接编辑当前真实支持的 provider 配置项：`url`、`api_key`、`config_dir`、`proxy`、`headers`、`models`；对 `openai` provider 额外暴露 `backend` / `backend_provider` 元数据和 `responses_to_chat` / `anthropic_to_chat` 桥接开关

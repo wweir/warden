@@ -23,14 +23,15 @@
 2. Derived Base Config
    - provider 类型会派生底层默认值，例如 `family`、`backend`、`backend_provider`、默认 `url`、默认 `config_dir`
    - `cliproxy` 类型会优先复用当前配置里已有的 cliproxy endpoint；没有现成 endpoint 时回退到 `http://127.0.0.1:18741/v1`
-   - `cliproxy` 的 URL 是 Warden 到 CLIProxyAPI 服务的内部 HTTP 边界；普通预设路径隐藏该底层字段，只在“自定义接入”中允许直接维护 endpoint、`family`、`backend` 和 `backend_provider`
+   - `cliproxy` 的 URL 是 Warden 到 CLIProxyAPI 服务的内部 HTTP 边界；普通预设路径隐藏该底层字段；需要直接维护 endpoint、`family`、`backend` 和 `backend_provider` 时使用独立的底层适配字段高级区，不再通过“自定义接入”类型表达
    - `cliproxy` 的连接说明只描述本地/内嵌 endpoint 托管；认证说明只描述 CLIProxyAPI `auth_dir` 中的本地 CLI 登录凭证，避免把 endpoint 和 API Key 混在一起。provider 详情页提供独立的认证导入面板，只把完整 CLIProxyAPI auth JSON 写入 `auth_dir`，不写回 provider 配置。认证导入只做离线结构校验和状态提示，不在导入路径中刷新 token 或访问上游；在线验证必须由用户手动触发，并由后端沿当前 cliproxy provider 的正常请求探测链路发出
    - 派生值仍然写回现有 `provider.*` schema，不引入新的持久化字段
-   - `family`、`backend`、`backend_provider` 不再作为独立的高级字段重复暴露；只有选择“自定义接入”时才在常用配置区展开
+   - `family`、`backend`、`backend_provider` 不作为接入类型选项出现；它们只属于底层适配字段高级区，当前字段无法匹配任何 preset 时自动展开。`backend`、`backend_provider` 只对 `family: openai` 有效，切换到其它 family 时必须清理隐藏字段
 
 3. Common Config First
    - 创建页把接入类型、名称、URL、认证来源和可用接口收敛到一个常用配置区
    - 认证来源是显式选择：静态 API Key、命令、无认证；Copilot 额外提供配置目录。每种认证来源的具体字段内联在该选择器下，切换来源时只展示当前来源需要的认证信息。命令认证只写回 `api_key_command` / timeout / TTL，不引入新的 provider type，也不改变 provider family 或可用协议。
+   - 保存时必须按当前 provider 字段重新归一化有效认证来源；例如字段切换为 `backend: cliproxy` 后，认证来源必须落到 CLIProxyAPI `auth_dir` 的无 provider API key 模式，不能继续使用切换前残留的静态 API Key 或命令模式。
    - 命令认证在 UI 中标记为受信任 operator-only 配置，因为它会以 Warden 服务用户身份执行 shell 命令；cliproxy 托管预设不展示命令认证，仍由 CLIProxyAPI auth_dir 管理本地 CLI 凭证。
    - 静态模型基线和高级字段直接展示，避免隐藏可保存配置项；运行时诊断仍然独立于保存配置的主表单
    - 普通用户先完成常用配置即可；高级字段只保留网络和 HTTP 头等低频字段，并默认可见
