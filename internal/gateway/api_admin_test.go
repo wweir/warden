@@ -1131,6 +1131,28 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 	if !foundAnthropicBridge {
 		t.Fatal("anthropic_bridge template not found")
 	}
+	foundOpenAI := false
+	foundAnthropicMessages := false
+	for _, tpl := range payload.ServiceProtocolTemplates {
+		switch tpl.ID {
+		case "chat_responses_embeddings":
+			foundOpenAI = true
+			if !sameStrings(tpl.ServiceProtocols, []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings}) {
+				t.Fatalf("chat_responses_embeddings service_protocols = %v, want [chat responses embeddings]", tpl.ServiceProtocols)
+			}
+		case "anthropic_messages":
+			foundAnthropicMessages = true
+			if !sameStrings(tpl.ServiceProtocols, []string{config.RouteProtocolChat, config.RouteProtocolAnthropic}) {
+				t.Fatalf("anthropic_messages service_protocols = %v, want [chat anthropic]", tpl.ServiceProtocols)
+			}
+		}
+	}
+	if !foundOpenAI {
+		t.Fatal("chat_responses_embeddings template not found")
+	}
+	if !foundAnthropicMessages {
+		t.Fatal("anthropic_messages template not found")
+	}
 
 	var openAICompatiblePreset *struct {
 		ID                      string `json:"id"`

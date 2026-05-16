@@ -55,7 +55,7 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				Summary:                 "OpenAI-compatible upstream for OpenAI official, custom vendors, and self-hosted gateways.",
 				Family:                  config.ProviderProtocolOpenAI,
 				AuthMode:                "api_key",
-				ServiceProtocolTemplate: "adapter_defaults",
+				ServiceProtocolTemplate: "chat_responses_embeddings",
 			},
 			{
 				ID:                      "anthropic-official",
@@ -64,7 +64,7 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				Family:                  config.ProviderProtocolAnthropic,
 				AuthMode:                "api_key",
 				DefaultURL:              "https://api.anthropic.com/v1",
-				ServiceProtocolTemplate: "adapter_defaults",
+				ServiceProtocolTemplate: "anthropic_messages",
 			},
 			{
 				ID:                      "ollama-chat",
@@ -116,18 +116,10 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				AuthMode:                "config_dir",
 				DefaultURL:              "https://api.githubcopilot.com",
 				DefaultConfigDir:        "~/.config/github-copilot",
-				ServiceProtocolTemplate: "adapter_defaults",
+				ServiceProtocolTemplate: "chat_only",
 			},
 		},
 		ServiceProtocolTemplates: []providerFormServiceProtocolTemplateMeta{
-			{
-				ID:               "adapter_defaults",
-				Title:            "Adapter Defaults",
-				Summary:          "Use the adapter default capability set for this family.",
-				Families:         []string{config.ProviderProtocolOpenAI, config.ProviderProtocolAnthropic, config.ProviderProtocolCopilot},
-				Backends:         []string{""},
-				ServiceProtocols: []string{},
-			},
 			{
 				ID:               "chat_only",
 				Title:            "Chat Only",
@@ -150,6 +142,14 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				Families:         []string{config.ProviderProtocolOpenAI},
 				Backends:         []string{""},
 				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings},
+			},
+			{
+				ID:               "anthropic_messages",
+				Title:            "Chat + Anthropic Messages",
+				Summary:          "Expose chat and Anthropic /messages for Anthropic-compatible upstreams.",
+				Families:         []string{config.ProviderProtocolAnthropic},
+				Backends:         []string{""},
+				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolAnthropic},
 			},
 			{
 				ID:               "anthropic_bridge",
