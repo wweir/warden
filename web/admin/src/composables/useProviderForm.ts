@@ -1,5 +1,5 @@
 import { computed, ref, watch } from "vue";
-import { cloneData, normalizeLowerText, providerBackend, providerFamily, serviceProtocolsEqual } from "../config-utils.js";
+import { cloneData, providerBackend, providerFamily, serviceProtocolsEqual } from "../config-utils.js";
 import {
   createEmptyProviderConfig,
   effectiveAuthSource as resolveEffectiveAuthSource,
@@ -9,19 +9,17 @@ import {
 
 const REDACTED = "__REDACTED__";
 const CLEAR_API_KEY_MARKER = "__clear_api_key__";
-const CUSTOM_SERVICE_TEMPLATE = "__custom__";
 
 export function useProviderForm(providerFormMeta: any) {
   const providerName = ref("");
   const providerConfig = ref(createEmptyProviderConfig());
   const selectedPresetId = ref("");
-  const selectedServiceTemplateId = ref(CUSTOM_SERVICE_TEMPLATE);
+  const selectedServiceTemplateId = ref("");
   const selectedAuthSource = ref("");
   const dirty = ref(false);
   const suppressDirty = ref(false);
   const showAPIKey = ref(false);
   const apiKeyTouched = ref(false);
-  const adapterAdvancedOpen = ref(false);
 
   const providerPresets = computed(() => providerFormMeta.value?.presets || []);
   const serviceProtocolTemplates = computed(() => providerFormMeta.value?.service_protocol_templates || []);
@@ -30,17 +28,17 @@ export function useProviderForm(providerFormMeta: any) {
     providerPresets.value.find((preset: any) => preset.id === selectedPresetId.value) || null
   );
 
+  const currentServiceTemplate = computed(() =>
+    visibleServiceProtocolTemplates.value.find((template: any) => template.id === selectedServiceTemplateId.value) || null
+  );
+
   const isCLIProxyBackend = computed(() => providerBackend(providerConfig.value) === "cliproxy");
 
   const isManagedCLIProxyAccess = computed(() => isCLIProxyBackend.value && !!currentPreset.value);
 
-  const showAdapterAdvanced = computed(() => adapterAdvancedOpen.value || !currentPreset.value);
-
   const effectiveAuthSource = computed(() =>
     resolveEffectiveAuthSource(providerConfig.value, selectedAuthSource.value)
   );
-
-  const isCustomServiceTemplate = computed(() => selectedServiceTemplateId.value === CUSTOM_SERVICE_TEMPLATE);
 
   const visibleServiceProtocolTemplates = computed(() => {
     const family = providerFamily(providerConfig.value);
@@ -81,24 +79,21 @@ export function useProviderForm(providerFormMeta: any) {
       }
       const inferredPresetID = inferPresetID(providerConfig.value, providerPresets.value);
       selectedPresetId.value = inferredPresetID || "";
-      if (!inferredPresetID) adapterAdvancedOpen.value = true;
       selectedAuthSource.value = resolveEffectiveAuthSource(providerConfig.value, selectedAuthSource.value);
-      if (selectedServiceTemplateId.value !== CUSTOM_SERVICE_TEMPLATE) {
-        syncSelectedServiceTemplate();
-      }
+      syncSelectedServiceTemplate();
     },
     { deep: true }
   );
 
   function inferServiceTemplateID(provider: any) {
-    if (provider.responses_to_chat) return CUSTOM_SERVICE_TEMPLATE;
+    if (provider.responses_to_chat) return "";
     for (const template of visibleServiceProtocolTemplates.value) {
       if (!serviceProtocolsEqual(provider.service_protocols, template.service_protocols)) continue;
       if (!!provider.anthropic_to_chat !== !!template.anthropic_to_chat) continue;
       if (!!provider.anthropic_to_responses !== !!template.anthropic_to_responses) continue;
       return template.id;
     }
-    return CUSTOM_SERVICE_TEMPLATE;
+    return "";
   }
 
   function syncSelectedServiceTemplate() {
@@ -146,7 +141,6 @@ export function useProviderForm(providerFormMeta: any) {
     next.api_key_command_ttl = current.api_key_command_ttl || "";
     providerConfig.value = next;
     selectedPresetId.value = preset.id;
-    adapterAdvancedOpen.value = false;
     selectedAuthSource.value = inferAuthSource(next);
     showAPIKey.value = false;
     if (preset.service_protocol_template) {
@@ -167,7 +161,6 @@ export function useProviderForm(providerFormMeta: any) {
     providerConfig.value.url = presetFieldValue(providerConfig.value.url, previousPreset?.default_url, preset.default_url);
     providerConfig.value.config_dir = presetFieldValue(providerConfig.value.config_dir, previousPreset?.default_config_dir, preset.default_config_dir);
     selectedPresetId.value = preset.id;
-    adapterAdvancedOpen.value = false;
     selectedAuthSource.value = inferAuthSource(providerConfig.value);
     if (preset.service_protocol_template) {
       applyServiceProtocolTemplateByID(preset.service_protocol_template);
@@ -190,7 +183,7 @@ export function useProviderForm(providerFormMeta: any) {
 
   function handleServiceTemplateChange(templateID: string) {
     selectedServiceTemplateId.value = templateID;
-    if (templateID === CUSTOM_SERVICE_TEMPLATE) return;
+    if (!templateID) return;
     applyServiceProtocolTemplateByID(templateID);
   }
 
@@ -245,18 +238,22 @@ export function useProviderForm(providerFormMeta: any) {
       headers: cloneData(provider.headers || {}),
     };
     selectedPresetId.value = inferPresetID(providerConfig.value, providerPresets.value);
-    adapterAdvancedOpen.value = !selectedPresetId.value;
     selectedAuthSource.value = inferAuthSource(providerConfig.value);
     syncSelectedServiceTemplate();
+    if (!selectedServiceTemplateId.value && providerConfig.value.service_protocols.length === 0) {
+      const preset = providerPresets.value.find((item: any) => item.id === selectedPresetId.value);
+      if (preset?.service_protocol_template) {
+        applyServiceProtocolTemplateByID(preset.service_protocol_template);
+      }
+    }
   }
 
   function resetForm() {
     providerName.value = "";
     providerConfig.value = createEmptyProviderConfig();
     selectedPresetId.value = "";
-    selectedServiceTemplateId.value = CUSTOM_SERVICE_TEMPLATE;
+    selectedServiceTemplateId.value = "";
     selectedAuthSource.value = "";
-    adapterAdvancedOpen.value = false;
     dirty.value = false;
     showAPIKey.value = false;
     apiKeyTouched.value = false;
@@ -272,15 +269,13 @@ export function useProviderForm(providerFormMeta: any) {
     suppressDirty,
     showAPIKey,
     apiKeyTouched,
-    adapterAdvancedOpen,
     providerPresets,
     serviceProtocolTemplates,
     currentPreset,
+    currentServiceTemplate,
     isCLIProxyBackend,
     isManagedCLIProxyAccess,
-    showAdapterAdvanced,
     effectiveAuthSource,
-    isCustomServiceTemplate,
     visibleServiceProtocolTemplates,
     handleAccessTypeChange,
     handleServiceTemplateChange,
@@ -289,6 +284,5 @@ export function useProviderForm(providerFormMeta: any) {
     resetForm,
     applyPresetByID,
     syncSelectedServiceTemplate,
-    CUSTOM_SERVICE_TEMPLATE,
   };
 }

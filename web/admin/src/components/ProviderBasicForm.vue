@@ -19,53 +19,14 @@
             @change="$emit('access-type-change', $event.target.value)"
           >
             <option v-if="!selectedPresetId" value="" disabled>
-              {{ $t("providerDetail.manualAdapterFields") }}
+              {{ $t("providerDetail.selectProviderTypePlaceholder") }}
             </option>
             <option v-for="option in accessTypeOptions" :key="option.id" :value="option.id">
               {{ accessTypeTitle(option) }}
             </option>
           </select>
           <p class="hint">{{ currentAccessTypeSummary }}</p>
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm adapter-advanced-toggle"
-            @click="$emit('update:adapterAdvancedOpen', !adapterAdvancedOpen)"
-          >
-            {{
-              adapterAdvancedOpen
-                ? $t("providerDetail.hideAdapterFields")
-                : $t("providerDetail.showAdapterFields")
-            }}
-          </button>
-        </div>
-
-        <div v-if="showAdapterAdvanced" class="form-grid-full custom-interface-editor">
-          <div class="custom-interface-head">
-            <span class="interface-preview-title">{{ $t("providerDetail.adapterFieldsSection") }}</span>
-            <span class="hint">{{ $t("providerDetail.adapterFieldsDesc") }}</span>
-          </div>
-          <div class="form-grid compact-grid">
-            <label>{{ $t("providerDetail.family") }} <span class="req">*</span></label>
-            <select v-model="localProviderConfig.family" class="form-input">
-              <option value="">{{ $t("providerDetail.selectFamily") }}</option>
-              <option value="openai">openai</option>
-              <option value="anthropic">anthropic</option>
-              <option value="copilot">copilot</option>
-            </select>
-
-            <template v-if="providerFamily(localProviderConfig) === 'openai'">
-              <label>backend</label>
-              <select v-model="localProviderConfig.backend" class="form-input">
-                <option value="">default</option>
-                <option value="cliproxy">cliproxy</option>
-              </select>
-
-              <template v-if="providerBackend(localProviderConfig) === 'cliproxy'">
-                <label>backend_provider <span class="req">*</span></label>
-                <input v-model="localProviderConfig.backend_provider" class="form-input" placeholder="codex" />
-              </template>
-            </template>
-          </div>
+          <p v-if="!currentPreset" class="hint">{{ $t("providerDetail.noPresetWarning") }}</p>
         </div>
 
         <label>{{ $t("providerDetail.name") }} <span class="req">*</span></label>
@@ -188,6 +149,9 @@
             class="form-input"
             @change="$emit('service-template-change', $event.target.value)"
           >
+            <option v-if="!selectedServiceTemplateId" value="" disabled>
+              {{ $t("providerDetail.selectInterfacePlaceholder") }}
+            </option>
             <option v-for="template in capabilityTemplateOptions" :key="template.id" :value="template.id">
               {{ serviceTemplateTitle(template) }}
             </option>
@@ -207,46 +171,6 @@
           </div>
           <p class="hint">{{ $t("providerDetail.finalInterfacesHint") }}</p>
         </div>
-
-        <div v-if="isCustomServiceTemplate" class="form-grid-full custom-interface-editor">
-          <div class="custom-interface-head">
-            <span class="interface-preview-title">{{ $t("providerDetail.customInterfacesSection") }}</span>
-            <span class="hint">{{ $t("providerDetail.customInterfacesDesc") }}</span>
-          </div>
-          <div class="form-grid compact-grid">
-            <label>{{ $t("providerDetail.rawServiceProtocols") }}</label>
-            <div class="service-protocols-editor">
-              <TagListEditor
-                v-model="localProviderConfig.service_protocols"
-                :suggestions="serviceProtocolSuggestions"
-                :placeholder="$t('providerDetail.serviceProtocolsPlaceholder')"
-              />
-              <p class="hint service-protocols-hint">{{ $t("providerDetail.serviceProtocolsHint") }}</p>
-            </div>
-
-            <template v-if="providerFamily(localProviderConfig) === 'openai'">
-              <label>responses_to_chat</label>
-              <div class="form-hint-row">
-                <input type="checkbox" v-model="localProviderConfig.responses_to_chat" class="form-checkbox" />
-                <span class="hint">{{ $t("config.responsesToChatHint") }}</span>
-              </div>
-
-              <label>anthropic_to_chat</label>
-              <div class="form-hint-row">
-                <input type="checkbox" v-model="localProviderConfig.anthropic_to_chat" class="form-checkbox" />
-                <span class="hint">{{ $t("config.anthropicToChatHint") }}</span>
-              </div>
-            </template>
-
-            <template v-if="providerFamily(localProviderConfig) === 'anthropic'">
-              <label>anthropic_to_responses</label>
-              <div class="form-hint-row">
-                <input type="checkbox" v-model="localProviderConfig.anthropic_to_responses" class="form-checkbox" />
-                <span class="hint">{{ $t("config.anthropicToResponsesHint") }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
       </div>
     </section>
   </div>
@@ -256,9 +180,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  defaultServiceProtocolsForProvider,
   normalizeServiceProtocols,
-  providerBackend,
   providerFamily,
 } from "../config-utils.js";
 import {
@@ -270,7 +192,6 @@ import {
   secretDisplay,
 } from "../utils/providerHelpers.ts";
 import CLIProxyAuthManager from "./CLIProxyAuthManager.vue";
-import TagListEditor from "./TagListEditor.vue";
 
 const { t } = useI18n();
 
@@ -282,14 +203,10 @@ const props = defineProps({
   selectedAuthSource: { type: String, required: true },
   showAPIKey: { type: Boolean, required: true },
   apiKeyTouched: { type: Boolean, required: true },
-  adapterAdvancedOpen: { type: Boolean, required: true },
   isCreate: { type: Boolean, default: false },
   providerPresets: { type: Array, required: true },
-  serviceProtocolTemplates: { type: Array, required: true },
   currentPreset: { type: Object, default: null },
   isManagedCLIProxyAccess: { type: Boolean, required: true },
-  showAdapterAdvanced: { type: Boolean, required: true },
-  isCustomServiceTemplate: { type: Boolean, required: true },
   visibleServiceProtocolTemplates: { type: Array, required: true },
   configDoc: { type: Object, required: true },
 });
@@ -302,14 +219,12 @@ const emit = defineEmits([
   "update:selectedAuthSource",
   "update:showAPIKey",
   "update:apiKeyTouched",
-  "update:adapterAdvancedOpen",
   "access-type-change",
   "service-template-change",
   "auth-success",
   "auth-error",
 ]);
 
-const CUSTOM_SERVICE_TEMPLATE = "__custom__";
 
 const localProviderConfig = computed({
   get: () => props.providerConfig,
@@ -320,27 +235,19 @@ const accessTypeOptions = computed(() => props.providerPresets);
 
 const currentAccessTypeSummary = computed(() => {
   const current = accessTypeOptions.value.find((option) => option.id === props.selectedPresetId);
-  return current?.summary || t("providerDetail.manualAdapterFieldsDesc");
+  return current?.summary || "";
 });
 
-const capabilityTemplateOptions = computed(() => [
-  ...props.visibleServiceProtocolTemplates,
-  {
-    id: CUSTOM_SERVICE_TEMPLATE,
-    title: t("providerDetail.interfaceTemplateCustom"),
-    summary: t("providerDetail.interfaceTemplateCustomDesc"),
-  },
-]);
+const capabilityTemplateOptions = computed(() => props.visibleServiceProtocolTemplates);
 
 const currentServiceTemplateSummary = computed(() => {
+  if (!props.selectedServiceTemplateId) return t("providerDetail.interfaceTemplateNoMatchDesc");
   const current = capabilityTemplateOptions.value.find((template) => template.id === props.selectedServiceTemplateId);
-  return current?.summary || t("providerDetail.interfaceTemplateCustomDesc");
+  return current?.summary || t("providerDetail.interfaceTemplateNoMatchDesc");
 });
 
 const effectiveServiceProtocols = computed(() => {
-  const configured = normalizeServiceProtocols(props.providerConfig.service_protocols);
-  if (configured.length > 0) return configured;
-  return defaultServiceProtocolsForProvider(props.providerConfig);
+  return normalizeServiceProtocols(props.providerConfig.service_protocols);
 });
 
 const showsURLField = computed(
@@ -399,26 +306,6 @@ const configDirPlaceholder = computed(() => {
   }
 });
 
-const serviceProtocolSuggestions = computed(() => {
-  if (providerEffectiveBackend(props.providerConfig) === "cliproxy") {
-    return ["chat", "responses"];
-  }
-  switch (providerFamily(props.providerConfig)) {
-    case "openai": {
-      const protocols = ["chat", "responses", "embeddings"];
-      if (props.providerConfig?.anthropic_to_chat) protocols.push("anthropic");
-      return protocols;
-    }
-    case "anthropic": {
-      const protocols = ["chat", "anthropic"];
-      if (props.providerConfig?.anthropic_to_responses) protocols.push("responses");
-      return protocols;
-    }
-    case "copilot": return ["chat"];
-    default: return [];
-  }
-});
-
 const verifyModel = computed(() => "");
 
 function accessTypeTitle(option) {
@@ -427,7 +314,6 @@ function accessTypeTitle(option) {
 
 function serviceTemplateTitle(template) {
   if (!template?.id) return "";
-  if (template.id === CUSTOM_SERVICE_TEMPLATE) return template.title || "";
   const key = `providerDetail.interfaceTemplate_${template.id}`;
   const translated = t(key);
   return translated === key ? template.title || template.id : translated;
@@ -515,10 +401,6 @@ function handleAuthError(error) {
   align-items: start;
 }
 
-.compact-grid {
-  grid-template-columns: 150px 1fr;
-}
-
 .form-grid > label {
   padding-top: 7px;
   font-size: 12px;
@@ -578,21 +460,6 @@ function handleAuthError(error) {
   color: var(--c-text-2);
 }
 
-.custom-interface-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-}
-
-.custom-interface-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .section-note {
   font-size: 13px;
   color: var(--c-text-3);
@@ -616,29 +483,6 @@ function handleAuthError(error) {
 
 .secret-field .form-input {
   flex: 1;
-}
-
-.form-hint-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 34px;
-}
-
-.service-protocols-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.service-protocols-hint {
-  margin: 0;
-}
-
-.form-checkbox {
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
 }
 
 .badge-muted {

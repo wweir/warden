@@ -500,7 +500,8 @@ export default {
 			"Start with a provider type, then fill connection, auth, and capability details. Saving still writes the full config file and restarts the gateway.",
 		providerType: "Provider Type",
 		providerTypeDesc:
-			"Choose the upstream type and let the form manage the raw adapter fields.",
+			"Choose the upstream type.",
+		selectProviderTypePlaceholder: "Select a provider type",
 		quickSetupSection: "Common Config",
 		quickSetupDesc:
 			"Keep only the fields needed for creation and routine edits here: type, connection, auth, and available interfaces.",
@@ -516,20 +517,15 @@ export default {
 		advancedSection: "Advanced Fields",
 		advancedSectionDesc:
 			"Only low-frequency network and HTTP header fields live here. Provider type and interface capabilities stay in Common Config.",
-		manualAdapterFields: "Manual Adapter Fields",
-		manualAdapterFieldsDesc: "The current fields do not match any preset; you can continue editing the raw adapter fields manually.",
-		showAdapterFields: "Show Adapter Fields",
-		hideAdapterFields: "Hide Adapter Fields",
-		adapterFieldsSection: "Adapter Fields",
-		adapterFieldsDesc:
-			"Only use this for low-level family, backend, and backend_provider fields. Prefer provider type presets for OpenAI-compatible, Ollama, cliproxy, and other common cases.",
+		noPresetWarning: "The current fields do not match any preset; the underlying fields stay in the config, but this page does not edit them directly.",
 		availableInterfaces: "Available Interfaces",
+		selectInterfacePlaceholder: "Select available interfaces",
 		finalInterfaces: "Final Available Interfaces",
 		finalInterfacesHint:
 			"Routes can only use the interfaces shown here. Saving writes the matching service_protocols.",
-		interfaceTemplate_adapter_defaults: "Auto: Adapter Defaults",
-		interfaceTemplate_adapter_defaults_desc:
-			"Do not write explicit service_protocols; derive interfaces from the current adapter family.",
+		interfaceTemplateNoMatchDesc:
+			"The current interface fields do not match a built-in supported combination. Select an interface set explicitly supported by Warden.",
+		interfaceTemplateRequired: "Select an available interface set explicitly supported by Warden",
 		interfaceTemplate_chat_only: "Chat Only",
 		interfaceTemplate_chat_only_desc:
 			"Allow chat only. Recommended for Ollama, cliproxy, or upstreams where other interfaces are not verified.",
@@ -538,18 +534,15 @@ export default {
 		interfaceTemplate_chat_responses_embeddings: "Chat + Responses + Embeddings",
 		interfaceTemplate_chat_responses_embeddings_desc:
 			"Allow chat, Responses, and embeddings.",
+		interfaceTemplate_anthropic_messages: "Chat + Anthropic Messages",
+		interfaceTemplate_anthropic_messages_desc:
+			"Allow Anthropic-compatible upstreams to expose chat and Anthropic /messages.",
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages Compatible",
 		interfaceTemplate_anthropic_bridge_desc:
 			"Serve Anthropic /messages through an OpenAI-compatible provider and enable anthropic_to_chat.",
 		interfaceTemplate_responses_via_messages: "Responses via Anthropic Messages",
 		interfaceTemplate_responses_via_messages_desc:
 			"Serve stateless Responses through an Anthropic /messages provider; previous_response_id requests return 400.",
-		interfaceTemplateCustom: "Custom Interfaces",
-		interfaceTemplateCustomDesc: "Edit the interface list and compatibility switches directly for unusual upstreams.",
-		customInterfacesSection: "Custom Interface Fields",
-		customInterfacesDesc:
-			"This is the only advanced interface entrypoint. Changes are reflected in the final interface preview above.",
-		rawServiceProtocols: "Interface List",
 		serviceProtocol_chat: "Chat",
 		serviceProtocol_responses: "Responses",
 		serviceProtocol_embeddings: "Embeddings",
@@ -562,7 +555,7 @@ export default {
 		cliproxyManagedConnection:
 			"Warden manages the local or embedded CLIProxyAPI endpoint. The normal access path does not require editing raw URL, family, backend, or backend_provider fields.",
 		cliproxyConnectionNote:
-			"Uses the local or embedded CLIProxyAPI endpoint managed by Warden. The normal access path does not require a URL; expand adapter fields to change the listener.",
+			"Uses the local or embedded CLIProxyAPI endpoint managed by Warden. The normal access path does not require a URL; expand advanced settings to change the listener.",
 		cliproxyAuthNote:
 			"Uses local CLI login credentials from CLIProxyAPI auth_dir. Do not enter a provider API key here.",
 		cliproxyAuthImportSection: "Auth Import",
@@ -627,8 +620,6 @@ export default {
 		apiKeyCommandRequired: "api_key_command is required when command auth is selected",
 		configDirAuthHint: "Uses login credentials from the local CLI config directory.",
 		noAuthHint: "Does not inject provider authentication headers upstream.",
-		serviceProtocolsPlaceholder: "adapter defaults",
-		serviceProtocolsHint: "Empty derives from adapter defaults. cliproxy backends still require explicit service_protocols.",
 		proxyPlaceholder: "proxy (socks5://...)",
 		staticModelsSection: "Static Model Baseline",
 		staticModelsSectionDesc:
@@ -652,6 +643,7 @@ export default {
 		family: "Adapter Family",
 		selectFamily: "Select family",
 		familyRequired: "Adapter family is required",
+		providerTypeRequired: "Select a provider type explicitly supported by Warden",
 		backendProviderRequired: "cliproxy backend requires backend_provider",
 		backendServiceProtocolsRequired: "cliproxy backend requires explicit service_protocols",
 		configuredProtocols: "Configured Route Protocols",

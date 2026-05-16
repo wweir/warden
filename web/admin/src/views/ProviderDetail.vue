@@ -61,14 +61,10 @@
           v-model:selected-auth-source="selectedAuthSource"
           v-model:show-api-key="showAPIKey"
           v-model:api-key-touched="apiKeyTouched"
-          v-model:adapter-advanced-open="adapterAdvancedOpen"
           :is-create="create"
           :provider-presets="providerPresets"
-          :service-protocol-templates="serviceProtocolTemplates"
           :current-preset="currentPreset"
           :is-managed-cli-proxy-access="isManagedCLIProxyAccess"
-          :show-adapter-advanced="showAdapterAdvanced"
-          :is-custom-service-template="isCustomServiceTemplate"
           :visible-service-protocol-templates="visibleServiceProtocolTemplates"
           :config-doc="configDoc"
           @access-type-change="handleAccessTypeChange"
@@ -164,14 +160,11 @@ const {
   suppressDirty,
   showAPIKey,
   apiKeyTouched,
-  adapterAdvancedOpen,
   providerPresets,
-  serviceProtocolTemplates,
   currentPreset,
+  currentServiceTemplate,
   isManagedCLIProxyAccess,
-  showAdapterAdvanced,
   effectiveAuthSource,
-  isCustomServiceTemplate,
   visibleServiceProtocolTemplates,
   handleAccessTypeChange: formHandleAccessTypeChange,
   handleServiceTemplateChange: formHandleServiceTemplateChange,
@@ -300,6 +293,10 @@ async function apply() {
       error.value = t("providerDetail.familyRequired");
       return;
     }
+    if (!currentPreset.value) {
+      error.value = t("providerDetail.providerTypeRequired");
+      return;
+    }
     const family = providerFamily(providerConfig.value);
     if (!["copilot"].includes(family) && !providerConfig.value.url?.trim()) {
       error.value = t("providerDetail.urlRequired");
@@ -320,6 +317,10 @@ async function apply() {
         error.value = t("providerDetail.backendServiceProtocolsRequired");
         return;
       }
+    }
+    if (!currentServiceTemplate.value) {
+      error.value = t("providerDetail.interfaceTemplateRequired");
+      return;
     }
 
     const nextConfig = cloneData(configDoc.value);

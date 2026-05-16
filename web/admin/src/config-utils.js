@@ -56,31 +56,10 @@ export function normalizeServiceProtocols(protocols) {
   return out;
 }
 
-export function defaultServiceProtocolsForProvider(provider) {
-  if (providerBackend(provider) === "cliproxy") {
-    return [];
-  }
-  switch (providerFamily(provider)) {
-    case "openai": {
-      const protocols = ["chat", "responses", "embeddings"];
-      if (provider?.anthropic_to_chat) protocols.push("anthropic");
-      return protocols;
-    }
-    case "anthropic": {
-      const protocols = ["chat", "anthropic"];
-      if (provider?.anthropic_to_responses) protocols.push("responses");
-      return protocols;
-    }
-    case "copilot":
-      return ["chat"];
-    default:
-      return [];
-  }
-}
-
 export function serviceProtocolsEqual(left, right) {
   const a = normalizeServiceProtocols(left);
   const b = normalizeServiceProtocols(right);
   if (a.length !== b.length) return false;
-  return a.every((protocol, index) => protocol === b[index]);
+  const protocols = new Set(a);
+  return b.every((protocol) => protocols.has(protocol));
 }

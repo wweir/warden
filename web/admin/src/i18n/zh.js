@@ -481,7 +481,8 @@ export default {
 		configEditorDesc:
 			"新建时先按接入类型选择，再补连接、认证和能力。保存仍然写回整份配置文件并触发重启。",
 		providerType: "接入类型",
-		providerTypeDesc: "选择要接入的上游类型，页面会自动处理底层适配字段。",
+		providerTypeDesc: "选择要接入的上游类型。",
+		selectProviderTypePlaceholder: "请选择接入类型",
 		quickSetupSection: "常用配置",
 		quickSetupDesc:
 			"只保留创建和日常维护必须改的字段：接入类型、连接、认证和可用接口。",
@@ -497,20 +498,15 @@ export default {
 		advancedSection: "高级字段",
 		advancedSectionDesc:
 			"这里只有网络和 HTTP 头等低频字段。接入类型和接口能力都在常用配置里维护。",
-		manualAdapterFields: "手动适配字段",
-		manualAdapterFieldsDesc: "当前字段没有匹配任何预设；可以继续手动维护底层适配字段。",
-		showAdapterFields: "显示底层适配字段",
-		hideAdapterFields: "隐藏底层适配字段",
-		adapterFieldsSection: "底层适配字段",
-		adapterFieldsDesc:
-			"仅用于维护 family、backend、backend_provider 等底层字段；普通 OpenAI-compatible、Ollama、cliproxy 等场景优先使用接入类型预设。",
+		noPresetWarning: "当前字段没有匹配任何预设；底层字段保留在配置里，但这里不提供直接编辑。",
 		availableInterfaces: "可用接口",
+		selectInterfacePlaceholder: "请选择可用接口",
 		finalInterfaces: "最终可用接口",
 		finalInterfacesHint:
 			"路由只能使用这里列出的接口；保存时会写入 service_protocols。",
-		interfaceTemplate_adapter_defaults: "自动：按适配器默认能力",
-		interfaceTemplate_adapter_defaults_desc:
-			"不显式写 service_protocols，按当前适配器族推导接口能力。",
+		interfaceTemplateNoMatchDesc:
+			"当前接口字段没有匹配任何内置支持组合；请选择 Warden 明确支持的接口组合。",
+		interfaceTemplateRequired: "必须选择 Warden 明确支持的可用接口组合",
 		interfaceTemplate_chat_only: "仅聊天",
 		interfaceTemplate_chat_only_desc:
 			"只允许聊天接口。推荐给 Ollama、cliproxy 或尚未验证其它接口的上游。",
@@ -519,18 +515,15 @@ export default {
 		interfaceTemplate_chat_responses_embeddings: "聊天 + Responses + 向量",
 		interfaceTemplate_chat_responses_embeddings_desc:
 			"允许聊天、Responses 和 embeddings。",
+		interfaceTemplate_anthropic_messages: "聊天 + Anthropic Messages",
+		interfaceTemplate_anthropic_messages_desc:
+			"允许 Anthropic-compatible 上游提供 Chat 和 Anthropic /messages。",
 		interfaceTemplate_anthropic_bridge: "Anthropic Messages 兼容",
 		interfaceTemplate_anthropic_bridge_desc:
 			"通过 OpenAI-compatible provider 承接 Anthropic /messages，并开启 anthropic_to_chat。",
 		interfaceTemplate_responses_via_messages: "Responses 走 Anthropic Messages",
 		interfaceTemplate_responses_via_messages_desc:
 			"通过 Anthropic /messages provider 承接无状态 Responses 请求；带 previous_response_id 的请求会返回 400。",
-		interfaceTemplateCustom: "自定义接口",
-		interfaceTemplateCustomDesc: "直接维护接口列表和兼容开关，用于非常规上游。",
-		customInterfacesSection: "自定义接口字段",
-		customInterfacesDesc:
-			"这是唯一的接口高级入口；修改后上方最终可用接口会同步变化。",
-		rawServiceProtocols: "接口列表",
 		serviceProtocol_chat: "Chat",
 		serviceProtocol_responses: "Responses",
 		serviceProtocol_embeddings: "Embeddings",
@@ -543,7 +536,7 @@ export default {
 		cliproxyManagedConnection:
 			"由 Warden 管理本地/内嵌 CLIProxyAPI endpoint，普通接入不需要维护底层 URL、family、backend 或 backend_provider。",
 		cliproxyConnectionNote:
-			"使用 Warden 管理的本地/内嵌 CLIProxyAPI endpoint；普通接入不需要填写 URL。需要改监听地址时展开底层适配字段。",
+			"使用 Warden 管理的本地/内嵌 CLIProxyAPI endpoint；普通接入不需要填写 URL。需要改监听地址时展开高级设置。",
 		cliproxyAuthNote:
 			"使用 CLIProxyAPI auth_dir 中的本地 CLI 登录凭证；这里不填写 provider API Key。",
 		cliproxyAuthImportSection: "认证导入",
@@ -607,8 +600,6 @@ export default {
 		apiKeyCommandRequired: "选择命令认证时必须填写 api_key_command",
 		configDirAuthHint: "使用本地 CLI 配置目录中的登录凭证。",
 		noAuthHint: "不向上游注入 provider 认证头。",
-		serviceProtocolsPlaceholder: "adapter defaults",
-		serviceProtocolsHint: "留空表示按适配器默认能力推导；cliproxy backend 仍然要求显式填写。",
 		proxyPlaceholder: "proxy (socks5://...)",
 		staticModelsSection: "静态模型基线",
 		staticModelsSectionDesc:
@@ -632,6 +623,7 @@ export default {
 		family: "适配器族",
 		selectFamily: "选择适配器族",
 		familyRequired: "适配器族不能为空",
+		providerTypeRequired: "必须选择 Warden 明确支持的接入类型",
 		backendProviderRequired: "cliproxy backend 必须填写 backend_provider",
 		backendServiceProtocolsRequired: "cliproxy backend 必须显式填写 service_protocols",
 		configuredProtocols: "配置后路由协议",

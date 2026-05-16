@@ -59,6 +59,8 @@ export function inferPresetID(provider: any, presets: any[]): string {
   const backend = providerEffectiveBackend(provider);
   const backendProvider = String(provider?.backend_provider || "").toLowerCase().trim();
   const url = String(provider?.url || "").trim();
+  const hasPreset = (id: string) => presets.some((preset) => preset.id === id);
+  const presetID = (id: string) => hasPreset(id) ? id : "";
 
   if (family === "openai" && backend === "cliproxy" && backendProvider) {
     const match = presets.find(
@@ -70,12 +72,11 @@ export function inferPresetID(provider: any, presets: any[]): string {
     return match?.id || "";
   }
   if (family === "openai" && backend === "") {
-    if (url === "http://127.0.0.1:11434/v1") return "ollama-chat";
-    return "openai-compatible";
+    if (url === "http://127.0.0.1:11434/v1") return presetID("ollama-chat");
+    return presetID("openai-compatible");
   }
-  if (family === "anthropic" && url === "https://api.anthropic.com/v1")
-    return "anthropic-official";
-  if (family === "copilot") return "copilot-cli";
+  if (family === "anthropic") return presetID("anthropic-official");
+  if (family === "copilot") return presetID("copilot-cli");
   return "";
 }
 
