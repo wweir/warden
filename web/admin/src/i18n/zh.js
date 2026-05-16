@@ -497,11 +497,13 @@ export default {
 		advancedSection: "高级字段",
 		advancedSectionDesc:
 			"这里只有网络和 HTTP 头等低频字段。接入类型和接口能力都在常用配置里维护。",
-		customAccessType: "自定义接入",
-		customAccessTypeDesc: "直接维护底层适配字段，用于预设列表覆盖不到的上游。",
-		customAccessSection: "自定义接入字段",
-		customAccessDesc:
-			"这是唯一的接入高级入口；普通 OpenAI-compatible、Ollama、cliproxy 等场景优先使用上方预设。",
+		manualAdapterFields: "手动适配字段",
+		manualAdapterFieldsDesc: "当前字段没有匹配任何预设；可以继续手动维护底层适配字段。",
+		showAdapterFields: "显示底层适配字段",
+		hideAdapterFields: "隐藏底层适配字段",
+		adapterFieldsSection: "底层适配字段",
+		adapterFieldsDesc:
+			"仅用于维护 family、backend、backend_provider 等底层字段；普通 OpenAI-compatible、Ollama、cliproxy 等场景优先使用接入类型预设。",
 		availableInterfaces: "可用接口",
 		finalInterfaces: "最终可用接口",
 		finalInterfacesHint:
@@ -541,7 +543,7 @@ export default {
 		cliproxyManagedConnection:
 			"由 Warden 管理本地/内嵌 CLIProxyAPI endpoint，普通接入不需要维护底层 URL、family、backend 或 backend_provider。",
 		cliproxyConnectionNote:
-			"使用 Warden 管理的本地/内嵌 CLIProxyAPI endpoint；普通接入不需要填写 URL。需要改监听地址时切到自定义接入。",
+			"使用 Warden 管理的本地/内嵌 CLIProxyAPI endpoint；普通接入不需要填写 URL。需要改监听地址时展开底层适配字段。",
 		cliproxyAuthNote:
 			"使用 CLIProxyAPI auth_dir 中的本地 CLI 登录凭证；这里不填写 provider API Key。",
 		cliproxyAuthImportSection: "认证导入",

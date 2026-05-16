@@ -18,17 +18,31 @@
             class="form-input"
             @change="$emit('access-type-change', $event.target.value)"
           >
+            <option v-if="!selectedPresetId" value="" disabled>
+              {{ $t("providerDetail.manualAdapterFields") }}
+            </option>
             <option v-for="option in accessTypeOptions" :key="option.id" :value="option.id">
               {{ accessTypeTitle(option) }}
             </option>
           </select>
           <p class="hint">{{ currentAccessTypeSummary }}</p>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm adapter-advanced-toggle"
+            @click="$emit('update:adapterAdvancedOpen', !adapterAdvancedOpen)"
+          >
+            {{
+              adapterAdvancedOpen
+                ? $t("providerDetail.hideAdapterFields")
+                : $t("providerDetail.showAdapterFields")
+            }}
+          </button>
         </div>
 
-        <div v-if="isCustomAccessType" class="form-grid-full custom-interface-editor">
+        <div v-if="showAdapterAdvanced" class="form-grid-full custom-interface-editor">
           <div class="custom-interface-head">
-            <span class="interface-preview-title">{{ $t("providerDetail.customAccessSection") }}</span>
-            <span class="hint">{{ $t("providerDetail.customAccessDesc") }}</span>
+            <span class="interface-preview-title">{{ $t("providerDetail.adapterFieldsSection") }}</span>
+            <span class="hint">{{ $t("providerDetail.adapterFieldsDesc") }}</span>
           </div>
           <div class="form-grid compact-grid">
             <label>{{ $t("providerDetail.family") }} <span class="req">*</span></label>
@@ -247,7 +261,14 @@ import {
   providerBackend,
   providerFamily,
 } from "../config-utils.js";
-import { inferAuthSource, isSecretConfigured, providerUrlPlaceholder, secretDisplay } from "../utils/providerHelpers.ts";
+import {
+  authSourceIDs,
+  effectiveAuthSource as resolveEffectiveAuthSource,
+  isSecretConfigured,
+  providerEffectiveBackend,
+  providerUrlPlaceholder,
+  secretDisplay,
+} from "../utils/providerHelpers.ts";
 import CLIProxyAuthManager from "./CLIProxyAuthManager.vue";
 import TagListEditor from "./TagListEditor.vue";
 
@@ -261,12 +282,13 @@ const props = defineProps({
   selectedAuthSource: { type: String, required: true },
   showAPIKey: { type: Boolean, required: true },
   apiKeyTouched: { type: Boolean, required: true },
+  adapterAdvancedOpen: { type: Boolean, required: true },
   isCreate: { type: Boolean, default: false },
   providerPresets: { type: Array, required: true },
   serviceProtocolTemplates: { type: Array, required: true },
   currentPreset: { type: Object, default: null },
-  isCustomAccessType: { type: Boolean, required: true },
   isManagedCLIProxyAccess: { type: Boolean, required: true },
+  showAdapterAdvanced: { type: Boolean, required: true },
   isCustomServiceTemplate: { type: Boolean, required: true },
   visibleServiceProtocolTemplates: { type: Array, required: true },
   configDoc: { type: Object, required: true },
@@ -280,13 +302,13 @@ const emit = defineEmits([
   "update:selectedAuthSource",
   "update:showAPIKey",
   "update:apiKeyTouched",
+  "update:adapterAdvancedOpen",
   "access-type-change",
   "service-template-change",
   "auth-success",
   "auth-error",
 ]);
 
-const CUSTOM_ACCESS_TYPE = "__custom_access__";
 const CUSTOM_SERVICE_TEMPLATE = "__custom__";
 
 const localProviderConfig = computed({
@@ -294,18 +316,11 @@ const localProviderConfig = computed({
   set: (val) => emit("update:providerConfig", val),
 });
 
-const accessTypeOptions = computed(() => [
-  ...props.providerPresets,
-  {
-    id: CUSTOM_ACCESS_TYPE,
-    title: t("providerDetail.customAccessType"),
-    summary: t("providerDetail.customAccessTypeDesc"),
-  },
-]);
+const accessTypeOptions = computed(() => props.providerPresets);
 
 const currentAccessTypeSummary = computed(() => {
   const current = accessTypeOptions.value.find((option) => option.id === props.selectedPresetId);
-  return current?.summary || "";
+  return current?.summary || t("providerDetail.manualAdapterFieldsDesc");
 });
 
 const capabilityTemplateOptions = computed(() => [
@@ -335,7 +350,7 @@ const showsURLField = computed(
     !props.isManagedCLIProxyAccess
 );
 
-const isCLIProxyBackend = computed(() => providerBackend(props.providerConfig) === "cliproxy");
+const isCLIProxyBackend = computed(() => providerEffectiveBackend(props.providerConfig) === "cliproxy");
 
 const connectionNote = computed(() =>
   props.isManagedCLIProxyAccess ? t("providerDetail.cliproxyConnectionNote") : t("providerDetail.noUrlRequired")
@@ -354,36 +369,14 @@ const providerUrlHint = computed(() =>
 );
 
 const authSourceOptions = computed(() => {
-  const family = providerFamily(props.providerConfig);
-  if (!family) return [];
-  if (providerBackend(props.providerConfig) === "cliproxy") {
-    return [{ id: "none", title: t("providerDetail.authSourceCLIProxyAuthDir") }];
-  }
-  if (family === "copilot") {
-    return [
-      { id: "config_dir", title: authSourceTitle("config_dir") },
-      { id: "api_key", title: authSourceTitle("api_key") },
-      { id: "command", title: authSourceTitle("command") },
-      { id: "none", title: authSourceTitle("none") },
-    ];
-  }
-  return [
-    { id: "api_key", title: authSourceTitle("api_key") },
-    { id: "command", title: authSourceTitle("command") },
-    { id: "none", title: authSourceTitle("none") },
-  ];
+  return authSourceIDs(props.providerConfig).map((id) => ({
+    id,
+    title: id === "none" && isCLIProxyBackend.value ? t("providerDetail.authSourceCLIProxyAuthDir") : authSourceTitle(id),
+  }));
 });
 
 const authMode = computed(() => {
-  const available = authSourceOptions.value.map((option) => option.id);
-  if (available.includes(props.selectedAuthSource)) {
-    return props.selectedAuthSource;
-  }
-  const inferred = inferAuthSource(props.providerConfig);
-  if (available.includes(inferred)) {
-    return inferred;
-  }
-  return available[0] || "";
+  return resolveEffectiveAuthSource(props.providerConfig, props.selectedAuthSource);
 });
 
 const authSourceHint = computed(() => {
@@ -407,7 +400,7 @@ const configDirPlaceholder = computed(() => {
 });
 
 const serviceProtocolSuggestions = computed(() => {
-  if (providerBackend(props.providerConfig) === "cliproxy") {
+  if (providerEffectiveBackend(props.providerConfig) === "cliproxy") {
     return ["chat", "responses"];
   }
   switch (providerFamily(props.providerConfig)) {

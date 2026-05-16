@@ -1,7 +1,11 @@
 import { providerBackend, providerFamily } from "../config-utils.js";
 
+export function providerEffectiveBackend(provider: any): string {
+  return providerFamily(provider) === "openai" ? providerBackend(provider) : "";
+}
+
 export function providerUrlPlaceholder(provider: any): string {
-  if (providerBackend(provider) === "cliproxy") {
+  if (providerEffectiveBackend(provider) === "cliproxy") {
     return "http://127.0.0.1:18741/v1";
   }
   switch (providerFamily(provider)) {
@@ -27,16 +31,32 @@ export function isSecretConfigured(value: string): boolean {
 
 export function inferAuthSource(provider: any): string {
   if (!providerFamily(provider)) return "";
-  if (providerBackend(provider) === "cliproxy") return "none";
+  if (providerEffectiveBackend(provider) === "cliproxy") return "none";
   if (String(provider?.api_key_command || "").trim()) return "command";
   if (provider?.api_key) return "api_key";
   if (providerFamily(provider) === "copilot") return "config_dir";
   return "api_key";
 }
 
+export function authSourceIDs(provider: any): string[] {
+  const family = providerFamily(provider);
+  if (!family) return [];
+  if (providerEffectiveBackend(provider) === "cliproxy") return ["none"];
+  if (family === "copilot") return ["config_dir", "api_key", "command", "none"];
+  return ["api_key", "command", "none"];
+}
+
+export function effectiveAuthSource(provider: any, selected: string): string {
+  const available = authSourceIDs(provider);
+  if (available.includes(selected)) return selected;
+  const inferred = inferAuthSource(provider);
+  if (available.includes(inferred)) return inferred;
+  return available[0] || "";
+}
+
 export function inferPresetID(provider: any, presets: any[]): string {
   const family = providerFamily(provider);
-  const backend = providerBackend(provider);
+  const backend = providerEffectiveBackend(provider);
   const backendProvider = String(provider?.backend_provider || "").toLowerCase().trim();
   const url = String(provider?.url || "").trim();
 

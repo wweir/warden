@@ -61,12 +61,13 @@
           v-model:selected-auth-source="selectedAuthSource"
           v-model:show-api-key="showAPIKey"
           v-model:api-key-touched="apiKeyTouched"
+          v-model:adapter-advanced-open="adapterAdvancedOpen"
           :is-create="create"
           :provider-presets="providerPresets"
           :service-protocol-templates="serviceProtocolTemplates"
           :current-preset="currentPreset"
-          :is-custom-access-type="isCustomAccessType"
           :is-managed-cli-proxy-access="isManagedCLIProxyAccess"
+          :show-adapter-advanced="showAdapterAdvanced"
           :is-custom-service-template="isCustomServiceTemplate"
           :visible-service-protocol-templates="visibleServiceProtocolTemplates"
           :config-doc="configDoc"
@@ -163,11 +164,13 @@ const {
   suppressDirty,
   showAPIKey,
   apiKeyTouched,
+  adapterAdvancedOpen,
   providerPresets,
   serviceProtocolTemplates,
   currentPreset,
-  isCustomAccessType,
   isManagedCLIProxyAccess,
+  showAdapterAdvanced,
+  effectiveAuthSource,
   isCustomServiceTemplate,
   visibleServiceProtocolTemplates,
   handleAccessTypeChange: formHandleAccessTypeChange,
@@ -302,7 +305,7 @@ async function apply() {
       error.value = t("providerDetail.urlRequired");
       return;
     }
-    const selectedAuthMode = selectedAuthSource.value;
+    const selectedAuthMode = effectiveAuthSource.value;
     if (selectedAuthMode === "command" && !String(providerConfig.value.api_key_command || "").trim()) {
       error.value = t("providerDetail.apiKeyCommandRequired");
       return;

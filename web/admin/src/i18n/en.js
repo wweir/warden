@@ -516,11 +516,13 @@ export default {
 		advancedSection: "Advanced Fields",
 		advancedSectionDesc:
 			"Only low-frequency network and HTTP header fields live here. Provider type and interface capabilities stay in Common Config.",
-		customAccessType: "Custom Access",
-		customAccessTypeDesc: "Edit the raw adapter fields directly for upstreams not covered by the presets.",
-		customAccessSection: "Custom Access Fields",
-		customAccessDesc:
-			"This is the only advanced access entrypoint. Prefer presets for OpenAI-compatible, Ollama, cliproxy, and other common cases.",
+		manualAdapterFields: "Manual Adapter Fields",
+		manualAdapterFieldsDesc: "The current fields do not match any preset; you can continue editing the raw adapter fields manually.",
+		showAdapterFields: "Show Adapter Fields",
+		hideAdapterFields: "Hide Adapter Fields",
+		adapterFieldsSection: "Adapter Fields",
+		adapterFieldsDesc:
+			"Only use this for low-level family, backend, and backend_provider fields. Prefer provider type presets for OpenAI-compatible, Ollama, cliproxy, and other common cases.",
 		availableInterfaces: "Available Interfaces",
 		finalInterfaces: "Final Available Interfaces",
 		finalInterfacesHint:
@@ -560,7 +562,7 @@ export default {
 		cliproxyManagedConnection:
 			"Warden manages the local or embedded CLIProxyAPI endpoint. The normal access path does not require editing raw URL, family, backend, or backend_provider fields.",
 		cliproxyConnectionNote:
-			"Uses the local or embedded CLIProxyAPI endpoint managed by Warden. The normal access path does not require a URL; switch to Custom Access to change the listener.",
+			"Uses the local or embedded CLIProxyAPI endpoint managed by Warden. The normal access path does not require a URL; expand adapter fields to change the listener.",
 		cliproxyAuthNote:
 			"Uses local CLI login credentials from CLIProxyAPI auth_dir. Do not enter a provider API key here.",
 		cliproxyAuthImportSection: "Auth Import",
