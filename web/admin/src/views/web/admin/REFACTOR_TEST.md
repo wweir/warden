@@ -73,12 +73,11 @@
 - [ ] 配置 timeout
 - [ ] 保存并验证
 
-#### 4.3 自定义配置
-- [ ] 选择"自定义访问类型"
-- [ ] 手动配置 family、backend
-- [ ] 选择"自定义接口"
-- [ ] 手动配置 service_protocols
-- [ ] 保存并验证
+#### 4.3 未匹配配置提示
+- [ ] 打开无法匹配任何 provider 类型的既有 provider
+- [ ] 验证页面只显示未匹配提示，不提供 family、backend、backend_provider 手动编辑入口
+- [ ] 验证可用接口不提供自定义接口或 service_protocols 手动编辑入口
+- [ ] 切换到明确支持的 provider 类型和接口模板后保存并验证
 
 ### 5. 边界情况测试
 
