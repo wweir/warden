@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	maxSessionsPerRoute = 20
+	maxSessionsPerRoute = 10
 	subscriberBuf       = 64
 )
 
