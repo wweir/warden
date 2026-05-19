@@ -115,6 +115,7 @@ func (h *Handler) apiRoutes() []adminAPIRoute {
 		{http.MethodGet, "/api/tool-hooks/suggestions", h.HandleToolHookSuggestions},
 		{http.MethodPost, "/api/restart", h.HandleRestart},
 		{http.MethodPost, "/api/providers/health", h.HandleProviderHealth},
+		{http.MethodPost, "/api/providers/probe-access", h.HandleProviderProbeAccess},
 		{http.MethodGet, "/api/providers/form-meta", h.HandleProviderFormMeta},
 		{http.MethodGet, "/api/cliproxy/auth-files", h.HandleCLIProxyAuthFilesList},
 		{http.MethodPost, "/api/cliproxy/auth-files", h.HandleCLIProxyAuthFileCreate},

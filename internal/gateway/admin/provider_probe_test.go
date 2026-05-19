@@ -28,7 +28,7 @@ func TestProbeProviderModelProtocolSupportsAnthropicToChatProvider(t *testing.T)
 
 	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:             server.URL,
-		Protocol:        "openai",
+		Format:        "openai",
 		APIKey:          config.SecretString("token"),
 		AnthropicToChat: true,
 	}, "gpt-4o", config.RouteProtocolAnthropic)
@@ -63,7 +63,7 @@ func TestProbeProviderModelProtocolChatUsesMinimalPayload(t *testing.T) {
 
 	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("token"),
 	}, "gpt-4o", config.RouteProtocolChat)
 
@@ -104,7 +104,7 @@ func TestProbeProviderModelProtocolResponsesSendsSingleStatelessRequest(t *testi
 
 	probe := probeProviderModelProtocol(context.TODO(), &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("token"),
 	}, "gpt-4o", config.RouteProtocolResponses)
 

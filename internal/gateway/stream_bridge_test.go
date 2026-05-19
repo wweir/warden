@@ -83,7 +83,7 @@ func TestGatewayAnthropicToChatStreamRelaysFirstFrameWithoutBuffering(t *testing
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -187,7 +187,7 @@ func TestGatewayAnthropicNativeStreamRelaysFirstFrameWithoutBuffering(t *testing
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:      upstream.URL,
-				Protocol: "anthropic",
+				Format: "anthropic",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -282,7 +282,7 @@ func TestGatewayResponsesToChatStreamIncludesDoneSnapshotsAndIncompleteDetails(t
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -366,7 +366,7 @@ func TestGatewayResponsesToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -432,7 +432,7 @@ func TestGatewayAnthropicToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -523,7 +523,7 @@ func TestGatewayAnthropicToResponsesStreamConvertsToResponsesSSE(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:                  upstream.URL,
-				Protocol:             "anthropic",
+				Format:             "anthropic",
 				APIKey:               config.SecretString("token"),
 				AnthropicToResponses: true,
 			},

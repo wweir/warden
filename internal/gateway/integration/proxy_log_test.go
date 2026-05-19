@@ -45,7 +45,7 @@ func TestGatewayProxyLogsDecompressedResponsesBody(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},
@@ -111,7 +111,7 @@ func TestGatewayProxyStreamErrorLogDoesNotCarryTTFT(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},

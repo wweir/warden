@@ -100,6 +100,7 @@ func buildRuntimeConfig(cfg *config.ConfigStruct, host string, port int, authDir
 		RequestRetry:           cfg.CLIProxy.RequestRetry,
 		MaxRetryCredentials:    cfg.CLIProxy.MaxRetryCredentials,
 	}
+	clipCfg.Home.Enabled = false
 	clipCfg.SDKConfig.ProxyURL = effectiveCLIProxyProxy(cfg)
 	clipCfg.SDKConfig.APIKeys = cliproxyAPIKeys(cfg)
 	clipCfg.Pprof.Enable = false
@@ -121,16 +122,26 @@ func effectiveCLIProxyProxy(cfg *config.ConfigStruct) string {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	var firstProxy string
 	for _, name := range names {
 		prov := cfg.Provider[name]
 		if prov == nil || prov.Backend != config.ProviderBackendCLIProxy {
 			continue
 		}
 		if proxy := strings.TrimSpace(prov.Proxy); proxy != "" {
-			return proxy
+			if firstProxy == "" {
+				firstProxy = proxy
+				continue
+			}
+			if proxy != firstProxy {
+				// Multiple cliproxy providers have different proxies.
+				// Return the first one found; caller should avoid this
+				// configuration by setting cliproxy.proxy explicitly.
+				return firstProxy
+			}
 		}
 	}
-	return ""
+	return firstProxy
 }
 
 func applyFeatureHidingDefaults(cfg *sdkconfig.Config) {
@@ -284,6 +295,7 @@ func cliproxyAPIKeys(cfg *config.ConfigStruct) []string {
 		seen[key] = true
 		keys = append(keys, key)
 	}
+	slices.Sort(keys)
 	return keys
 }
 

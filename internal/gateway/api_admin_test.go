@@ -213,12 +213,12 @@ func TestHandleAdminConfigPutPreservesMaskedSecretsWithoutDoubleEncoding(t *test
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-secret"),
 			},
 			"copilot": {
 				URL:       "https://api.githubcopilot.com",
-				Protocol:  "copilot",
+				Format:  "copilot",
 				ConfigDir: filepath.Join(t.TempDir(), "copilot"),
 				APIKey:    config.SecretString("copilot-secret"),
 			},
@@ -309,7 +309,7 @@ func TestHandleAdminConfigPutPreservesProviderAPIKeyWhenFieldOmitted(t *testing.
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-secret"),
 				Models:   []string{"gpt-4o"},
 			},
@@ -413,7 +413,7 @@ func TestHandleAdminConfigPutClearsProviderAPIKeyWhenExplicitlyEmpty(t *testing.
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-secret"),
 			},
 		},
@@ -511,7 +511,7 @@ func TestHandleAPIKeysCreatePersistsRouteAPIKey(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -606,7 +606,7 @@ func TestHandleAPIKeysCreateRejectsBlankName(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -647,7 +647,7 @@ func TestHandleAPIKeysCreateDoesNotMutateRuntimeWhenConfigWriteConflicts(t *test
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -707,7 +707,7 @@ func TestHandleAPIKeysDeletePersistsRouteAPIKeyRemoval(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -781,7 +781,7 @@ func TestHandleAPIKeysDeleteDoesNotMutateRuntimeWhenConfigWriteConflicts(t *test
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -843,7 +843,7 @@ func TestWriteStatusSSEReturnsConfiguredAndDisplayProtocolsSeparately(t *testing
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -914,7 +914,7 @@ func TestHandleProviderDetailReturnsConfiguredAndDisplayProtocolsSeparately(t *t
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -988,10 +988,10 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 		Provider: map[string]*config.ProviderConfig{
 			"codex": {
 				URL:              "http://127.0.0.1:19001/v1",
-				Protocol:         config.ProviderProtocolOpenAI,
+				Format:         config.ProviderFormatOpenAI,
 				Backend:          config.ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
-				ServiceProtocols: []string{config.RouteProtocolChat},
+				Protocols: []string{config.RouteProtocolChat},
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -1204,13 +1204,13 @@ func TestHandleProviderDetailIncludesEmbeddingsDisplayProtocol(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"embeddings": {
 				URL:              "https://api.openai.com/v1",
-				Protocol:         "openai",
-				ServiceProtocols: []string{config.ServiceProtocolEmbeddings},
+				Format:         "openai",
+				Protocols: []string{config.ServiceProtocolEmbeddings},
 			},
 			"chat": {
 				URL:              "https://api.openai.com/v1",
-				Protocol:         "openai",
-				ServiceProtocols: []string{config.RouteProtocolChat},
+				Format:         "openai",
+				Protocols: []string{config.RouteProtocolChat},
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -1270,7 +1270,7 @@ func TestNewGatewayRefreshesProviderModelsForExactRoutes(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -1331,7 +1331,7 @@ func TestAdminRouteDetailIncludesWildcardDetectedModels(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{

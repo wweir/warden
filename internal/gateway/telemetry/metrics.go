@@ -19,7 +19,7 @@ var (
 	)
 	ProviderRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_provider_requests_total", Help: "Total number of requests processed by provider model"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "status"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "status"},
 	)
 	APIKeyRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_apikey_requests_total", Help: "Total number of requests processed by client API key"},
@@ -31,7 +31,7 @@ var (
 	)
 	ProviderRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "warden_request_duration_ms", Help: "Provider-model request latency in milliseconds", Buckets: []float64{50, 100, 250, 500, 1000, 2500, 5000, 10000}},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
 	)
 	ProviderHealth = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "warden_provider_health", Help: "Provider health status (consecutive failures)"},
@@ -47,7 +47,7 @@ var (
 	)
 	ProviderTokenCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_provider_tokens_total", Help: "Total tokens processed by provider model"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "type"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "type"},
 	)
 	APIKeyTokenCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_apikey_tokens_total", Help: "Total tokens processed by client API key"},
@@ -59,7 +59,7 @@ var (
 	)
 	ProviderTokenObservationCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_provider_token_observations_total", Help: "Token usage observation coverage by provider model"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "completeness", "source"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "completeness", "source"},
 	)
 	APIKeyTokenObservationCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_apikey_token_observations_total", Help: "Token usage observation coverage by client API key"},
@@ -71,7 +71,7 @@ var (
 	)
 	ProviderTokenRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "warden_provider_token_rate", Help: "Tokens per second for the last request by provider model"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "type"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint", "type"},
 	)
 	RouteStreamTTFT = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "warden_route_stream_ttft_ms", Help: "Streaming time-to-first-token in milliseconds by route model", Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000}},
@@ -79,7 +79,7 @@ var (
 	)
 	ProviderStreamTTFT = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "warden_stream_ttft_ms", Help: "Streaming time-to-first-token in milliseconds by provider model", Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000}},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
 	)
 	RouteCompletionThroughput = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "warden_route_completion_throughput_tps", Help: "Completion token throughput by route model", Buckets: []float64{1, 2, 5, 10, 20, 40, 80, 160, 320, 640, 1280}},
@@ -87,7 +87,7 @@ var (
 	)
 	ProviderCompletionThroughput = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "warden_completion_throughput_tps", Help: "Completion token throughput in tokens per second by provider model", Buckets: []float64{1, 2, 5, 10, 20, 40, 80, 160, 320, 640, 1280}},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "endpoint"},
 	)
 	RouteFailovers = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_route_failovers_total", Help: "Total number of failover events by route model"},
@@ -95,7 +95,7 @@ var (
 	)
 	ProviderFailovers = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_provider_failovers_total", Help: "Total number of failover events triggered by provider model"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern"},
 	)
 	RouteStreamErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_route_stream_errors_total", Help: "Total stream errors by route model and phase"},
@@ -103,7 +103,7 @@ var (
 	)
 	ProviderStreamErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "warden_provider_stream_errors_total", Help: "Total stream errors by provider model and phase (pre_stream, in_stream)"},
-		[]string{"provider", "provider_model", "route", "route_model", "matched_pattern", "phase"},
+		[]string{"provider", "provider_access", "provider_model", "route", "route_model", "matched_pattern", "phase"},
 	)
 	ProviderSuccessRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "warden_provider_success_rate", Help: "Provider success rate (0-100) from sliding window"},
@@ -141,12 +141,12 @@ func RecordRequestMetrics(labels Labels, success bool, duration time.Duration) {
 		status = "failure"
 	}
 	RouteRequestCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
-	ProviderRequestCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
+	ProviderRequestCounter.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
 	if labels.APIKey != "" {
 		APIKeyRequestCounter.WithLabelValues(labels.APIKey, labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, status).Inc()
 	}
 	RouteRequestDuration.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
-	ProviderRequestDuration.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
+	ProviderRequestDuration.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(duration.Milliseconds()))
 }
 
 func UpdateProviderMetrics(statuses []sel.ProviderStatus) {
@@ -169,12 +169,12 @@ func UpdateProviderMetrics(statuses []sel.ProviderStatus) {
 
 func RecordFailoverMetric(labels Labels) {
 	RouteFailovers.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern).Inc()
-	ProviderFailovers.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern).Inc()
+	ProviderFailovers.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern).Inc()
 }
 
 func RecordStreamErrorMetric(labels Labels, phase string) {
 	RouteStreamErrors.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, phase).Inc()
-	ProviderStreamErrors.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, phase).Inc()
+	ProviderStreamErrors.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, phase).Inc()
 }
 
 func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, durationMs int64, outputRates *OutputRateTracker, now time.Time) {
@@ -189,6 +189,7 @@ func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, duration
 	).Inc()
 	ProviderTokenObservationCounter.WithLabelValues(
 		labels.Provider,
+		labels.ProviderFormat,
 		labels.ProviderModel,
 		labels.Route,
 		labels.RouteModel,
@@ -218,14 +219,14 @@ func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, duration
 			return
 		}
 		RouteTokenCounter.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
-		ProviderTokenCounter.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
+		ProviderTokenCounter.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
 		if labels.APIKey != "" {
 			APIKeyTokenCounter.WithLabelValues(labels.APIKey, labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, typ).Add(float64(count))
 		}
 		if durationMs > 0 {
 			value := float64(count) / (float64(durationMs) / 1000.0)
 			RouteTokenRate.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
-			ProviderTokenRate.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
+			ProviderTokenRate.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint, typ).Set(value)
 			if outputRates != nil {
 				outputRates.Record(labels, typ, value, now)
 			}
@@ -237,7 +238,7 @@ func RecordTokenMetrics(labels Labels, usage tokenusagepkg.Observation, duration
 	if usage.CompletionTokens > 0 && durationMs > 0 {
 		value := float64(usage.CompletionTokens) / (float64(durationMs) / 1000.0)
 		RouteCompletionThroughput.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(value)
-		ProviderCompletionThroughput.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(value)
+		ProviderCompletionThroughput.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(value)
 	}
 }
 
@@ -246,7 +247,7 @@ func RecordTTFTMetric(labels Labels, ttft time.Duration) {
 		return
 	}
 	RouteStreamTTFT.WithLabelValues(labels.Route, labels.Protocol, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(ttft.Milliseconds()))
-	ProviderStreamTTFT.WithLabelValues(labels.Provider, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(ttft.Milliseconds()))
+	ProviderStreamTTFT.WithLabelValues(labels.Provider, labels.ProviderFormat, labels.ProviderModel, labels.Route, labels.RouteModel, labels.MatchedPattern, labels.Endpoint).Observe(float64(ttft.Milliseconds()))
 }
 
 func CollectMetrics(c prometheus.Collector) []*dto.Metric {

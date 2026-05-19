@@ -65,7 +65,7 @@ func (h *Handler) WriteStatusSSE(w http.ResponseWriter) {
 		}
 		providers = append(providers, providerInfo{
 			ProviderStatus:      status,
-			Protocol:            provCfg.Protocol,
+			Protocol:            provCfg.Format,
 			CandidateProtocols:  config.CandidateRouteProtocols(provCfg),
 			SupportedProtocols:  config.SupportedRouteProtocols(provCfg),
 			ConfiguredProtocols: config.SupportedRouteProtocols(provCfg),

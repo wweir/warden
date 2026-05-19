@@ -517,7 +517,7 @@ func TestHandleCLIProxyAuthFileUsageMergesRuntimeQuotaFromSelector(t *testing.T)
 		Provider: map[string]*config.ProviderConfig{
 			"codex-pro-lite": {
 				Name:            "codex-pro-lite",
-				Family:          config.ProviderProtocolOpenAI,
+				Format:          config.ProviderFormatOpenAI,
 				Backend:         config.ProviderBackendCLIProxy,
 				BackendProvider: "codex",
 				URL:             "http://127.0.0.1:18741/v1",
@@ -526,11 +526,11 @@ func TestHandleCLIProxyAuthFileUsageMergesRuntimeQuotaFromSelector(t *testing.T)
 	}
 	selector := sel.NewSelector(cfg)
 	resetAt := time.Date(2026, 5, 10, 6, 30, 0, 0, time.UTC).Unix()
-	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+	selector.RecordOutcomeWithSource("codex-pro-lite", "openai", &sel.UpstreamError{
 		Code: http.StatusTooManyRequests,
 		Body: `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":` + strconv.FormatInt(resetAt, 10) + `,"resets_in_seconds":1200}}`,
 	}, 10*time.Millisecond, "pre_stream")
-	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+	selector.RecordOutcomeWithSource("codex-pro-lite", "openai", &sel.UpstreamError{
 		Code: http.StatusTooManyRequests,
 		Body: `{"error":{"code":"model_cooldown","message":"All credentials for model gpt-5.5 are cooling down via provider codex","model":"gpt-5.5","provider":"codex","reset_seconds":1200,"reset_time":"20m0s"}}`,
 	}, 10*time.Millisecond, "pre_stream")
@@ -576,7 +576,7 @@ func TestHandleCLIProxyAuthFileUsagePrefersNewerRuntimeAuthError(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"codex-pro-lite": {
 				Name:            "codex-pro-lite",
-				Family:          config.ProviderProtocolOpenAI,
+				Format:          config.ProviderFormatOpenAI,
 				Backend:         config.ProviderBackendCLIProxy,
 				BackendProvider: "codex",
 				URL:             "http://127.0.0.1:18741/v1",
@@ -584,12 +584,12 @@ func TestHandleCLIProxyAuthFileUsagePrefersNewerRuntimeAuthError(t *testing.T) {
 		},
 	}
 	selector := sel.NewSelector(cfg)
-	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+	selector.RecordOutcomeWithSource("codex-pro-lite", "openai", &sel.UpstreamError{
 		Code: http.StatusTooManyRequests,
 		Body: `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_in_seconds":1200}}`,
 	}, 10*time.Millisecond, "pre_stream")
 	time.Sleep(time.Millisecond)
-	selector.RecordOutcomeWithSource("codex-pro-lite", &sel.UpstreamError{
+	selector.RecordOutcomeWithSource("codex-pro-lite", "openai", &sel.UpstreamError{
 		Code: http.StatusUnauthorized,
 		Body: `{"error":{"message":"Your authentication token has been invalidated. Please try signing in again.","type":"authentication_error","code":"auth_unavailable"}}`,
 	}, 10*time.Millisecond, "pre_stream")
@@ -677,7 +677,7 @@ func TestHandleCLIProxyAuthFileVerifySendsBackendProbe(t *testing.T) {
 			Provider: map[string]*config.ProviderConfig{
 				"cliproxy-codex": {
 					URL:             upstream.URL,
-					Protocol:        config.ProviderProtocolOpenAI,
+					Format:        config.ProviderFormatOpenAI,
 					Backend:         config.ProviderBackendCLIProxy,
 					BackendProvider: "codex",
 				},

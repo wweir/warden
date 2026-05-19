@@ -17,7 +17,7 @@ func TestMarshalConfigFileUsesTOML(t *testing.T) {
 		Addr: ":9832",
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				Family: "openai",
+				Format: "openai",
 				URL:    "https://api.openai.com/v1",
 			},
 		},

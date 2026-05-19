@@ -40,7 +40,7 @@ func TestGatewayLogsResponsesStreamAsFinalResponseObject(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},
@@ -119,7 +119,7 @@ func TestGatewayPublishesPendingStreamLogBeforeUpstreamCompletes(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},
@@ -212,7 +212,7 @@ func TestGatewayRelaysChatStreamBeforeUpstreamCompletes(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},
@@ -306,7 +306,7 @@ func TestGatewayRecordsIncompleteChatStreamAsInStreamError(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},
@@ -368,7 +368,7 @@ func TestGatewayFallsBackWhenStreamRequestReturnsJSON(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("provider-token"),
 			},
 		},

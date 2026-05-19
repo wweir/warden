@@ -143,8 +143,8 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"name":                  name,
 		"url":                   provCfg.URL,
-		"family":                provCfg.Family,
-		"protocol":              provCfg.Protocol,
+		"family":                provCfg.Format,
+		"protocol":              provCfg.Format,
 		"backend":               provCfg.Backend,
 		"backend_provider":      provCfg.BackendProvider,
 		"candidate_protocols":   config.CandidateRouteProtocols(provCfg),
@@ -162,7 +162,29 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"models":                models,
 		"model_protocol_probes": h.selector.ModelProtocolProbes(name),
 		"status":                status,
+		"formats":          buildFormatsResponse(provCfg),
 	})
+}
+
+func buildFormatsResponse(provCfg *config.ProviderConfig) map[string]any {
+	modes := map[string]any{}
+	for _, ep := range config.ProviderEndpoints(provCfg) {
+		mode := map[string]any{
+			"enabled":           true,
+			"url":               ep.URL,
+			"models":            ep.Models,
+			"service_protocols": ep.Protocols,
+		}
+		switch ep.Format {
+		case config.ProviderFormatOpenAI:
+			mode["responses_to_chat"] = ep.ResponsesToChat
+			mode["anthropic_to_chat"] = ep.AnthropicToChat
+		case config.ProviderFormatAnthropic:
+			mode["anthropic_to_responses"] = ep.AnthropicToResponses
+		}
+		modes[ep.Format] = mode
+	}
+	return modes
 }
 
 func providerAuthSource(provCfg *config.ProviderConfig) string {
@@ -178,7 +200,7 @@ func providerAuthSource(provCfg *config.ProviderConfig) string {
 	if provCfg.APIKey.Value() != "" {
 		return "api_key"
 	}
-	if provCfg.Protocol == config.ProviderProtocolCopilot {
+	if provCfg.Format == config.ProviderFormatCopilot {
 		return "config_dir"
 	}
 	return "none"

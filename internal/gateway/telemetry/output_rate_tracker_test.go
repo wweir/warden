@@ -34,7 +34,7 @@ func TestCollectDashboardCountersDropsIdleOutputRate(t *testing.T) {
 	telemetrypkg.RouteTokenCounter.WithLabelValues(route, config.RouteProtocolChat, "gpt-4o", "", "prompt").Add(12)
 	telemetrypkg.RouteTokenCounter.WithLabelValues(route, config.RouteProtocolChat, "gpt-4o", "", "completion").Add(8)
 	telemetrypkg.RouteTokenCounter.WithLabelValues(route, config.RouteProtocolChat, "gpt-4o", "", "cache").Add(5)
-	telemetrypkg.ProviderTokenCounter.WithLabelValues(provider, "gpt-4o", route, "gpt-4o", "", "completion").Add(8)
+	telemetrypkg.ProviderTokenCounter.WithLabelValues(provider, "", "gpt-4o", route, "gpt-4o", "", "completion").Add(8)
 
 	sample := telemetrypkg.CollectDashboardCounters()
 	assertApprox(t, sample.PromptTokens-base.PromptTokens, 12)

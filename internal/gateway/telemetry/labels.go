@@ -12,6 +12,7 @@ type Labels struct {
 	Protocol       string
 	APIKey         string
 	Provider       string
+	ProviderFormat string
 	RouteModel     string
 	ProviderModel  string
 	MatchedPattern string
@@ -28,6 +29,7 @@ func BuildMetricLabels(route *config.RouteConfig, protocol, endpoint string, tar
 		return labels
 	}
 	labels.Provider = target.ProviderName
+	labels.ProviderFormat = target.Format
 	labels.ProviderModel = target.UpstreamModel
 	if target.Wildcard {
 		labels.RouteModel = target.RequestedModel

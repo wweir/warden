@@ -37,7 +37,15 @@ func (h *Handler) verifyCLIProxyAuthFileOnline(ctx context.Context, req cliproxy
 	if provCfg.Backend != config.ProviderBackendCLIProxy {
 		return cliproxyAuthFileVerifyResponse{}, errors.New("online auth validation is only available for cliproxy providers")
 	}
-	if provCfg.Protocol != config.ProviderProtocolOpenAI {
+	modes := config.ProviderFormats(provCfg)
+	hasOpenAI := false
+	for _, mode := range modes {
+		if mode == config.ProviderFormatOpenAI {
+			hasOpenAI = true
+			break
+		}
+	}
+	if !hasOpenAI {
 		return cliproxyAuthFileVerifyResponse{}, errors.New("cliproxy online auth validation requires an openai-compatible provider")
 	}
 
@@ -106,7 +114,15 @@ func (h *Handler) defaultCLIProxyAuthVerifyModel(ctx context.Context, providerNa
 }
 
 func sendCLIProxyAuthVerificationProbe(ctx context.Context, provCfg *config.ProviderConfig, model string) error {
-	if provCfg.Protocol != config.ProviderProtocolOpenAI {
+	modes := config.ProviderFormats(provCfg)
+	hasOpenAI := false
+	for _, mode := range modes {
+		if mode == config.ProviderFormatOpenAI {
+			hasOpenAI = true
+			break
+		}
+	}
+	if !hasOpenAI {
 		return fmt.Errorf("provider family does not support cliproxy auth validation probe")
 	}
 	payload := map[string]any{
@@ -117,7 +133,8 @@ func sendCLIProxyAuthVerificationProbe(ctx context.Context, provCfg *config.Prov
 	body, _ := json.Marshal(payload)
 	ctx, cancel := probeContext(ctx)
 	defer cancel()
-	_, _, err := upstreampkg.SendRequest(ctx, nil, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, true), body, false)
+	targetURL := upstreampkg.JoinBaseURLPath(provCfg.URL, upstreampkg.ProtocolEndpoint(string(config.ProviderFormatOpenAI), true))
+	_, _, err := upstreampkg.SendRequest(ctx, nil, provCfg, targetURL, body, false)
 	return err
 }
 
