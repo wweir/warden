@@ -134,6 +134,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTimeline } from "../composables/useTimeline.js";
+import { copyToClipboard } from "../utils.js";
 
 const props = defineProps({
 	log: { type: Object, required: true },
@@ -252,13 +253,7 @@ function singleLine(value, maxLen) {
 
 async function copyJSON() {
 	const text = selectedJSON.value;
-	try {
-		await navigator.clipboard.writeText(text);
-	} catch {
-		// clipboard API not available or permission denied
-		return false;
-	}
-	return true;
+	return await copyToClipboard(text);
 }
 
 defineExpose({ copyJSON });
