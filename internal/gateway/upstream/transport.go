@@ -351,7 +351,7 @@ func sendUpstream(ctx context.Context, clientReq *http.Request, provCfg *config.
 		return nil, nil, err
 	}
 	resp, deadline, err := DoWithFirstTokenTimeout(client, httpReq, timeout)
-	if err == nil && resp.StatusCode == http.StatusNotFound && !baseURLHasPathSuffix(provCfg.URL, "/v1") {
+	if err == nil && resp.StatusCode == http.StatusNotFound && !urlPathHasV1Prefix(resolvedURL) {
 		// Some API gateways expose endpoints under /v1 even when the base URL
 		// omits it (e.g. Anthropic-compatible providers configured without /v1).
 		// Retry once with /v1 prefix before giving up.
@@ -391,12 +391,18 @@ func prependPathPrefix(targetURL, prefix string) string {
 	return parsed.String()
 }
 
-func baseURLHasPathSuffix(baseURL, suffix string) bool {
-	parsed, err := url.Parse(baseURL)
+// urlPathHasV1Prefix reports whether the URL's path already starts with /v1.
+// It handles both "/v1/..." and "/v1" (exact) so the /v1 fallback retry
+// in sendUpstream does not double-prefix an endpoint URL that already
+// contains /v1.
+func urlPathHasV1Prefix(targetURL string) bool {
+	parsed, err := url.Parse(targetURL)
 	if err != nil {
-		return strings.HasSuffix(strings.TrimRight(baseURL, "/"), suffix)
+		normalized := strings.TrimRight(strings.TrimSpace(targetURL), "/")
+		return normalized == "/v1" || strings.HasPrefix(normalized, "/v1/")
 	}
-	return strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), suffix)
+	path := strings.TrimRight(parsed.Path, "/")
+	return path == "/v1" || strings.HasPrefix(parsed.Path, "/v1/")
 }
 
 func readHTTPResponseBodyWithDeadline(resp *http.Response, deadline *FirstTokenDeadline, timeout time.Duration, context string) ([]byte, time.Duration, error) {
