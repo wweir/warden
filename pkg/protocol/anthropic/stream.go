@@ -458,6 +458,8 @@ func AssembleStream(rawSSE []byte) []byte {
 		switch b.data["type"] {
 		case "text":
 			b.data["text"] = b.text
+		case "thinking":
+			b.data["thinking"] = b.text
 		case "tool_use":
 			// parse accumulated JSON string into object for readability
 			var parsed any

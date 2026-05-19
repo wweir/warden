@@ -251,6 +251,10 @@ func convertAnthropicAssistantMessage(idx int, raw json.RawMessage) ([]openai.Me
 				return nil, fmt.Errorf("messages[%d].content[%d]: %w", idx, blockIdx, err)
 			}
 			textParts = append(textParts, text)
+		case "thinking":
+			// Anthropic thinking blocks in assistant history are dropped
+			// because Chat Completions does not have a native equivalent.
+			// The reasoning has already been consumed by the model.
 		case "tool_use":
 			toolCall, err := toolUseToChatToolCall(rawBlock)
 			if err != nil {
