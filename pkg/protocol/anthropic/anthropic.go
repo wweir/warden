@@ -89,7 +89,7 @@ func MarshalRequest(req openai.ChatCompletionRequest) ([]byte, error) {
 		switch k {
 		case "max_tokens", "stream", "model", "messages", "tools":
 			// already handled
-		case "temperature", "top_p", "top_k", "metadata":
+		case "temperature", "top_p", "top_k", "metadata", "thinking":
 			var val any
 			if json.Unmarshal(v, &val) == nil {
 				result[k] = val
@@ -134,11 +134,14 @@ func UnmarshalResponse(body []byte) (openai.ChatCompletionResponse, error) {
 	}
 
 	var textParts []string
+	var reasoningParts []string
 	var toolCalls []openai.ToolCall
 	for _, block := range anthResp.Content {
 		switch block.Type {
 		case "text":
 			textParts = append(textParts, block.Text)
+		case "thinking":
+			reasoningParts = append(reasoningParts, block.Text)
 		case "tool_use":
 			args := string(block.Input)
 			if args == "" || args == "null" {
@@ -158,6 +161,9 @@ func UnmarshalResponse(body []byte) (openai.ChatCompletionResponse, error) {
 	msg := openai.Message{Role: "assistant"}
 	if len(textParts) > 0 {
 		msg.Content = strings.Join(textParts, "")
+	}
+	if len(reasoningParts) > 0 {
+		msg.ReasoningContent = strings.Join(reasoningParts, "")
 	}
 	if len(toolCalls) > 0 {
 		msg.ToolCalls = toolCalls

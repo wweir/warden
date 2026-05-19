@@ -202,6 +202,7 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 				Delta struct {
 					Type        string `json:"type"`
 					Text        string `json:"text"`
+					Thinking    string `json:"thinking"`
 					PartialJSON string `json:"partial_json"`
 				} `json:"delta"`
 			}
@@ -211,6 +212,11 @@ func ConvertStreamToOpenAI(rawSSE []byte) []byte {
 			if msg.Delta.Type == "text_delta" && msg.Delta.Text != "" {
 				buf = appendOpenAIChunk(buf, msgID, model, created,
 					map[string]any{"content": msg.Delta.Text}, nil, nil)
+				continue
+			}
+			if msg.Delta.Type == "thinking_delta" && msg.Delta.Thinking != "" {
+				buf = appendOpenAIChunk(buf, msgID, model, created,
+					map[string]any{"reasoning_content": msg.Delta.Thinking}, nil, nil)
 				continue
 			}
 			if msg.Delta.Type == "input_json_delta" && msg.Delta.PartialJSON != "" {
@@ -397,6 +403,10 @@ func AssembleStream(rawSSE []byte) []byte {
 			switch delta["type"] {
 			case "text_delta":
 				if t, ok := delta["text"].(string); ok {
+					b.text += t
+				}
+			case "thinking_delta":
+				if t, ok := delta["thinking"].(string); ok {
 					b.text += t
 				}
 			case "input_json_delta":
