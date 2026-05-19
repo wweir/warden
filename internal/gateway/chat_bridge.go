@@ -68,7 +68,7 @@ func (g *Gateway) handleChatBridge(
 		session.publishPendingLog()
 
 		if stream {
-			reqBody, marshalErr := upstreampkg.MarshalProtocolRequest(session.provider.Protocol, chatReq)
+			reqBody, marshalErr := upstreampkg.MarshalProtocolRequest(session.providerProtocol, chatReq)
 			if marshalErr != nil {
 				http.Error(w, fmt.Sprintf("marshal chat request: %v", marshalErr), http.StatusInternalServerError)
 				return
@@ -78,14 +78,14 @@ func (g *Gateway) handleChatBridge(
 				r.Context(),
 				r,
 				session.provider,
-				upstreampkg.ProtocolEndpoint(session.provider.Protocol, false),
+				upstreampkg.JoinBaseURLPath(session.target.URL, upstreampkg.ProtocolEndpoint(session.providerProtocol, false)),
 				reqBody,
 			)
 			if sendErr != nil {
 				if retryWithSystemRole(sendErr, session.provider.Name, retriedDeveloperFallback, &chatReq) {
 					continue
 				}
-				g.selector.RecordOutcomeWithSource(session.provider.Name, sendErr, latency, "pre_stream")
+				g.selector.RecordOutcomeWithSource(session.provider.Name, session.providerProtocol, sendErr, latency, "pre_stream")
 				g.RecordStreamErrorMetric(session.metricLabels, "pre_stream")
 				if session.handleError(sendErr) {
 					chatReq.Model = session.target.UpstreamModel
@@ -102,17 +102,16 @@ func (g *Gateway) handleChatBridge(
 			writeEventStreamHeaders(w)
 
 			rawChat, clientBody, streamErr := spec.streamRelay(streamReader, w, model)
-			w.(http.Flusher).Flush()
 			errMsg := ""
 			if streamErr != nil {
 				errMsg = streamErr.Error()
 				if shouldRecordUpstreamStreamError(r, streamErr) {
-					g.selector.RecordOutcomeWithSource(session.provider.Name, streamErr, latency, "in_stream")
+					g.selector.RecordOutcomeWithSource(session.provider.Name, session.providerProtocol, streamErr, latency, "in_stream")
 					g.RecordStreamErrorMetric(session.metricLabels, "in_stream")
 				}
 				slog.Warn(spec.streamWarn, "error", streamErr)
 			} else {
-				g.selector.RecordOutcome(session.provider.Name, nil, latency)
+				g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 			}
 
 			// Stream: all hook checks degrade to async audits because the live response cannot be rewritten.
@@ -125,7 +124,7 @@ func (g *Gateway) handleChatBridge(
 				observepkg.RecordSuccess(
 					completedLogParams,
 					clientBody,
-					observeStreamTokenUsage(config.RouteProtocolChat, session.provider.Protocol, rawChat),
+					observeStreamTokenUsage(config.RouteProtocolChat, session.providerProtocol, rawChat),
 					spec.streamLogAssembler,
 					recordTokens,
 					verdicts,
@@ -133,7 +132,7 @@ func (g *Gateway) handleChatBridge(
 				)
 			}
 			go func() {
-				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.hookGatewayTarget(), observepkg.ParseChatToolCalls(session.provider.Protocol, rawChat, true))
+				asyncVerdicts := observepkg.RunDegradedAsyncToolHooks(r.Context(), g.hookGatewayTarget(), observepkg.ParseChatToolCalls(session.providerProtocol, rawChat, true))
 				if len(asyncVerdicts) == 0 {
 					return
 				}
@@ -143,12 +142,12 @@ func (g *Gateway) handleChatBridge(
 			return
 		}
 
-		chatResp, rawRespBody, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, chatReq)
+		chatResp, rawRespBody, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, session.providerProtocol, chatReq)
 		if forwardErr != nil {
 			if retryWithSystemRole(forwardErr, session.provider.Name, retriedDeveloperFallback, &chatReq) {
 				continue
 			}
-			g.selector.RecordOutcome(session.provider.Name, forwardErr, latency)
+			g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, forwardErr, latency)
 			if session.handleError(forwardErr) {
 				chatReq.Model = session.target.UpstreamModel
 				continue
@@ -161,13 +160,13 @@ func (g *Gateway) handleChatBridge(
 
 		respBody, convErr := spec.convertNonStreamResponse(chatResp, model)
 		if convErr != nil {
-			g.selector.RecordOutcome(session.provider.Name, nil, latency)
+			g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 			observepkg.RecordError(logParams, rawRespBody, convErr.Error(), nil, g.recordAndBroadcast)
 			spec.writeConvertResponseError(w, convErr)
 			return
 		}
 
-		g.selector.RecordOutcome(session.provider.Name, nil, latency)
+		g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 		blockVerdicts, runAsync := spec.runNonStreamToolHooks(r.Context(), chatResp)
 		if spec.injectBlockVerdicts != nil {
 			respBody = spec.injectBlockVerdicts(respBody, blockVerdicts)

@@ -29,7 +29,11 @@ func (s *Selector) Select(cfg *config.ConfigStruct, serviceProtocol string, matc
 		if c.state.manualSuppress {
 			continue
 		}
-		if now.After(c.state.suppressUntil) {
+		modeSuppress := c.state.modeSuppressUntil[c.target.Format]
+		if modeSuppress.IsZero() {
+			modeSuppress = c.state.suppressUntil
+		}
+		if modeSuppress.IsZero() || now.After(modeSuppress) {
 			return c.target, c.provCfg, nil
 		}
 	}
@@ -49,11 +53,15 @@ func (s *Selector) Select(cfg *config.ConfigStruct, serviceProtocol string, matc
 	if manuallySuppressed > 0 {
 		released := make([]string, 0, len(autoSuppressed))
 		for _, c := range autoSuppressed {
-			if c.state.suppressUntil.IsZero() {
-				continue
+			modeSuppress := c.state.modeSuppressUntil[c.target.Format]
+			if !modeSuppress.IsZero() {
+				c.state.modeSuppressUntil[c.target.Format] = time.Time{}
+				released = append(released, c.target.ProviderName+"/"+c.target.Format)
+			} else if !c.state.suppressUntil.IsZero() {
+				c.state.suppressUntil = time.Time{}
+				c.state.consecutiveFailures = 0
+				released = append(released, c.target.ProviderName)
 			}
-			c.state.suppressUntil = time.Time{}
-			released = append(released, c.target.ProviderName)
 		}
 		if len(released) > 0 {
 			slog.Warn("Released auto suppression because manual suppression left no available provider",
@@ -67,16 +75,31 @@ func (s *Selector) Select(cfg *config.ConfigStruct, serviceProtocol string, matc
 
 	earliest := autoSuppressed[0]
 	for _, c := range autoSuppressed[1:] {
-		if c.state.suppressUntil.Before(earliest.state.suppressUntil) {
+		modeSuppress := c.state.modeSuppressUntil[c.target.Format]
+		if modeSuppress.IsZero() {
+			modeSuppress = c.state.suppressUntil
+		}
+		earliestSuppress := earliest.state.modeSuppressUntil[earliest.target.Format]
+		if earliestSuppress.IsZero() {
+			earliestSuppress = earliest.state.suppressUntil
+		}
+		if modeSuppress.Before(earliestSuppress) {
 			earliest = c
 		}
 	}
 	suppressedInfo := make([]any, 0, len(autoSuppressed)*4+2)
-	suppressedInfo = append(suppressedInfo, "selected", earliest.target.ProviderName, "suppress_until", earliest.state.suppressUntil)
+	earliestModeSuppress := earliest.state.modeSuppressUntil[earliest.target.Format]
+	suppressedInfo = append(suppressedInfo, "selected", earliest.target.ProviderName, "format", earliest.target.Format, "suppress_until", earliestModeSuppress)
 	for _, c := range autoSuppressed {
+		modeSuppress := c.state.modeSuppressUntil[c.target.Format]
+		modeFailures := c.state.modeConsecutiveFailures[c.target.Format]
+		if modeSuppress.IsZero() {
+			modeSuppress = c.state.suppressUntil
+			modeFailures = c.state.consecutiveFailures
+		}
 		suppressedInfo = append(suppressedInfo,
-			c.target.ProviderName+"_failures", c.state.consecutiveFailures,
-			c.target.ProviderName+"_suppress_until", c.state.suppressUntil,
+			c.target.ProviderName+"/"+c.target.Format+"_failures", modeFailures,
+			c.target.ProviderName+"/"+c.target.Format+"_suppress_until", modeSuppress,
 		)
 	}
 	slog.Warn("All auto-suppressed providers unavailable, selecting earliest expiring", suppressedInfo...)
@@ -96,7 +119,10 @@ func (s *Selector) SelectByName(cfg *config.ConfigStruct, serviceProtocol string
 		if serviceProtocol != "" && !config.ProviderSupportsServiceProtocol(provCfg, serviceProtocol) {
 			break
 		}
-		return buildRouteTarget(matched, upstream, requestedModel), provCfg, nil
+		format := inferFormatFromProvider(provCfg, serviceProtocol)
+		target := buildRouteTarget(matched, upstream, requestedModel, format)
+		s.assignTargetURL(target, provCfg)
+		return target, provCfg, nil
 	}
 	return nil, nil, ErrProviderNotFound
 }
@@ -120,10 +146,6 @@ func (s *Selector) CountAvailableProviders(cfg *config.ConfigStruct, serviceProt
 func (s *Selector) buildCandidates(cfg *config.ConfigStruct, serviceProtocol string, matched *config.CompiledRouteModel, requestedModel string, exclude []string) []candidate {
 	candidates := make([]candidate, 0, len(matched.Upstreams))
 	for _, upstream := range matched.Upstreams {
-		target := buildRouteTarget(matched, upstream, requestedModel)
-		if slices.Contains(exclude, target.Key) {
-			continue
-		}
 		provCfg, exists := cfg.Provider[upstream.Provider]
 		if !exists {
 			continue
@@ -135,6 +157,14 @@ func (s *Selector) buildCandidates(cfg *config.ConfigStruct, serviceProtocol str
 		if st == nil {
 			continue
 		}
+
+		format := inferFormatFromProvider(provCfg, serviceProtocol)
+		target := buildRouteTarget(matched, upstream, requestedModel, format)
+		s.assignTargetURL(target, provCfg)
+
+		if slices.Contains(exclude, target.Key) {
+			continue
+		}
 		if target.UpstreamModel != "" && st.availableModels != nil && !st.availableModels[target.UpstreamModel] && matched.Wildcard {
 			continue
 		}
@@ -143,9 +173,35 @@ func (s *Selector) buildCandidates(cfg *config.ConfigStruct, serviceProtocol str
 	return candidates
 }
 
-func buildRouteTarget(matched *config.CompiledRouteModel, upstream config.CompiledRouteUpstream, requestedModel string) *RouteTarget {
+// inferFormatFromProvider determines the format to use for a given service protocol.
+func inferFormatFromProvider(provCfg *config.ProviderConfig, serviceProtocol string) string {
+	if provCfg == nil {
+		return ""
+	}
+
+	formats := config.ProviderFormats(provCfg)
+	if len(formats) > 0 {
+		if len(formats) == 1 {
+			return formats[0]
+		}
+		for _, format := range formats {
+			protocols := config.FormatServiceProtocols(provCfg, format)
+			for _, p := range protocols {
+				if p == serviceProtocol {
+					return format
+				}
+			}
+		}
+		return formats[0]
+	}
+	return provCfg.Format
+}
+
+func buildRouteTarget(matched *config.CompiledRouteModel, upstream config.CompiledRouteUpstream, requestedModel string, format string) *RouteTarget {
 	target := &RouteTarget{
 		ProviderName:   upstream.Provider,
+		URL:            "",
+		Format:         format,
 		RequestedModel: requestedModel,
 		PublicModel:    matched.PublicModel,
 		MatchedPattern: "",
@@ -154,11 +210,30 @@ func buildRouteTarget(matched *config.CompiledRouteModel, upstream config.Compil
 	}
 	if matched.Wildcard {
 		target.UpstreamModel = requestedModel
-		target.Key = upstream.Provider + ":" + requestedModel
+		target.Key = buildTargetKey(upstream.Provider, format, requestedModel)
 		target.MatchedPattern = matched.Pattern
 		return target
 	}
 	target.UpstreamModel = upstream.UpstreamModel
-	target.Key = upstream.Provider + ":" + upstream.UpstreamModel
+	target.Key = buildTargetKey(upstream.Provider, format, upstream.UpstreamModel)
 	return target
+}
+
+func (s *Selector) assignTargetURL(target *RouteTarget, provCfg *config.ProviderConfig) {
+	if target == nil || provCfg == nil {
+		return
+	}
+	if target.Format != "" {
+		target.URL = config.FormatEffectiveURL(provCfg, target.Format)
+	}
+	if target.URL == "" {
+		target.URL = provCfg.URL
+	}
+}
+
+func buildTargetKey(provider, format, model string) string {
+	if format != "" {
+		return provider + ":" + format + ":" + model
+	}
+	return provider + ":" + model
 }

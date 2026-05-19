@@ -145,7 +145,7 @@ func TestRouteConfigAddAPIKeyRejectsExistingName(t *testing.T) {
 func TestValidateRouteAPIKeysRejectsDuplicateValuesPerRoute(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/chat": {
@@ -190,7 +190,7 @@ func TestValidateToolHookHTTPType(t *testing.T) {
 			"audit": {URL: "http://127.0.0.1:8080/hook"},
 		},
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -220,7 +220,7 @@ func TestValidateToolHookHTTPTypeUnknownWebhook(t *testing.T) {
 			"audit": {URL: "http://127.0.0.1:8080/hook"},
 		},
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -248,7 +248,7 @@ func TestValidateToolHookHTTPTypeUnknownWebhook(t *testing.T) {
 func TestValidateToolHookHTTPTypeMissingWebhook(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -333,7 +333,7 @@ func TestValidateWebhookRejectsNonPositiveTimeout(t *testing.T) {
 func TestValidateToolHookAIRequiresExistingChatRouteWithoutAPIKeys(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -358,7 +358,7 @@ func TestValidateToolHookAIRequiresExistingChatRouteWithoutAPIKeys(t *testing.T)
 func TestValidateToolHookAIRejectsNonChatRouteAndAllowsProtectedRoute(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/chat": {
@@ -402,7 +402,7 @@ func TestValidateToolHookAIRejectsNonChatRouteAndAllowsProtectedRoute(t *testing
 func TestValidateToolHookAIRejectsRouteWithHooks(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/review": {
@@ -442,7 +442,7 @@ func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 		Provider: map[string]*ProviderConfig{
 			"anthropic": {
 				URL:             "https://api.anthropic.com/v1",
-				Protocol:        "anthropic",
+				Format:          "anthropic",
 				ResponsesToChat: true,
 			},
 		},
@@ -460,7 +460,7 @@ func TestValidateResponsesToChatRequiresOpenAI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "responses_to_chat requires family 'openai'") {
+	if !strings.Contains(err.Error(), "responses_to_chat requires format 'openai'") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -470,7 +470,7 @@ func TestValidateAnthropicToChatRequiresOpenAI(t *testing.T) {
 		Provider: map[string]*ProviderConfig{
 			"anthropic": {
 				URL:             "https://api.anthropic.com/v1",
-				Protocol:        "anthropic",
+				Format:          "anthropic",
 				AnthropicToChat: true,
 			},
 		},
@@ -488,7 +488,7 @@ func TestValidateAnthropicToChatRequiresOpenAI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "anthropic_to_chat requires family 'openai'") {
+	if !strings.Contains(err.Error(), "anthropic_to_chat requires format 'openai'") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -498,7 +498,7 @@ func TestValidateAnthropicRouteAllowsOpenAIProviderWhenAnthropicToChatEnabled(t 
 		Provider: map[string]*ProviderConfig{
 			"openai": {
 				URL:             "https://api.openai.com/v1",
-				Protocol:        "openai",
+				Format:          "openai",
 				AnthropicToChat: true,
 			},
 		},
@@ -520,7 +520,7 @@ func TestValidateAnthropicRouteAllowsOpenAIProviderWhenAnthropicToChatEnabled(t 
 func TestValidateProviderRequiresAbsoluteURL(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -547,7 +547,7 @@ func TestValidateWebhookRequiresAbsoluteURL(t *testing.T) {
 			"audit": {URL: "/hook"},
 		},
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -573,7 +573,7 @@ func TestValidateProviderRejectsUnsupportedProxyScheme(t *testing.T) {
 		Provider: map[string]*ProviderConfig{
 			"openai": {
 				URL:      "https://api.openai.com/v1",
-				Protocol: "openai",
+				Format: "openai",
 				Proxy:    "ftp://proxy.example.com:8080",
 			},
 		},
@@ -599,7 +599,7 @@ func TestValidateProviderRejectsUnsupportedProxyScheme(t *testing.T) {
 func TestValidateRouteConfigExplicitModelSections(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -625,7 +625,7 @@ func TestValidateRouteConfigExplicitModelSections(t *testing.T) {
 func TestRouteWildcardModelMatchesSlashSeparatedModelIDs(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -655,7 +655,7 @@ func TestValidateRouteConfigPromptEnabledExplicitFalseDisablesInjection(t *testi
 	disabled := false
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -690,7 +690,7 @@ func TestValidateRouteConfigPromptEnabledExplicitFalseDisablesInjection(t *testi
 func TestValidateRouteConfigPromptEnabledLegacyInference(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -729,7 +729,7 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 	}{
 		{
 			name:     "openai compatible",
-			provider: &ProviderConfig{Protocol: "openai"},
+			provider: &ProviderConfig{Format: "openai"},
 			want: []string{
 				RouteProtocolChat,
 				RouteProtocolResponses,
@@ -737,17 +737,17 @@ func TestSupportedRouteProtocolsByProviderProtocol(t *testing.T) {
 		},
 		{
 			name:     "copilot",
-			provider: &ProviderConfig{Protocol: "copilot"},
+			provider: &ProviderConfig{Format: "copilot"},
 			want:     []string{RouteProtocolChat},
 		},
 		{
 			name:     "anthropic",
-			provider: &ProviderConfig{Protocol: "anthropic"},
+			provider: &ProviderConfig{Format: "anthropic"},
 			want:     []string{RouteProtocolChat, RouteProtocolAnthropic},
 		},
 		{
 			name:     "openai anthropic_to_chat",
-			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
+			provider: &ProviderConfig{Format: "openai", AnthropicToChat: true},
 			want: []string{
 				RouteProtocolChat,
 				RouteProtocolResponses,
@@ -774,7 +774,7 @@ func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
 	}{
 		{
 			name:     "openai compatible",
-			provider: &ProviderConfig{Protocol: "openai"},
+			provider: &ProviderConfig{Format: "openai"},
 			want: []string{
 				RouteProtocolChat,
 				RouteProtocolResponses,
@@ -783,12 +783,12 @@ func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
 		},
 		{
 			name:     "anthropic",
-			provider: &ProviderConfig{Protocol: "anthropic"},
+			provider: &ProviderConfig{Format: "anthropic"},
 			want:     []string{RouteProtocolChat, RouteProtocolAnthropic},
 		},
 		{
 			name:     "openai anthropic_to_chat",
-			provider: &ProviderConfig{Protocol: "openai", AnthropicToChat: true},
+			provider: &ProviderConfig{Format: "openai", AnthropicToChat: true},
 			want: []string{
 				RouteProtocolChat,
 				RouteProtocolResponses,
@@ -798,7 +798,7 @@ func TestSupportedServiceProtocolsByProviderProtocol(t *testing.T) {
 		},
 		{
 			name:     "explicit chat only capability",
-			provider: &ProviderConfig{Protocol: "openai", ServiceProtocols: []string{RouteProtocolChat}},
+			provider: &ProviderConfig{Format: "openai", Protocols: []string{RouteProtocolChat}},
 			want:     []string{RouteProtocolChat},
 		},
 	}
@@ -817,7 +817,7 @@ func TestValidateProviderFamilyAlias(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Family: "openai",
+				Format: "openai",
 				URL:    "https://api.openai.com/v1",
 				APIKey: "test-key",
 			},
@@ -836,21 +836,18 @@ func TestValidateProviderFamilyAlias(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 	prov := cfg.Provider["primary"]
-	if prov.Protocol != ProviderProtocolOpenAI {
-		t.Fatalf("provider protocol = %q, want %q", prov.Protocol, ProviderProtocolOpenAI)
-	}
-	if prov.Family != ProviderProtocolOpenAI {
-		t.Fatalf("provider family = %q, want %q", prov.Family, ProviderProtocolOpenAI)
+	if prov.Format != ProviderFormatOpenAI {
+		t.Fatalf("provider format = %q, want %q", prov.Format, ProviderFormatOpenAI)
 	}
 }
 
-func TestValidateProviderLegacyProtocolAliasStillWorks(t *testing.T) {
+func TestValidateProviderFormatNormalization(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Protocol: "openai",
-				URL:      "https://api.openai.com/v1",
-				APIKey:   "test-key",
+				Format: "openai",
+				URL:    "https://api.openai.com/v1",
+				APIKey: "test-key",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -867,41 +864,8 @@ func TestValidateProviderLegacyProtocolAliasStillWorks(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 	prov := cfg.Provider["primary"]
-	if prov.Protocol != ProviderProtocolOpenAI {
-		t.Fatalf("provider protocol = %q, want %q", prov.Protocol, ProviderProtocolOpenAI)
-	}
-	if prov.Family != ProviderProtocolOpenAI {
-		t.Fatalf("provider family = %q, want %q", prov.Family, ProviderProtocolOpenAI)
-	}
-}
-
-func TestValidateProviderRejectsRemovedOllamaAlias(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"local": {
-				Family: "ollama",
-				URL:    "http://localhost:11434/v1",
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"local"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "'ollama' family/protocol has been removed") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "service_protocols") {
-		t.Fatalf("error %q does not contain migration guidance", err)
+	if prov.Format != ProviderFormatOpenAI {
+		t.Fatalf("provider format = %q, want %q", prov.Format, ProviderFormatOpenAI)
 	}
 }
 
@@ -909,10 +873,10 @@ func TestValidateProviderExplicitServiceProtocolsOverrideDefaults(t *testing.T) 
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Protocol:         ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "https://api.openai.com/v1",
 				APIKey:           "test-key",
-				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+				Protocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -939,9 +903,9 @@ func TestValidateOpenAIChatOnlyProviderSupportsFormerOllamaShape(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"local": {
-				Protocol:         ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "http://localhost:11434/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -968,11 +932,11 @@ func TestValidateCLIProxyBackendMetadata(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          "CLIProxy",
 				BackendProvider:  "Codex",
 				URL:              "http://127.0.0.1:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1001,11 +965,11 @@ func TestValidateCLIProxyBackendRequiresOpenAIProvider(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolAnthropic,
+				Format:           ProviderFormatAnthropic,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1022,7 +986,7 @@ func TestValidateCLIProxyBackendRequiresOpenAIProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "requires family 'openai'") {
+	if !strings.Contains(err.Error(), "requires format 'openai'") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1031,7 +995,7 @@ func TestValidateCLIProxyBackendRequiresProviderAndServiceProtocols(t *testing.T
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:  ProviderProtocolOpenAI,
+				Format:  ProviderFormatOpenAI,
 				Backend: ProviderBackendCLIProxy,
 				URL:     "http://127.0.0.1:18741/v1",
 			},
@@ -1055,12 +1019,8 @@ func TestValidateCLIProxyBackendRequiresProviderAndServiceProtocols(t *testing.T
 	}
 
 	cfg.Provider["codex"].BackendProvider = "codex"
-	err = cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "requires explicit service_protocols") {
-		t.Fatalf("unexpected error: %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected validation to pass after adding backend_provider, got: %v", err)
 	}
 }
 
@@ -1077,16 +1037,15 @@ func TestValidateEmbeddedCLIProxyDefaultsAuthDirToEtcWarden(t *testing.T) {
 func TestValidateEmbeddedCLIProxyConfig(t *testing.T) {
 	cfg := &ConfigStruct{
 		CLIProxy: &CLIProxyConfig{
-			Enabled: true,
 			AuthDir: "~/.cli-proxy-api",
 		},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1112,11 +1071,11 @@ func TestValidateEmbeddedCLIProxyRejectsUnsafeEndpoint(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://192.168.1.10:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1143,18 +1102,18 @@ func TestValidateEmbeddedCLIProxyRejectsMismatchedProviders(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "gemini",
 				URL:              "http://127.0.0.1:18742/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1181,20 +1140,20 @@ func TestValidateEmbeddedCLIProxyAcceptsSharedProviderProxy(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8080",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "gemini",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8080",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1217,20 +1176,20 @@ func TestValidateEmbeddedCLIProxyRejectsConflictingProviderProxy(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8080",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "gemini",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8081",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1254,23 +1213,22 @@ func TestValidateEmbeddedCLIProxyRejectsConflictingProviderProxy(t *testing.T) {
 
 func TestValidateEmbeddedCLIProxyAllowsProviderProxyConflictWithExplicitCLIProxyProxy(t *testing.T) {
 	cfg := &ConfigStruct{
-		CLIProxy: &CLIProxyConfig{Enabled: true, Proxy: "socks5://127.0.0.1:1080"},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8080",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "gemini",
 				URL:              "http://127.0.0.1:18741/v1",
 				Proxy:            "http://127.0.0.1:8081",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1288,68 +1246,11 @@ func TestValidateEmbeddedCLIProxyAllowsProviderProxyConflictWithExplicitCLIProxy
 	}
 }
 
-func TestValidateProviderRejectsIncompatibleAnthropicServiceProtocol(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"primary": {
-				Protocol:         ProviderProtocolOpenAI,
-				URL:              "https://api.openai.com/v1",
-				APIKey:           "test-key",
-				ServiceProtocols: []string{RouteProtocolAnthropic},
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/anthropic": {
-				Protocol: RouteProtocolAnthropic,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"primary"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "incompatible with adapter capabilities") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateProviderRejectsIncompatibleEmbeddingsServiceProtocol(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"copilot": {
-				Protocol:         ProviderProtocolCopilot,
-				APIKey:           "test-key",
-				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"copilot"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "incompatible with adapter capabilities") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateRouteDisablesEmbeddingsWhenNoUpstreamSupportsIt(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"anthropic": {
-				Protocol: ProviderProtocolAnthropic,
+				Format:   ProviderFormatAnthropic,
 				URL:      "https://anthropic.example.com",
 				APIKey:   "test-key",
 			},
@@ -1378,7 +1279,7 @@ func TestValidateRouteAcceptsExplicitServiceProtocols(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {
-				Protocol: ProviderProtocolOpenAI,
+				Format:   ProviderFormatOpenAI,
 				URL:      "https://api.openai.com/v1",
 				APIKey:   "test-key",
 			},
@@ -1408,7 +1309,7 @@ func TestValidateRouteRejectsServiceProtocolsWithoutPrimaryProtocol(t *testing.T
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {
-				Protocol: ProviderProtocolOpenAI,
+				Format:   ProviderFormatOpenAI,
 				URL:      "https://api.openai.com/v1",
 				APIKey:   "test-key",
 			},
@@ -1437,7 +1338,7 @@ func TestValidateRouteRejectsExplicitServiceProtocolWithoutProviderSupport(t *te
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"copilot": {
-				Protocol: ProviderProtocolCopilot,
+				Format:   ProviderFormatCopilot,
 				APIKey:   "test-key",
 			},
 		},
@@ -1465,10 +1366,10 @@ func TestValidateRouteRejectsEmbeddingsOnlyProviderWithoutPrimaryProtocol(t *tes
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"embeddings": {
-				Protocol:         ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "https://api.openai.com/v1",
 				APIKey:           "test-key",
-				ServiceProtocols: []string{ServiceProtocolEmbeddings},
+				Protocols: []string{ServiceProtocolEmbeddings},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1492,38 +1393,11 @@ func TestValidateRouteRejectsEmbeddingsOnlyProviderWithoutPrimaryProtocol(t *tes
 	}
 }
 
-func TestValidateProviderRequiresExplicitFamilyOrProtocol(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"primary": {
-				URL:    "https://api.openai.com/v1",
-				APIKey: "test-key",
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"primary"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "family is required") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"copilot": {
-				Family:  ProviderProtocolCopilot,
+				Format:  ProviderFormatCopilot,
 				APIKey:  "test-key",
 				Timeout: "30s",
 			},
@@ -1545,8 +1419,8 @@ func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 	}
 
 	prov := cfg.Provider["copilot"]
-	if prov.Protocol != ProviderProtocolCopilot {
-		t.Fatalf("provider protocol = %q, want %q", prov.Protocol, ProviderProtocolCopilot)
+	if prov.Format != ProviderFormatCopilot {
+		t.Fatalf("provider protocol = %q, want %q", prov.Format, ProviderFormatCopilot)
 	}
 	if prov.URL != "https://api.githubcopilot.com" {
 		t.Fatalf("provider URL = %q, want copilot default", prov.URL)
@@ -1556,38 +1430,10 @@ func TestValidateProviderFamilyAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestValidateProviderRejectsRemovedQwenFamily(t *testing.T) {
-	cfg := &ConfigStruct{
-		Provider: map[string]*ProviderConfig{
-			"qwen": {
-				Family: "qwen",
-				URL:    "https://portal.qwen.ai/v1",
-				APIKey: "test-key",
-			},
-		},
-		Route: map[string]*RouteConfig{
-			"/chat": {
-				Protocol: RouteProtocolChat,
-				WildcardModels: map[string]*WildcardRouteModelConfig{
-					"*": {Providers: []string{"qwen"}},
-				},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-	if !strings.Contains(err.Error(), `family "qwen" is no longer supported`) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateRouteConfigRequiresRouteProtocol(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -1610,11 +1456,11 @@ func TestValidateRouteConfigRequiresRouteProtocol(t *testing.T) {
 func TestValidateRouteConfigRejectsInvalidProtocolName(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
-				Protocol: "responses_invalid",
+				Protocol:   "responses_invalid",
 				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
@@ -1639,7 +1485,7 @@ func TestValidateRejectsTopLevelAPIKeys(t *testing.T) {
 			"legacy": "secret",
 		},
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -1665,7 +1511,7 @@ func TestValidateRejectsTopLevelAPIKeys(t *testing.T) {
 func TestValidateAcceptsRouteAPIKeys(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
-			"openai": {URL: "https://api.openai.com/v1", Protocol: "openai"},
+			"openai": {URL: "https://api.openai.com/v1", Format: "openai"},
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
@@ -1696,7 +1542,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "openai command",
 			provider: &ProviderConfig{
-				Family:               ProviderProtocolOpenAI,
+				Format:               ProviderFormatOpenAI,
 				URL:                  "https://api.openai.com/v1",
 				APIKeyCommand:        "printf token",
 				APIKeyCommandTimeout: "2s",
@@ -1706,7 +1552,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "anthropic command",
 			provider: &ProviderConfig{
-				Family:        ProviderProtocolAnthropic,
+				Format:        ProviderFormatAnthropic,
 				URL:           "https://api.anthropic.com/v1",
 				APIKeyCommand: "printf token",
 			},
@@ -1714,7 +1560,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "static and command conflict",
 			provider: &ProviderConfig{
-				Family:        ProviderProtocolOpenAI,
+				Format:        ProviderFormatOpenAI,
 				URL:           "https://api.openai.com/v1",
 				APIKey:        "static",
 				APIKeyCommand: "printf token",
@@ -1724,7 +1570,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "invalid timeout",
 			provider: &ProviderConfig{
-				Family:               ProviderProtocolOpenAI,
+				Format:               ProviderFormatOpenAI,
 				URL:                  "https://api.openai.com/v1",
 				APIKeyCommand:        "printf token",
 				APIKeyCommandTimeout: "soon",
@@ -1734,7 +1580,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "zero timeout",
 			provider: &ProviderConfig{
-				Family:               ProviderProtocolOpenAI,
+				Format:               ProviderFormatOpenAI,
 				URL:                  "https://api.openai.com/v1",
 				APIKeyCommand:        "printf token",
 				APIKeyCommandTimeout: "0s",
@@ -1744,7 +1590,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "negative timeout",
 			provider: &ProviderConfig{
-				Family:               ProviderProtocolOpenAI,
+				Format:               ProviderFormatOpenAI,
 				URL:                  "https://api.openai.com/v1",
 				APIKeyCommand:        "printf token",
 				APIKeyCommandTimeout: "-1s",
@@ -1754,7 +1600,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "invalid ttl",
 			provider: &ProviderConfig{
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "https://api.openai.com/v1",
 				APIKeyCommand:    "printf token",
 				APIKeyCommandTTL: "later",
@@ -1764,7 +1610,7 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "negative ttl",
 			provider: &ProviderConfig{
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "https://api.openai.com/v1",
 				APIKeyCommand:    "printf token",
 				APIKeyCommandTTL: "-1s",
@@ -1774,11 +1620,11 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "cliproxy rejects command",
 			provider: &ProviderConfig{
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				Backend:          ProviderBackendCLIProxy,
 				BackendProvider:  "codex",
 				URL:              "http://127.0.0.1:18741/v1",
-				ServiceProtocols: []string{RouteProtocolChat},
+				Protocols: []string{RouteProtocolChat},
 				APIKeyCommand:    "printf token",
 			},
 			wantErr: "api_key_command is not supported",
@@ -1816,10 +1662,10 @@ func TestValidateProviderAPIKeyCommandDoesNotChangeServiceProtocols(t *testing.T
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Family:           ProviderProtocolOpenAI,
+				Format:           ProviderFormatOpenAI,
 				URL:              "https://api.openai.com/v1",
 				APIKeyCommand:    "printf token",
-				ServiceProtocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+				Protocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1846,7 +1692,7 @@ func TestValidateCopilotAPIKeyCommandSkipsConfigDirCredentialCheck(t *testing.T)
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"copilot": {
-				Family:        ProviderProtocolCopilot,
+				Format:        ProviderFormatCopilot,
 				APIKeyCommand: "printf token",
 			},
 		},
@@ -1862,5 +1708,318 @@ func TestValidateCopilotAPIKeyCommandSkipsConfigDirCredentialCheck(t *testing.T)
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+
+// === Access Mode Validation Tests ===
+
+
+func TestValidateEndpointBasic(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"bailian": {
+				APIKey: "sk-sp-xxxxx",
+				Endpoints: map[string]*ProviderEndpointConfig{
+					"openai": {
+						URL:    "https://coding.dashscope.aliyuncs.com/v1",
+						Format: "openai",
+					},
+					"anthropic": {
+						URL:    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+						Format: "anthropic",
+					},
+				},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"bailian"}},
+				},
+			},
+			"/anthropic": {
+				Protocol: RouteProtocolAnthropic,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"bailian"}},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateEndpointRejectsShorthandMix(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"bad": {
+				URL: "https://bad.example.com",
+				Endpoints: map[string]*ProviderEndpointConfig{
+					"openai": {
+						URL: "https://bad.example.com/v1",
+					},
+				},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"bad"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "url must not be set when endpoint") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEndpointURLValidation(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"badurl": {
+				Endpoints: map[string]*ProviderEndpointConfig{
+					"openai": {
+						URL: "not-a-url",
+					},
+				},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"badurl"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "url must be an absolute http/https URL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEndpointCliproxyRequiresOpenAI(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"codex": {
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				Endpoints: map[string]*ProviderEndpointConfig{
+					"anthropic": {
+						URL:    "http://127.0.0.1:18741/v1",
+						Format: "anthropic",
+					},
+				},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"codex"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "requires format 'openai'") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEndpointServiceProtocols(t *testing.T) {
+	cfg := &ConfigStruct{
+		Provider: map[string]*ProviderConfig{
+			"test": {
+				Endpoints: map[string]*ProviderEndpointConfig{
+					"openai": {
+						URL:       "https://test.example.com",
+						Format:    "openai",
+						Protocols: []string{RouteProtocolChat, RouteProtocolAnthropic},
+					},
+				},
+			},
+		},
+		Route: map[string]*RouteConfig{
+			"/chat": {
+				Protocol: RouteProtocolChat,
+				WildcardModels: map[string]*WildcardRouteModelConfig{
+					"*": {Providers: []string{"test"}},
+				},
+			},
+		},
+	}
+
+	// anthropic without bridge is allowed in protocols list since we don't validate
+	// protocol/format compatibility at config level for explicit protocols
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestFormatEffectiveURLWithEndpoints(t *testing.T) {
+	prov := &ProviderConfig{
+		Endpoints: map[string]*ProviderEndpointConfig{
+			"openai": {
+				URL:    "https://openai.example.com",
+				Format: "openai",
+			},
+			"anthropic": {
+				URL:    "https://anthropic.example.com",
+				Format: "anthropic",
+			},
+		},
+	}
+
+	if got := FormatEffectiveURL(prov, ProviderFormatOpenAI); got != "https://openai.example.com" {
+		t.Fatalf("FormatEffectiveURL(openai) = %q, want %q", got, "https://openai.example.com")
+	}
+	if got := FormatEffectiveURL(prov, ProviderFormatAnthropic); got != "https://anthropic.example.com" {
+		t.Fatalf("FormatEffectiveURL(anthropic) = %q, want %q", got, "https://anthropic.example.com")
+	}
+}
+
+func TestFormatHeadersWithEndpoints(t *testing.T) {
+	prov := &ProviderConfig{
+		Headers: map[string]string{
+			"X-Common":   "value",
+			"X-Override": "provider",
+		},
+		Endpoints: map[string]*ProviderEndpointConfig{
+			"openai": {
+				Format: "openai",
+				Headers: map[string]string{
+					"X-OpenAI":   "openai-value",
+					"X-Override": "openai",
+				},
+			},
+			"anthropic": {
+				Format: "anthropic",
+				Headers: map[string]string{
+					"X-Anthropic": "anthropic-value",
+				},
+			},
+		},
+	}
+
+	openaiHeaders := FormatHeaders(prov, ProviderFormatOpenAI)
+	if openaiHeaders["X-Common"] != "value" {
+		t.Fatalf("openai headers missing common header")
+	}
+	if openaiHeaders["X-OpenAI"] != "openai-value" {
+		t.Fatalf("openai headers missing endpoint-specific header")
+	}
+	if openaiHeaders["X-Override"] != "openai" {
+		t.Fatalf("endpoint-specific header should override provider-level")
+	}
+
+	anthropicHeaders := FormatHeaders(prov, ProviderFormatAnthropic)
+	if anthropicHeaders["X-Common"] != "value" {
+		t.Fatalf("anthropic headers missing common header")
+	}
+	if anthropicHeaders["X-Anthropic"] != "anthropic-value" {
+		t.Fatalf("anthropic headers missing endpoint-specific header")
+	}
+	if anthropicHeaders["X-Override"] != "provider" {
+		t.Fatalf("provider-level header should remain when not overridden")
+	}
+}
+
+func TestProviderEndpointSelectionByURL(t *testing.T) {
+	prov := &ProviderConfig{
+		Headers: map[string]string{
+			"X-Common": "provider",
+		},
+		Endpoints: map[string]*ProviderEndpointConfig{
+			"openai": {
+				URL:    "https://gateway.example.com/openai/v1",
+				Format: "openai",
+				Headers: map[string]string{
+					"Authorization": "Bearer openai-token",
+					"X-Mode":         "openai",
+				},
+			},
+			"anthropic": {
+				URL:    "https://gateway.example.com/anthropic/v1",
+				Format: "anthropic",
+				Headers: map[string]string{
+					"x-api-key": "anthropic-token",
+					"X-Mode":    "anthropic",
+				},
+			},
+		},
+	}
+
+	if got := ProviderFormatForURL(prov, "https://gateway.example.com/anthropic/v1/messages"); got != ProviderFormatAnthropic {
+		t.Fatalf("ProviderFormatForURL(anthropic) = %q, want %q", got, ProviderFormatAnthropic)
+	}
+	if got := ProviderFormatForURL(prov, "https://gateway.example.com/anthropic/v1/messages?x=1"); got != ProviderFormatAnthropic {
+		t.Fatalf("ProviderFormatForURL(query) = %q, want %q", got, ProviderFormatAnthropic)
+	}
+	headers := ProviderHeadersForURL(prov, "https://gateway.example.com/anthropic/v1/messages")
+	if headers["X-Mode"] != "anthropic" {
+		t.Fatalf("ProviderHeadersForURL() = %v, want anthropic endpoint headers", headers)
+	}
+	if headers["X-Common"] != "provider" {
+		t.Fatalf("ProviderHeadersForURL() should keep provider headers, got %v", headers)
+	}
+}
+
+func TestFormatModelsWithEndpoints(t *testing.T) {
+	prov := &ProviderConfig{
+		Models: []string{"common-model"},
+		Endpoints: map[string]*ProviderEndpointConfig{
+			"openai": {
+				Format: "openai",
+				Models: []string{"gpt-4o", "gpt-4o-mini"},
+			},
+			"anthropic": {
+				Format: "anthropic",
+				Models: []string{"claude-3-7-sonnet"},
+			},
+		},
+	}
+
+	openaiModels := FormatModels(prov, ProviderFormatOpenAI)
+	if !slices.Equal(openaiModels, []string{"gpt-4o", "gpt-4o-mini"}) {
+		t.Fatalf("FormatModels(openai) = %v", openaiModels)
+	}
+
+	anthropicModels := FormatModels(prov, ProviderFormatAnthropic)
+	if !slices.Equal(anthropicModels, []string{"claude-3-7-sonnet"}) {
+		t.Fatalf("FormatModels(anthropic) = %v", anthropicModels)
+	}
+
+	// When endpoint-specific models are empty, fall back to provider models
+	provNoEndpointModels := &ProviderConfig{
+		Models: []string{"fallback-model"},
+		Endpoints: map[string]*ProviderEndpointConfig{
+			"openai": {
+				Format: "openai",
+			},
+		},
+	}
+	if got := FormatModels(provNoEndpointModels, ProviderFormatOpenAI); !slices.Equal(got, []string{"fallback-model"}) {
+		t.Fatalf("FormatModels(fallback) = %v", got)
 	}
 }

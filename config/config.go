@@ -94,12 +94,11 @@ func (c *ConfigStruct) LogValue() slog.Value {
 type ProviderConfig struct {
 	Name                 string            `json:"-"` // populated from map key
 	Disabled             bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
-	URL                  string            `json:"url" usage:"Upstream LLM base URL"`
-	Family               string            `json:"family" usage:"Required provider adapter family: openai, anthropic, copilot"`
-	Protocol             string            `json:"protocol" usage:"Deprecated alias of family; retained for backward compatibility"`
+	URL                  string            `json:"url,omitempty" usage:"Upstream LLM base URL (shorthand for single-endpoint providers)"`
+	Format               string            `json:"format,omitempty" usage:"Upstream native protocol format: openai, anthropic, copilot; empty defaults to openai (shorthand for single-endpoint providers)"`
+	Protocols            []string          `json:"protocols,omitempty" usage:"Supported service protocols: chat, responses, anthropic, embeddings; empty uses format defaults (shorthand for single-endpoint providers)"`
 	Backend              string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
 	BackendProvider      string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
-	ServiceProtocols     []string          `json:"service_protocols" usage:"Supported service protocols: chat, responses, anthropic, embeddings; empty uses adapter defaults"`
 	APIKey               SecretString      `json:"api_key" usage:"API key for authentication"`
 	APIKeyCommand        string            `json:"api_key_command" usage:"Shell command that prints an API key to stdout"`
 	APIKeyCommandTimeout string            `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
@@ -109,9 +108,10 @@ type ProviderConfig struct {
 	Proxy                string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
 	Headers              map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
 	Models               []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat      bool              `json:"responses_to_chat" usage:"Route responses to upstream /chat/completions for openai protocol"`
-	AnthropicToChat      bool              `json:"anthropic_to_chat" usage:"Route anthropic /messages to upstream /chat/completions for openai protocol"`
-	AnthropicToResponses bool              `json:"anthropic_to_responses" usage:"Route responses to upstream /messages for anthropic protocol (stateless only)"`
+	ResponsesToChat      bool              `json:"responses_to_chat,omitempty" usage:"Route responses to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
+	AnthropicToChat      bool              `json:"anthropic_to_chat,omitempty" usage:"Route anthropic /messages to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
+	AnthropicToResponses bool              `json:"anthropic_to_responses,omitempty" usage:"Route responses to upstream /messages for anthropic format (stateless only) (shorthand for single-endpoint providers)"`
+	Endpoints            map[string]*ProviderEndpointConfig `json:"endpoint,omitempty" usage:"Explicit protocol endpoints for multi-endpoint providers"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
 	clientCacheMu sync.RWMutex
@@ -128,6 +128,19 @@ type providerAPIKeyCommandCache struct {
 	ExpiresAt time.Time
 }
 
+// ProviderEndpointConfig defines a single protocol endpoint for a provider.
+// Each endpoint is a complete protocol access definition, not an override.
+type ProviderEndpointConfig struct {
+	URL                  string            `json:"url" usage:"Endpoint base URL"`
+	Format               string            `json:"format,omitempty" usage:"Endpoint native protocol format: openai, anthropic, copilot; empty defaults to openai"`
+	Protocols            []string          `json:"protocols,omitempty" usage:"Endpoint supported service protocols; empty uses format defaults"`
+	Headers              map[string]string `json:"headers,omitempty" usage:"Endpoint-specific headers merged with provider-level headers"`
+	Models               []string          `json:"models,omitempty" usage:"Endpoint-specific model list overriding provider-level models"`
+	ResponsesToChat      bool              `json:"responses_to_chat,omitempty" usage:"Route responses to this openai-format endpoint"`
+	AnthropicToChat      bool              `json:"anthropic_to_chat,omitempty" usage:"Route anthropic /messages to this openai-format endpoint"`
+	AnthropicToResponses bool              `json:"anthropic_to_responses,omitempty" usage:"Route responses to this anthropic-format endpoint (stateless only)"`
+}
+
 // GetAPIKey returns the effective API key for authentication.
 func (b *ProviderConfig) GetAPIKey(ctx context.Context) string {
 	token, _ := b.ResolveAPIKey(ctx)
@@ -140,7 +153,7 @@ func (b *ProviderConfig) InvalidateAuth() {
 	if b == nil || b.APIKey.Value() != "" {
 		return
 	}
-	if p := provider.Get(b.Protocol); p != nil {
+	if p := provider.Get(b.Format); p != nil {
 		p.InvalidateAuth(b.ConfigDir)
 	}
 }
@@ -159,11 +172,6 @@ func (b *ProviderConfig) FirstTokenTimeout(override time.Duration) time.Duration
 }
 
 // HTTPClient returns an *http.Client configured with the provider's proxy.
-// If override is non-zero it is used as the response-header guard; otherwise falls back to Timeout
-// (default 120s). The gateway transport enforces the real first-token deadline across request
-// send, response headers, and the first response body byte. Body reading after the first token is
-// not limited by http.Client.Timeout so long streams can complete.
-// Clients are cached by timeout value to reuse connections.
 func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	timeout := b.FirstTokenTimeout(override)
 
@@ -183,10 +191,7 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = timeout // response-header guard; body first-token deadline is enforced in gateway/upstream.
-	// Many upstream gateways and CDNs close idle keep-alive connections sooner than Go's
-	// 90s default, leaving the local pool with half-dead sockets that fail with EPIPE on
-	// the next write. 30s is below the common 60s server-side idle window.
+	transport.ResponseHeaderTimeout = timeout
 	transport.IdleConnTimeout = 30 * time.Second
 	if b.Backend == ProviderBackendCLIProxy {
 		transport.Proxy = nil
@@ -196,7 +201,6 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 		}
 	}
 
-	// No http.Client.Timeout - streaming responses should not have a total time limit
 	client := &http.Client{Transport: transport}
 	if b.clientCache == nil {
 		b.clientCache = make(map[time.Duration]*http.Client)
@@ -362,6 +366,6 @@ type HookConfig struct {
 	Prompt  string   `json:"prompt" usage:"Prompt template for AI hook; supports {{.ToolName}}, {{.FullName}}, {{.MCPName}}, {{.Arguments}}, {{.Result}}, {{.CallID}} (ai type only)"`
 	Webhook string   `json:"webhook" usage:"Webhook config name to call (http type only)"`
 
-	TimeoutDuration time.Duration  `json:"-"` // parsed from Timeout during Validate
+	TimeoutDuration time.Duration  `json:"-"`
 	WebhookCfg      *WebhookConfig `json:"-"`
 }

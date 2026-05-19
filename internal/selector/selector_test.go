@@ -40,8 +40,8 @@ func mustValidateConfig(t *testing.T, cfg *config.ConfigStruct) *config.RouteCon
 func TestSelector_SelectExactModel(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary":   {URL: "http://primary.example.com", Protocol: "openai"},
-			"secondary": {URL: "http://secondary.example.com", Protocol: "openai"},
+			"primary":   {URL: "http://primary.example.com", Format: "openai"},
+			"secondary": {URL: "http://secondary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -77,8 +77,8 @@ func TestSelector_SelectExactModel(t *testing.T) {
 func TestSelector_SelectWildcardModel(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"first":  {URL: "http://first.example.com", Protocol: "openai"},
-			"second": {URL: "http://second.example.com", Protocol: "openai"},
+			"first":  {URL: "http://first.example.com", Format: "openai"},
+			"second": {URL: "http://second.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -116,8 +116,8 @@ func TestSelector_SelectWildcardModel(t *testing.T) {
 func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary":   {URL: "http://primary.example.com", Protocol: "openai"},
-			"secondary": {URL: "http://secondary.example.com", Protocol: "openai"},
+			"primary":   {URL: "http://primary.example.com", Format: "openai"},
+			"secondary": {URL: "http://secondary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -150,8 +150,8 @@ func TestSelector_SelectSkipsManualSuppress(t *testing.T) {
 func TestSelector_SelectReleasesAutoSuppressionWhenManualSuppressLeavesNoAvailableProvider(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary":   {URL: "http://primary.example.com", Protocol: "openai"},
-			"secondary": {URL: "http://secondary.example.com", Protocol: "openai"},
+			"primary":   {URL: "http://primary.example.com", Format: "openai"},
+			"secondary": {URL: "http://secondary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -203,7 +203,7 @@ func TestSelector_SelectReleasesAutoSuppressionWhenManualSuppressLeavesNoAvailab
 func TestSelector_Models(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary": {URL: "http://primary.example.com", Protocol: "openai"},
+			"primary": {URL: "http://primary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -262,7 +262,7 @@ func TestRefreshModelsPublishesAPIKeyCommandFailures(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"broken": {
 				URL:           "https://api.example.com/v1",
-				Protocol:      "openai",
+				Format:      "openai",
 				APIKeyCommand: "exit 1",
 			},
 		},
@@ -298,13 +298,13 @@ func TestRefreshModelsPublishesAPIKeyCommandFailures(t *testing.T) {
 func TestSelector_RecordOutcome(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"test": {Name: "test", URL: "http://test.example.com", Protocol: "openai"},
+			"test": {Name: "test", URL: "http://test.example.com", Format: "openai"},
 		},
 	}
 
 	s := NewSelector(cfg)
-	s.RecordOutcome("test", &UpstreamError{Code: 500}, 100*time.Millisecond)
-	s.RecordOutcome("test", nil, 50*time.Millisecond)
+	s.RecordOutcome("test", "openai", &UpstreamError{Code: 500}, 100*time.Millisecond)
+	s.RecordOutcome("test", "openai", nil, 50*time.Millisecond)
 
 	status := s.ProviderDetail("test")
 	if status == nil {
@@ -321,13 +321,13 @@ func TestSelector_RecordOutcome(t *testing.T) {
 func TestSelector_RecordOutcomeWithSource_ErrorCounters(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"test": {Name: "test", URL: "http://test.example.com", Protocol: "openai"},
+			"test": {Name: "test", URL: "http://test.example.com", Format: "openai"},
 		},
 	}
 
 	s := NewSelector(cfg)
-	s.RecordOutcomeWithSource("test", &UpstreamError{Code: 500}, 100*time.Millisecond, "pre_stream")
-	s.RecordOutcomeWithSource("test", &UpstreamError{Code: 500}, 100*time.Millisecond, "in_stream")
+	s.RecordOutcomeWithSource("test", "openai", &UpstreamError{Code: 500}, 100*time.Millisecond, "pre_stream")
+	s.RecordOutcomeWithSource("test", "openai", &UpstreamError{Code: 500}, 100*time.Millisecond, "in_stream")
 
 	status := s.ProviderDetail("test")
 	if status == nil {
@@ -344,7 +344,7 @@ func TestSelector_RecordOutcomeWithSource_ErrorCounters(t *testing.T) {
 func TestSelector_RecordFailover(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"test": {Name: "test", URL: "http://test.example.com", Protocol: "openai"},
+			"test": {Name: "test", URL: "http://test.example.com", Format: "openai"},
 		},
 	}
 
@@ -371,7 +371,7 @@ func TestFetchModels_SanitizesInternalHTTPError(t *testing.T) {
 
 	_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
 		URL:      srv.URL,
-		Protocol: "openai",
+		Format: "openai",
 	})
 	if err == nil {
 		t.Fatal("FetchModels() error = nil, want error")
@@ -414,7 +414,7 @@ func TestFetchModels_RejectsNonAdvancingPagination(t *testing.T) {
 
 			_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
 				URL:      srv.URL,
-				Protocol: "openai",
+				Format: "openai",
 			})
 			if err == nil {
 				t.Fatal("FetchModels() error = nil, want pagination guard error")
@@ -442,12 +442,171 @@ func TestFetchModels_RespectsCanceledContext(t *testing.T) {
 
 	_, _, err := FetchModels(ctx, &config.ProviderConfig{
 		URL:      srv.URL,
-		Protocol: "openai",
+		Format: "openai",
 	})
 	if err == nil {
 		t.Fatal("FetchModels() error = nil, want canceled error")
 	}
 	if requests != 0 {
 		t.Fatalf("FetchModels() requests = %d, want 0", requests)
+	}
+}
+
+// === Access Mode Tests ===
+
+func TestBuildRouteTarget_IncludesAccessModeInKey(t *testing.T) {
+	matched := &config.CompiledRouteModel{
+		PublicModel: "gpt-4o",
+		Wildcard:    false,
+	}
+	upstream := config.CompiledRouteUpstream{
+		Provider:      "test",
+		UpstreamModel: "gpt-4o-real",
+		RenameModel:   true,
+	}
+
+	target := buildRouteTarget(matched, upstream, "gpt-4o", "openai")
+	if target.Key != "test:openai:gpt-4o-real" {
+		t.Fatalf("target.Key = %q, want test:openai:gpt-4o-real", target.Key)
+	}
+	if target.Format != "openai" {
+		t.Fatalf("target.Format = %q, want openai", target.Format)
+	}
+
+	// Wildcard target
+	matchedWildcard := &config.CompiledRouteModel{
+		PublicModel: "gpt-*",
+		Wildcard:    true,
+		Pattern:     "gpt-*",
+	}
+	upstreamWildcard := config.CompiledRouteUpstream{
+		Provider: "test",
+	}
+	targetWildcard := buildRouteTarget(matchedWildcard, upstreamWildcard, "gpt-4.1", "anthropic")
+	if targetWildcard.Key != "test:anthropic:gpt-4.1" {
+		t.Fatalf("wildcard target.Key = %q, want test:anthropic:gpt-4.1", targetWildcard.Key)
+	}
+
+	// Empty access mode falls back to provider:model format
+	targetEmpty := buildRouteTarget(matched, upstream, "gpt-4o", "")
+	if targetEmpty.Key != "test:gpt-4o-real" {
+		t.Fatalf("empty access mode target.Key = %q, want test:gpt-4o-real", targetEmpty.Key)
+	}
+}
+
+func TestInferAccessModeFromProvider_LegacyFallback(t *testing.T) {
+	// Legacy openai provider
+	openaiProv := &config.ProviderConfig{Format: "openai"}
+	if got := inferFormatFromProvider(openaiProv, config.RouteProtocolChat); got != "openai" {
+		t.Fatalf("inferFormatFromProvider(openai) = %q, want openai", got)
+	}
+
+	// Legacy anthropic provider
+	anthropicProv := &config.ProviderConfig{Format: "anthropic"}
+	if got := inferFormatFromProvider(anthropicProv, config.RouteProtocolAnthropic); got != "anthropic" {
+		t.Fatalf("inferFormatFromProvider(anthropic) = %q, want anthropic", got)
+	}
+}
+
+func TestInferFormatFromProvider_EndpointPriority(t *testing.T) {
+	// Dual endpoint provider: openai should be preferred for chat
+	dualProv := &config.ProviderConfig{
+		Endpoints: map[string]*config.ProviderEndpointConfig{
+			"openai": {
+				Format: "openai",
+			},
+			"anthropic": {
+				Format: "anthropic",
+			},
+		},
+	}
+	if got := inferFormatFromProvider(dualProv, config.RouteProtocolChat); got != "openai" {
+		t.Fatalf("inferFormatFromProvider(dual, chat) = %q, want openai", got)
+	}
+
+	// For anthropic service protocol, anthropic endpoint should be selected
+	if got := inferFormatFromProvider(dualProv, config.RouteProtocolAnthropic); got != "anthropic" {
+		t.Fatalf("inferFormatFromProvider(dual, anthropic) = %q, want anthropic", got)
+	}
+}
+
+func TestInferFormatFromProvider_SingleEndpoint(t *testing.T) {
+	// Only anthropic endpoint
+	anthropicOnly := &config.ProviderConfig{
+		Endpoints: map[string]*config.ProviderEndpointConfig{
+			"anthropic": {
+				Format: "anthropic",
+			},
+		},
+	}
+	if got := inferFormatFromProvider(anthropicOnly, config.RouteProtocolChat); got != "anthropic" {
+		t.Fatalf("inferFormatFromProvider(anthropic-only) = %q, want anthropic", got)
+	}
+}
+
+func TestSelect_DualEndpointProviderPicksCorrectFormat(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Provider: map[string]*config.ProviderConfig{
+			"dual": {
+				Endpoints: map[string]*config.ProviderEndpointConfig{
+					"openai": {
+						URL:    "https://dual.example.com/openai",
+						Format: "openai",
+					},
+					"anthropic": {
+						URL:    "https://dual.example.com/anthropic",
+						Format: "anthropic",
+					},
+				},
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/chat": {
+				Protocol: config.RouteProtocolChat,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"*": testWildcardModel(config.RouteProtocolChat, "dual"),
+				},
+			},
+			"/anthropic": {
+				Protocol: config.RouteProtocolAnthropic,
+				WildcardModels: map[string]*config.WildcardRouteModelConfig{
+					"*": testWildcardModel(config.RouteProtocolAnthropic, "dual"),
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	s := NewSelector(cfg)
+
+	// For chat route, should select openai endpoint
+	chatRoute := cfg.Route["/chat"]
+	chatMatched := chatRoute.MatchModel("gpt-4o")
+	target, _, err := s.Select(cfg, config.RouteProtocolChat, chatMatched, "gpt-4o")
+	if err != nil {
+		t.Fatalf("Select(chat) error = %v", err)
+	}
+	if target.Format != "openai" {
+		t.Fatalf("Select(chat) Format = %q, want openai", target.Format)
+	}
+	if target.URL != "https://dual.example.com/openai" {
+		t.Fatalf("Select(chat) URL = %q, want https://dual.example.com/openai", target.URL)
+	}
+
+	// For anthropic route, should select anthropic endpoint
+	anthropicRoute := cfg.Route["/anthropic"]
+	anthropicMatched := anthropicRoute.MatchModel("claude-3-7-sonnet")
+	target2, _, err := s.Select(cfg, config.RouteProtocolAnthropic, anthropicMatched, "claude-3-7-sonnet")
+	if err != nil {
+		t.Fatalf("Select(anthropic) error = %v", err)
+	}
+	if target2.Format != "anthropic" {
+		t.Fatalf("Select(anthropic) Format = %q, want anthropic", target2.Format)
+	}
+	if target2.URL != "https://dual.example.com/anthropic" {
+		t.Fatalf("Select(anthropic) URL = %q, want https://dual.example.com/anthropic", target2.URL)
 	}
 }

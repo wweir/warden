@@ -4,11 +4,47 @@ addr = ":9832"
 # Empty or omitted admin_password disables the admin UI.
 # admin_password = "your-secret-password"
 
+# OpenAI-compatible provider (default format="openai")
 [provider.openai]
-family = "openai"
 url = "https://api.openai.com/v1"
 api_key = "${OPENAI_API_KEY}"
 timeout = "120s"
+
+# Anthropic-native provider
+[provider.anthropic]
+url = "https://api.anthropic.com/v1"
+format = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+timeout = "120s"
+
+# OpenAI-format provider with bridge: also serves anthropic route
+[provider.deepseek]
+url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+timeout = "120s"
+anthropic_to_chat = true
+
+# Multi-endpoint provider: same credentials, different URLs
+[provider.unified]
+api_key = "${API_KEY}"
+timeout = "120s"
+models = ["model-a", "model-b"]
+
+[provider.unified.endpoint.openai]
+url = "https://gateway.corp.com/openai/v1"
+format = "openai"
+models = ["model-a"]
+
+[provider.unified.endpoint.anthropic]
+url = "https://gateway.corp.com/anthropic/v1"
+format = "anthropic"
+models = ["model-b"]
+
+# Ollama / chat-only local provider
+[provider.ollama]
+url = "http://127.0.0.1:11434/v1"
+timeout = "120s"
+protocols = ["chat"]
 
 [route."/openai"]
 protocol = "chat"
@@ -17,3 +53,11 @@ protocol = "chat"
 [[route."/openai".exact_models."gpt-4o".upstreams]]
 provider = "openai"
 model = "gpt-4o"
+
+[route."/anthropic"]
+protocol = "anthropic"
+
+[route."/anthropic".exact_models."claude-3-5-sonnet"]
+[[route."/anthropic".exact_models."claude-3-5-sonnet".upstreams]]
+provider = "anthropic"
+model = "claude-3-5-sonnet-20241022"

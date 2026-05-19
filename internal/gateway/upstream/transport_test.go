@@ -36,7 +36,7 @@ func TestSendRequestForwardsSanitizedClientHeaders(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -95,7 +95,7 @@ func TestSendRequestSanitizesCLIProxyFeatureHeaders(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		Backend:  config.ProviderBackendCLIProxy,
 		APIKey:   config.SecretString("provider-token"),
 	}
@@ -151,7 +151,7 @@ func TestSendRequestWithoutClientRequestContext(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -171,7 +171,7 @@ func TestSendRequestSanitizesProviderAuthErrors(t *testing.T) {
 	provCfg := &config.ProviderConfig{
 		Name:          "secret-provider",
 		URL:           "https://upstream.example.test",
-		Protocol:      "openai",
+		Format:      "openai",
 		APIKeyCommand: "exit 7",
 	}
 
@@ -211,7 +211,7 @@ func TestSendRequestDoesNotReplayPostOnTransportError(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -273,7 +273,7 @@ func TestSendStreamingRequestRejectsHTTP200JSONErrorBody(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -305,7 +305,7 @@ func TestSendStreamingRequestRejectsHTTP200HTMLBody(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -337,7 +337,7 @@ func TestSendStreamingRequestAcceptsSSEBodyWithoutContentType(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -372,7 +372,7 @@ func TestSendStreamingRequestLatencyWaitsForFirstToken(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 		Timeout:  "2s",
 	}
@@ -408,7 +408,7 @@ func TestSendStreamingRequestTimesOutWaitingForFirstTokenAfterHeaders(t *testing
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 		Timeout:  "30ms",
 	}
@@ -441,7 +441,7 @@ func TestSendStreamingRequestDecompressesGzipWithoutHeader(t *testing.T) {
 
 	provCfg := &config.ProviderConfig{
 		URL:      server.URL,
-		Protocol: "openai",
+		Format: "openai",
 		APIKey:   config.SecretString("provider-token"),
 	}
 
@@ -457,5 +457,39 @@ func TestSendStreamingRequestDecompressesGzipWithoutHeader(t *testing.T) {
 	}
 	if string(body) != "data: hello\n\n" {
 		t.Fatalf("body = %q, want decompressed SSE", string(body))
+	}
+}
+
+func TestJoinBaseURLPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		base string
+		path string
+		want string
+	}{
+		{name: "root path", base: "https://api.example.com", path: "/v1/chat/completions", want: "https://api.example.com/v1/chat/completions"},
+		{name: "base path", base: "https://api.example.com/openai", path: "/v1/chat/completions", want: "https://api.example.com/openai/v1/chat/completions"},
+		{name: "absolute path", base: "https://api.example.com", path: "https://alt.example.com/v1/chat/completions", want: "https://alt.example.com/v1/chat/completions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := JoinBaseURLPath(tt.base, tt.path); got != tt.want {
+				t.Fatalf("JoinBaseURLPath(%q, %q) = %q, want %q", tt.base, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBaseURLHasPathSuffix(t *testing.T) {
+	t.Parallel()
+
+	if !baseURLHasPathSuffix("https://api.example.com/v1", "/v1") {
+		t.Fatal("expected /v1 suffix to be detected")
+	}
+	if baseURLHasPathSuffix("https://api.example.com", "/v1") {
+		t.Fatal("did not expect /v1 suffix on root URL")
 	}
 }

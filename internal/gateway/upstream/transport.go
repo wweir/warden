@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -182,6 +184,36 @@ func DoWithFirstTokenTimeout(client *http.Client, req *http.Request, timeout tim
 	return resp, deadline, nil
 }
 
+// JoinBaseURLPath joins a base URL with a request path.
+// If path is already absolute, it is returned unchanged.
+func JoinBaseURLPath(baseURL, reqPath string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	reqPath = strings.TrimSpace(reqPath)
+	if reqPath == "" {
+		return baseURL
+	}
+	if parsed, err := url.Parse(reqPath); err == nil && parsed.IsAbs() {
+		return reqPath
+	}
+	if baseURL == "" {
+		return reqPath
+	}
+
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		if strings.HasPrefix(reqPath, "/") {
+			return strings.TrimRight(baseURL, "/") + reqPath
+		}
+		return strings.TrimRight(baseURL, "/") + "/" + reqPath
+	}
+	if strings.HasPrefix(reqPath, "/") {
+		parsedBase.Path = path.Join(parsedBase.Path, reqPath)
+	} else {
+		parsedBase.Path = path.Join(parsedBase.Path, "/"+reqPath)
+	}
+	return parsedBase.String()
+}
+
 func waitForFirstToken(reader io.ReadCloser, deadline *FirstTokenDeadline, timeout time.Duration) (io.ReadCloser, time.Duration, error) {
 	buffered := bufio.NewReader(reader)
 	if _, err := buffered.Peek(1); err != nil {
@@ -281,7 +313,12 @@ func SendStreamingRequest(ctx context.Context, clientReq *http.Request, provCfg 
 // a sanitized *sel.UpstreamError so callers can surface a 401 without leaking
 // internal details.
 func buildUpstreamRequest(ctx context.Context, clientReq *http.Request, provCfg *config.ProviderConfig, endpoint string, body []byte) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, provCfg.URL+endpoint, bytes.NewReader(body))
+	targetURL := JoinBaseURLPath(provCfg.URL, endpoint)
+	return buildUpstreamRequestAtURL(ctx, clientReq, provCfg, targetURL, body)
+}
+
+func buildUpstreamRequestAtURL(ctx context.Context, clientReq *http.Request, provCfg *config.ProviderConfig, targetURL string, body []byte) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -294,9 +331,10 @@ func buildUpstreamRequest(ctx context.Context, clientReq *http.Request, provCfg 
 		// Keep net/http default gzip handling instead of forwarding client compression preferences.
 		httpReq.Header.Del("Accept-Encoding")
 	}
-	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg); err != nil {
+	if err := providerauth.SetHeaders(ctx, httpReq.Header, provCfg, targetURL); err != nil {
 		return nil, &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
 	}
+	slog.Debug("build upstream request", "url", targetURL)
 	return httpReq, nil
 }
 
@@ -306,12 +344,31 @@ func buildUpstreamRequest(ctx context.Context, clientReq *http.Request, provCfg 
 func sendUpstream(ctx context.Context, clientReq *http.Request, provCfg *config.ProviderConfig, endpoint string, body []byte) (*http.Response, *FirstTokenDeadline, error) {
 	timeout := provCfg.FirstTokenTimeout(0)
 	client := provCfg.HTTPClient(0)
+	resolvedURL := JoinBaseURLPath(provCfg.URL, endpoint)
 
-	httpReq, err := buildUpstreamRequest(ctx, clientReq, provCfg, endpoint, body)
+	httpReq, err := buildUpstreamRequestAtURL(ctx, clientReq, provCfg, resolvedURL, body)
 	if err != nil {
 		return nil, nil, err
 	}
 	resp, deadline, err := DoWithFirstTokenTimeout(client, httpReq, timeout)
+	if err == nil && resp.StatusCode == http.StatusNotFound && !baseURLHasPathSuffix(provCfg.URL, "/v1") {
+		// Some API gateways expose endpoints under /v1 even when the base URL
+		// omits it (e.g. Anthropic-compatible providers configured without /v1).
+		// Retry once with /v1 prefix before giving up.
+		resp.Body.Close()
+		altReq, altErr := buildUpstreamRequestAtURL(ctx, clientReq, provCfg, prependPathPrefix(resolvedURL, "/v1"), body)
+		if altErr == nil {
+			altResp, altDeadline, altErr := DoWithFirstTokenTimeout(client, altReq, timeout)
+			if altErr == nil {
+				return altResp, altDeadline, nil
+			}
+			var altUpErr *sel.UpstreamError
+			if errors.As(altErr, &altUpErr) {
+				return nil, altDeadline, altErr
+			}
+			return nil, altDeadline, fmt.Errorf("send request: %w", altErr)
+		}
+	}
 	if err == nil {
 		return resp, deadline, nil
 	}
@@ -320,6 +377,26 @@ func sendUpstream(ctx context.Context, clientReq *http.Request, provCfg *config.
 		return nil, deadline, err
 	}
 	return nil, deadline, fmt.Errorf("send request: %w", err)
+}
+
+func prependPathPrefix(targetURL, prefix string) string {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		if strings.HasPrefix(targetURL, "/") {
+			return strings.TrimRight(prefix, "/") + targetURL
+		}
+		return strings.TrimRight(prefix, "/") + "/" + targetURL
+	}
+	parsed.Path = strings.TrimRight(prefix, "/") + parsed.Path
+	return parsed.String()
+}
+
+func baseURLHasPathSuffix(baseURL, suffix string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return strings.HasSuffix(strings.TrimRight(baseURL, "/"), suffix)
+	}
+	return strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), suffix)
 }
 
 func readHTTPResponseBodyWithDeadline(resp *http.Response, deadline *FirstTokenDeadline, timeout time.Duration, context string) ([]byte, time.Duration, error) {

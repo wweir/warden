@@ -40,7 +40,7 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 
 	for {
 		current := manager.Current()
-		if current.Provider.Protocol == config.ProviderProtocolOpenAI && current.Provider.AnthropicToChat {
+		if current.Target != nil && current.Target.Format == string(config.ProviderFormatOpenAI) && config.FormatHasBridge(current.Provider, config.ProviderFormatOpenAI, "anthropic_to_chat") {
 			g.handleAnthropicMessagesViaChat(w, r, route, prepareRawBody(req.RawBody, current.Target), req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
@@ -49,7 +49,7 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 			endpoint:        "messages",
 			streamWarn:      "Anthropic stream terminated early",
 			canHandle: func(provider *config.ProviderConfig) bool {
-				return !(provider.Protocol == config.ProviderProtocolOpenAI && provider.AnthropicToChat)
+				return !(config.FormatHasBridge(provider, config.ProviderFormatOpenAI, "anthropic_to_chat"))
 			},
 			upstreamPath: func(providerProtocol string) string {
 				return upstreampkg.ProtocolEndpoint(providerProtocol, false)

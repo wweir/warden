@@ -16,11 +16,11 @@ func TestSetHeadersUsesAPIKeyCommandForOpenAI(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-openai",
-		Protocol:      config.ProviderProtocolOpenAI,
+		Format:      config.ProviderFormatOpenAI,
 		APIKeyCommand: providerAuthHelperCommand("token"),
 	}
 
-	if err := SetHeaders(context.Background(), header, prov); err != nil {
+	if err := SetHeaders(context.Background(), header, prov, ""); err != nil {
 		t.Fatalf("SetHeaders() error = %v", err)
 	}
 	if got := header.Get("Authorization"); got != "Bearer cmd-token" {
@@ -32,11 +32,11 @@ func TestSetHeadersUsesAPIKeyCommandForAnthropic(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-anthropic",
-		Protocol:      config.ProviderProtocolAnthropic,
+		Format:      config.ProviderFormatAnthropic,
 		APIKeyCommand: providerAuthHelperCommand("token"),
 	}
 
-	if err := SetHeaders(context.Background(), header, prov); err != nil {
+	if err := SetHeaders(context.Background(), header, prov, ""); err != nil {
 		t.Fatalf("SetHeaders() error = %v", err)
 	}
 	if got := header.Get("x-api-key"); got != "cmd-token" {
@@ -54,16 +54,61 @@ func TestSetHeadersReturnsAPIKeyCommandError(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-fail",
-		Protocol:      config.ProviderProtocolOpenAI,
+		Format:      config.ProviderFormatOpenAI,
 		APIKeyCommand: providerAuthHelperCommand("fail"),
 	}
 
-	err := SetHeaders(context.Background(), header, prov)
+	err := SetHeaders(context.Background(), header, prov, "")
 	if err == nil || !strings.Contains(err.Error(), "resolve provider api key") {
 		t.Fatalf("expected provider api key error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("error leaked command output: %v", err)
+	}
+}
+
+func TestSetHeadersUsesEndpointHeadersForMatchingURL(t *testing.T) {
+	header := http.Header{}
+	prov := &config.ProviderConfig{
+		Name:  "multi",
+		URL:   "https://gateway.example.com",
+		Format: config.ProviderFormatOpenAI,
+		APIKey: config.SecretString("shared-token"),
+		Headers: map[string]string{
+			"X-Common": "provider",
+		},
+		Endpoints: map[string]*config.ProviderEndpointConfig{
+			"openai": {
+				URL:    "https://gateway.example.com/openai/v1",
+				Format: config.ProviderFormatOpenAI,
+				Headers: map[string]string{
+					"X-Mode": "openai",
+				},
+			},
+			"anthropic": {
+				URL:    "https://gateway.example.com/anthropic/v1",
+				Format: config.ProviderFormatAnthropic,
+				Headers: map[string]string{
+					"X-Mode": "anthropic",
+				},
+			},
+		},
+	}
+
+	if err := SetHeaders(context.Background(), header, prov, "https://gateway.example.com/anthropic/v1/messages?x=1"); err != nil {
+		t.Fatalf("SetHeaders() error = %v", err)
+	}
+	if got := header.Get("x-api-key"); got != "shared-token" {
+		t.Fatalf("x-api-key = %q, want shared-token", got)
+	}
+	if got := header.Get("X-Mode"); got != "anthropic" {
+		t.Fatalf("X-Mode = %q, want anthropic", got)
+	}
+	if got := header.Get("X-Common"); got != "provider" {
+		t.Fatalf("X-Common = %q, want provider", got)
+	}
+	if got := header.Get("Authorization"); got != "Bearer shared-token" {
+		t.Fatalf("Authorization = %q, want Bearer shared-token", got)
 	}
 }
 

@@ -66,7 +66,7 @@ func relayEventStream(src io.Reader, dst http.ResponseWriter, complete func(prot
 			if _, writeErr := dst.Write(frame); writeErr != nil {
 				return raw.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 			}
-			dst.(http.Flusher).Flush()
+			safeFlush(dst)
 		}
 
 		if err != nil {
@@ -136,7 +136,7 @@ func StreamChatAsAnthropic(src io.Reader, dst http.ResponseWriter) ([]byte, []by
 				if _, writeErr := dst.Write(converted); writeErr != nil {
 					return rawChat.Bytes(), rawAnthropic.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 				}
-				dst.(http.Flusher).Flush()
+				safeFlush(dst)
 			}
 		}
 
@@ -160,7 +160,7 @@ func StreamChatAsAnthropic(src io.Reader, dst http.ResponseWriter) ([]byte, []by
 	if _, writeErr := dst.Write(final); writeErr != nil {
 		return rawChat.Bytes(), rawAnthropic.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 	}
-	dst.(http.Flusher).Flush()
+	safeFlush(dst)
 	return rawChat.Bytes(), rawAnthropic.Bytes(), nil
 }
 
@@ -181,7 +181,10 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 					streamComplete = true
 					continue
 				}
-				converted := state.ConvertEvent(evt)
+				converted, convErr := state.ConvertEvent(evt)
+				if convErr != nil {
+					return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: convErr}
+				}
 				if len(converted) == 0 {
 					continue
 				}
@@ -189,7 +192,7 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 				if _, writeErr := dst.Write(converted); writeErr != nil {
 					return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 				}
-				dst.(http.Flusher).Flush()
+				safeFlush(dst)
 			}
 		}
 
@@ -200,7 +203,7 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 				if _, writeErr := dst.Write(completed); writeErr != nil {
 					return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 				}
-				dst.(http.Flusher).Flush()
+				safeFlush(dst)
 				return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: err}
 			}
 			break
@@ -212,7 +215,7 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 	if _, writeErr := dst.Write(completed); writeErr != nil {
 		return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
 	}
-	dst.(http.Flusher).Flush()
+	safeFlush(dst)
 	if !streamComplete {
 		return rawChat.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: io.ErrUnexpectedEOF}
 	}
@@ -233,6 +236,12 @@ func StreamAnthropicAsResponses(src io.Reader, dst http.ResponseWriter, model st
 	chatSSE := anthproto.ConvertStreamToOpenAI(rawAnthropic)
 	_, rawResp, err := StreamChatAsResponses(bytes.NewReader(chatSSE), dst, model)
 	return rawAnthropic, rawResp, err
+}
+
+func safeFlush(dst http.ResponseWriter) {
+	if f, ok := dst.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func ReadSSEFrame(r *bufio.Reader) ([]byte, error) {

@@ -42,6 +42,10 @@ type providerState struct {
 	lastProtocolProbe   *ProtocolProbe
 	modelProtocolProbes map[string]map[string]ModelProtocolProbe
 
+	// Mode-aware suppression: access mode -> state
+	modeConsecutiveFailures map[string]int
+	modeSuppressUntil       map[string]time.Time
+
 	outcomes     []outcome
 	outcomeStart int
 
@@ -79,6 +83,8 @@ type Selector struct {
 type RouteTarget struct {
 	Key            string
 	ProviderName   string
+	URL            string
+	Format         string // "openai", "anthropic" or "copilot"
 	UpstreamModel  string
 	PublicModel    string
 	RequestedModel string
@@ -177,11 +183,20 @@ func (s *providerState) recentSuppressReasons() []SuppressReason {
 func (s *providerState) buildStatus(name string) ProviderStatus {
 	now := time.Now()
 	total, success, failure, avgLatency := s.windowStats()
+
+	// Aggregate suppression across provider-level and mode-level
+	effectiveSuppressUntil := s.suppressUntil
+	for _, t := range s.modeSuppressUntil {
+		if !t.IsZero() && (effectiveSuppressUntil.IsZero() || t.After(effectiveSuppressUntil)) {
+			effectiveSuppressUntil = t
+		}
+	}
+
 	ps := ProviderStatus{
 		Name:                name,
 		ConsecutiveFailures: s.consecutiveFailures,
-		SuppressUntil:       s.suppressUntil,
-		Suppressed:          now.Before(s.suppressUntil),
+		SuppressUntil:       effectiveSuppressUntil,
+		Suppressed:          now.Before(effectiveSuppressUntil),
 		ManualSuppressed:    s.manualSuppress,
 		SuppressReasons:     s.recentSuppressReasons(),
 		TotalRequests:       int64(total),

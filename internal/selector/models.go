@@ -269,18 +269,38 @@ type modelsResponse struct {
 }
 
 // FetchModels queries GET <base_url>/models to discover available model IDs.
+// If the primary endpoint returns 404, it falls back to <base_url>/v1/models
+// (OpenAI-compatible) so anthropic-format providers that only expose OpenAI
+// model discovery still work.
 func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[string]bool, []json.RawMessage, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	// Resolve the effective URL for model discovery.
+	// For multi-endpoint providers, use the first endpoint that has a URL.
+	baseURL := provCfg.URL
+	if baseURL == "" {
+		for _, ep := range config.ProviderEndpoints(provCfg) {
+			if ep.URL != "" {
+				baseURL = ep.URL
+				break
+			}
+		}
+	}
+	if baseURL == "" {
+		return nil, nil, fmt.Errorf("no URL available for model discovery")
+	}
+
 	client := provCfg.HTTPClient(30 * time.Second)
 	models := make(map[string]bool)
 	var rawModels []json.RawMessage
 	afterID := ""
 	seenCursors := map[string]bool{}
+	fallbackTried := false
 
 	for {
-		url := provCfg.URL + modelsEndpointPath
+		url := baseURL + modelsEndpointPath
 		if afterID != "" {
 			url += "?after_id=" + afterID
 		}
@@ -289,7 +309,7 @@ func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("create models request: %w", err)
 		}
-		if err := providerauth.SetHeaders(ctx, req.Header, provCfg); err != nil {
+		if err := providerauth.SetHeaders(ctx, req.Header, provCfg, url); err != nil {
 			return nil, nil, err
 		}
 
@@ -303,6 +323,51 @@ func FetchModels(ctx context.Context, provCfg *config.ProviderConfig) (map[strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("read models response: %w", err)
 		}
+
+		if resp.StatusCode == http.StatusNotFound && !fallbackTried {
+			// Fallback to OpenAI-compatible /v1/models endpoint.
+			fallbackTried = true
+			url = baseURL + "/v1/models"
+			req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return nil, nil, fmt.Errorf("create models request: %w", err)
+			}
+			if err := providerauth.SetHeaders(ctx, req.Header, provCfg, url); err != nil {
+				return nil, nil, err
+			}
+			resp, err = client.Do(req)
+			if err != nil {
+				return nil, nil, fmt.Errorf("fetch models: %w", err)
+			}
+			body, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				return nil, nil, fmt.Errorf("read models response: %w", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return nil, nil, fmt.Errorf("fetch models: %s", formatModelsFetchHTTPError(resp.StatusCode, body))
+			}
+			ct := resp.Header.Get("Content-Type")
+			if !strings.HasPrefix(ct, "application/json") && len(body) > 0 && body[0] != '{' && body[0] != '[' {
+				return nil, nil, fmt.Errorf("unexpected response Content-Type %q, not JSON", ct)
+			}
+			var result modelsResponse
+			if err := json.Unmarshal(body, &result); err != nil {
+				return nil, nil, fmt.Errorf("parse models response: %w", err)
+			}
+			for _, raw := range result.Data {
+				var entry struct {
+					ID string `json:"id"`
+				}
+				if err := json.Unmarshal(raw, &entry); err == nil {
+					models[entry.ID] = true
+				}
+				rawModels = append(rawModels, raw)
+			}
+			// OpenAI model lists are not paginated with after_id; stop here.
+			break
+		}
+
 		if resp.StatusCode != http.StatusOK {
 			return nil, nil, fmt.Errorf("fetch models: %s", formatModelsFetchHTTPError(resp.StatusCode, body))
 		}

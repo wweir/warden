@@ -218,6 +218,50 @@ func TestMarshalRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestMarshalRequest_ToolWithoutParameters(t *testing.T) {
+	req := openai.ChatCompletionRequest{
+		Model: "claude-3-opus-20240229",
+		Messages: []openai.Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Tools: []openai.Tool{
+			{
+				Type: "function",
+				Function: openai.Function{
+					Name:        "apply_patch",
+					Description: "Apply a patch",
+					// Parameters is nil — Anthropic still requires input_schema.
+				},
+			},
+		},
+	}
+
+	body, err := MarshalRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]json.RawMessage
+	json.Unmarshal(body, &result)
+
+	var tools []map[string]any
+	json.Unmarshal(result["tools"], &tools)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if tools[0]["name"] != "apply_patch" {
+		t.Errorf("expected name=apply_patch, got %v", tools[0]["name"])
+	}
+	// input_schema must be present even when Parameters is nil
+	if tools[0]["input_schema"] == nil {
+		t.Error("expected input_schema to be set for parameter-less tool")
+	}
+	schema, ok := tools[0]["input_schema"].(map[string]any)
+	if !ok || schema["type"] != "object" {
+		t.Errorf("expected input_schema.type=object, got %v", tools[0]["input_schema"])
+	}
+}
+
 func TestUnmarshalResponse_TextOnly(t *testing.T) {
 	anthJSON := `{
 		"id": "msg_123",

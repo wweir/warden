@@ -110,15 +110,41 @@ func convertResponsesRequestExtras(messages []Message, extra map[string]json.Raw
 				return nil, nil, fmt.Errorf("convert tool_choice: %w", err)
 			}
 			chatExtra[key] = toolChoice
-		default:
-			if _, ok := responsesToChatAllowedExtraFields[key]; !ok {
-				return nil, nil, fmt.Errorf("responses field %q is not supported in responses_to_chat mode", key)
+		case "reasoning":
+			effort, err := convertResponsesReasoning(raw)
+			if err != nil {
+				return nil, nil, fmt.Errorf("convert reasoning: %w", err)
 			}
-			chatExtra[key] = raw
+			if effort != "" {
+				chatExtra["reasoning_effort"] = json.RawMessage(strconv.Quote(effort))
+			}
+		case "include", "truncation":
+			// ignored: Responses-only features not available in Chat Completions
+		default:
+			if _, ok := responsesToChatAllowedExtraFields[key]; ok {
+				chatExtra[key] = raw
+			}
+			// unknown fields are silently ignored to avoid breaking clients that send
+			// Responses-only features (e.g. prompt_cache_key, text, include)
 		}
 	}
 
 	return messages, chatExtra, nil
+}
+
+func convertResponsesReasoning(raw json.RawMessage) (string, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	var obj struct {
+		Effort string `json:"effort"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", fmt.Errorf("unmarshal reasoning: %w", err)
+	}
+	return obj.Effort, nil
 }
 
 func decodePositiveInt(raw json.RawMessage) (int64, error) {
@@ -326,9 +352,12 @@ func convertResponsesTools(rawTools []json.RawMessage) ([]Tool, map[string]struc
 	tools := make([]Tool, 0, len(rawTools))
 	toolNames := make(map[string]struct{}, len(rawTools))
 	for _, rawTool := range rawTools {
-		tool, err := convertResponsesToolToChatTool(rawTool)
+		tool, ok, err := convertResponsesToolToChatTool(rawTool)
 		if err != nil {
 			return nil, nil, err
+		}
+		if !ok {
+			continue
 		}
 		tools = append(tools, tool)
 		if name := strings.TrimSpace(tool.Function.Name); name != "" {
@@ -338,26 +367,26 @@ func convertResponsesTools(rawTools []json.RawMessage) ([]Tool, map[string]struc
 	return tools, toolNames, nil
 }
 
-func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
+func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, bool, error) {
 	var typeCheck struct {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &typeCheck); err != nil {
-		return Tool{}, fmt.Errorf("unmarshal tool type: %w", err)
+		return Tool{}, false, fmt.Errorf("unmarshal tool type: %w", err)
 	}
-	if typeCheck.Type != "function" {
-		return Tool{}, fmt.Errorf("unsupported tool type %q", typeCheck.Type)
+	if typeCheck.Type != "function" && typeCheck.Type != "custom" {
+		return Tool{}, false, nil
 	}
 
 	var flatTool ResponsesFunctionTool
 	if err := json.Unmarshal(raw, &flatTool); err != nil {
-		return Tool{}, fmt.Errorf("unmarshal function tool: %w", err)
+		return Tool{}, false, fmt.Errorf("unmarshal function tool: %w", err)
 	}
 
 	var params any
 	if len(flatTool.Parameters) > 0 {
 		if err := json.Unmarshal(flatTool.Parameters, &params); err != nil {
-			return Tool{}, fmt.Errorf("unmarshal tool parameters: %w", err)
+			return Tool{}, false, fmt.Errorf("unmarshal tool parameters: %w", err)
 		}
 	}
 
@@ -369,7 +398,7 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, error) {
 			Parameters:  params,
 			Strict:      flatTool.Strict,
 		},
-	}, nil
+	}, true, nil
 }
 
 func convertResponsesMaxOutputTokens(raw json.RawMessage, extra map[string]json.RawMessage) (json.RawMessage, bool, error) {

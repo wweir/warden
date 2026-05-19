@@ -216,19 +216,19 @@ func NewChatResponsesStreamState() *ChatResponsesStreamState {
 	}
 }
 
-func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
+func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, error) {
 	if evt.Data == "" || evt.Data == "[DONE]" {
-		return nil
+		return nil, nil
 	}
 
 	var chunk map[string]any
 	if err := json.Unmarshal([]byte(evt.Data), &chunk); err != nil {
-		return nil
+		return nil, fmt.Errorf("unmarshal chat stream chunk: %w", err)
 	}
 
 	choices, _ := asArray(chunk["choices"])
 	if len(choices) == 0 {
-		return nil
+		return nil, nil
 	}
 	if id, ok := chunk["id"].(string); ok && id != "" {
 		s.responseID = id
@@ -238,11 +238,11 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 	}
 	choice, _ := choices[0].(map[string]any)
 	if choice == nil {
-		return nil
+		return nil, nil
 	}
 	delta, _ := choice["delta"].(map[string]any)
 	if delta == nil {
-		return nil
+		return nil, nil
 	}
 
 	var responseChunks []string
@@ -327,7 +327,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) []byte {
 		responseChunks = append(responseChunks, s.finalizeOutputEvents()...)
 	}
 
-	return []byte(strings.Join(responseChunks, ""))
+	return []byte(strings.Join(responseChunks, "")), nil
 }
 
 func (s *ChatResponsesStreamState) ensureLifecycleEvents() []string {
@@ -478,7 +478,7 @@ func BuildChatResponsesCompletedEvent(rawSSE []byte, model string, streamComplet
 // ChatSSEToResponsesSSE converts Chat Completions SSE chunks to Responses API SSE events.
 // If the stream is incomplete (missing [DONE] marker), the response.completed event will
 // have status "incomplete" with an error message.
-func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
+func ChatSSEToResponsesSSE(rawSSE []byte, model string) ([]byte, error) {
 	events := protocol.ParseEvents(rawSSE)
 	var responseChunks []string
 	state := NewChatResponsesStreamState()
@@ -489,14 +489,18 @@ func ChatSSEToResponsesSSE(rawSSE []byte, model string) []byte {
 			streamComplete = true
 			continue
 		}
-		if chunk := state.ConvertEvent(evt); len(chunk) > 0 {
+		chunk, err := state.ConvertEvent(evt)
+		if err != nil {
+			return nil, err
+		}
+		if len(chunk) > 0 {
 			responseChunks = append(responseChunks, string(chunk))
 		}
 	}
 
 	responseChunks = append(responseChunks, string(BuildChatResponsesCompletedEvent(rawSSE, model, streamComplete)))
 
-	return []byte(strings.Join(responseChunks, ""))
+	return []byte(strings.Join(responseChunks, "")), nil
 }
 
 func formatResponsesEvent(eventType string, payload any) string {

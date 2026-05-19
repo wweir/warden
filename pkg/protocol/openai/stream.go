@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -362,12 +363,12 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 		if err := json.Unmarshal([]byte(evt.Data), &chunk); err != nil {
 			continue
 		}
-		base = chunk
 
 		choices, _ := asArray(chunk["choices"])
 		if len(choices) == 0 {
 			continue
 		}
+		base = chunk
 		choice, _ := choices[0].(map[string]any)
 		if choice == nil {
 			continue
@@ -438,11 +439,15 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 		msg["content"] = strings.Join(contentParts, "")
 	}
 	if len(toolCalls) > 0 {
+		indexes := make([]int, 0, len(toolCalls))
+		for idx := range toolCalls {
+			indexes = append(indexes, idx)
+		}
+		slices.Sort(indexes)
+
 		sorted := make([]any, 0, len(toolCalls))
-		for i := range len(toolCalls) {
-			if tc, ok := toolCalls[i]; ok {
-				sorted = append(sorted, tc)
-			}
+		for _, idx := range indexes {
+			sorted = append(sorted, toolCalls[idx])
 		}
 		msg["tool_calls"] = sorted
 	}

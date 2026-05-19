@@ -52,19 +52,23 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	// providerNeedsChatBridge reports whether the current provider must serve
 	// Responses requests through the chat bridge instead of native /responses.
-	providerNeedsChatBridge := func(provider *config.ProviderConfig) bool {
-		return provider.ResponsesToChat && provider.Protocol == config.ProviderProtocolOpenAI
+	providerNeedsChatBridge := func(provider *config.ProviderConfig, accessMode string) bool {
+		return accessMode == string(config.ProviderFormatOpenAI) && config.FormatHasBridge(provider, config.ProviderFormatOpenAI, "responses_to_chat")
 	}
 	// providerNeedsMessagesBridge reports whether the current provider must
 	// serve Responses requests by translating through upstream Anthropic
 	// /messages instead of native /responses. Stateful requests cannot use
 	// this bridge because Anthropic does not own conversation state.
-	providerNeedsMessagesBridge := func(provider *config.ProviderConfig) bool {
-		return provider.AnthropicToResponses && provider.Protocol == config.ProviderProtocolAnthropic
+	providerNeedsMessagesBridge := func(provider *config.ProviderConfig, accessMode string) bool {
+		return accessMode == string(config.ProviderFormatAnthropic) && config.FormatHasBridge(provider, config.ProviderFormatAnthropic, "anthropic_to_responses")
 	}
 
 	if isStateful {
-		if providerNeedsMessagesBridge(manager.Current().Provider) {
+		currentAccessMode := ""
+		if currentTarget := manager.Current().Target; currentTarget != nil {
+			currentAccessMode = currentTarget.Format
+		}
+		if providerNeedsMessagesBridge(manager.Current().Provider, currentAccessMode) {
 			http.Error(w, "anthropic_to_responses provider does not support stateful responses requests", http.StatusBadRequest)
 			return
 		}
@@ -77,11 +81,15 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 
 	for {
 		current := manager.Current().Provider
-		if providerNeedsChatBridge(current) {
+		currentAccessMode := ""
+		if currentTarget := manager.Current().Target; currentTarget != nil {
+			currentAccessMode = currentTarget.Format
+		}
+		if providerNeedsChatBridge(current, currentAccessMode) {
 			g.handleResponsesViaChat(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
-		if providerNeedsMessagesBridge(current) {
+		if providerNeedsMessagesBridge(current, currentAccessMode) {
 			g.handleResponsesViaMessages(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
 			return
 		}
@@ -90,7 +98,7 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			serviceProtocol: serviceProtocol,
 			endpoint:        "responses",
 			canHandle: func(provider *config.ProviderConfig) bool {
-				return !providerNeedsChatBridge(provider) && !providerNeedsMessagesBridge(provider)
+				return !providerNeedsChatBridge(provider, currentAccessMode) && !providerNeedsMessagesBridge(provider, currentAccessMode)
 			},
 			upstreamPath: func(providerProtocol string) string {
 				return upstreampkg.ProtocolEndpoint(providerProtocol, true)

@@ -155,7 +155,7 @@ func (s *ChatToMessagesStreamState) ConvertEvent(evt protocol.Event) ([]byte, er
 
 	var chunk chatStreamChunk
 	if err := json.Unmarshal([]byte(evt.Data), &chunk); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("unmarshal chat stream chunk: %w", err)
 	}
 	if len(chunk.Choices) == 0 {
 		return nil, nil
@@ -202,11 +202,15 @@ func (s *ChatToMessagesStreamState) ConvertEvent(evt protocol.Event) ([]byte, er
 		})
 	}
 
-	out = append(out, s.convertChunk(chunk)...)
+	chunkEvents, err := s.convertChunk(chunk)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, chunkEvents...)
 	return protocol.ReplayEvents(out), nil
 }
 
-func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) []protocol.Event {
+func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) ([]protocol.Event, error) {
 	choice := chunk.Choices[0]
 	var out []protocol.Event
 
@@ -215,6 +219,10 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) []protoc
 			s.textStarted = true
 			if s.toolOffset < 0 {
 				s.toolOffset = 1
+			} else if s.toolOffset == 0 {
+				// tool calls already appeared before text content,
+				// which violates the expected OpenAI streaming order.
+				return nil, fmt.Errorf("text content appeared after tool calls: unsupported streaming order")
 			}
 			out = append(out, protocol.Event{
 				EventType: "content_block_start",
@@ -243,7 +251,7 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) []protoc
 		})
 	}
 
-	if s.toolOffset < 0 {
+	if len(choice.Delta.ToolCalls) > 0 && s.toolOffset < 0 {
 		s.toolOffset = 0
 	}
 	for _, toolCall := range choice.Delta.ToolCalls {
@@ -281,7 +289,7 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) []protoc
 		}
 	}
 
-	return out
+	return out, nil
 }
 
 func (s *ChatToMessagesStreamState) Finalize() ([]byte, error) {

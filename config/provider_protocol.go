@@ -3,17 +3,17 @@ package config
 import "strings"
 
 const (
-	ProviderProtocolOpenAI    = "openai"
-	ProviderProtocolAnthropic = "anthropic"
-	ProviderProtocolCopilot   = "copilot"
+	ProviderFormatOpenAI    = "openai"
+	ProviderFormatAnthropic = "anthropic"
+	ProviderFormatCopilot   = "copilot"
 )
 
 const (
 	ProviderBackendCLIProxy = "cliproxy"
 )
 
-func normalizeProviderProtocol(protocol string) string {
-	return strings.ToLower(strings.TrimSpace(protocol))
+func normalizeProviderFormat(format string) string {
+	return strings.ToLower(strings.TrimSpace(format))
 }
 
 func normalizeProviderBackend(backend string) string {
@@ -22,8 +22,4 @@ func normalizeProviderBackend(backend string) string {
 
 func normalizeRouteProtocol(protocol string) string {
 	return strings.ToLower(strings.TrimSpace(protocol))
-}
-
-func normalizeProviderAdapterProtocol(protocol string) string {
-	return normalizeProviderProtocol(protocol)
 }

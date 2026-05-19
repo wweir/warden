@@ -55,6 +55,10 @@ func MarshalRequest(req openai.ChatCompletionRequest) ([]byte, error) {
 			}
 			if tool.Function.Parameters != nil {
 				t["input_schema"] = tool.Function.Parameters
+			} else {
+				// Anthropic requires every tool to have an input_schema;
+				// provide a minimal empty object schema for parameter-less tools.
+				t["input_schema"] = map[string]any{"type": "object"}
 			}
 			anthTools = append(anthTools, t)
 		}

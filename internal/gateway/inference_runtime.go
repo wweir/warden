@@ -27,6 +27,7 @@ type inferenceSession struct {
 	metricLabels    telemetrypkg.Labels
 	provider        *config.ProviderConfig
 	target          *sel.RouteTarget
+	providerProtocol string // effective protocol derived from target.Format or provider.Protocol
 }
 
 func (g *Gateway) newInferenceManager(
@@ -83,6 +84,11 @@ func (s *inferenceSession) refreshCurrent() {
 	current := s.manager.Current()
 	s.provider = current.Provider
 	s.target = current.Target
+	if s.target != nil && s.target.Format != "" {
+		s.providerProtocol = s.target.Format
+	} else {
+		s.providerProtocol = s.provider.Format
+	}
 	s.metricLabels = applyInferenceMetricHeaders(
 		s.writer,
 		s.request,

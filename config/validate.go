@@ -228,26 +228,7 @@ func (c *ConfigStruct) validateRoutePrefixes() error {
 func (c *ConfigStruct) validateProviderConfig() error {
 	for name, prov := range c.Provider {
 		prov.Name = name
-		rawFamily := normalizeProviderProtocol(prov.Family)
-		rawProtocol := normalizeProviderProtocol(prov.Protocol)
-		if rawFamily == "ollama" || rawProtocol == "ollama" {
-			return NewValidationError("provider %s: 'ollama' family/protocol has been removed; use family 'openai' and set service_protocols to ['chat'] for Ollama-compatible endpoints", name)
-		}
-		prov.Family = normalizeProviderAdapterProtocol(rawFamily)
-		prov.Protocol = normalizeProviderAdapterProtocol(rawProtocol)
-		if prov.Family != "" && prov.Protocol != "" && prov.Family != prov.Protocol {
-			return NewValidationError("provider %s: family %q conflicts with protocol %q", name, rawFamily, rawProtocol)
-		}
-		if prov.Protocol == "" {
-			prov.Protocol = prov.Family
-		}
-		if prov.Protocol == "" {
-			return NewValidationError("provider %s: family is required", name)
-		}
-		prov.Family = prov.Protocol
-		if prov.Protocol == "qwen" {
-			return NewValidationError("provider %s: family %q is no longer supported; use family %q with a Qwen-compatible endpoint instead", name, prov.Protocol, ProviderProtocolOpenAI)
-		}
+
 		prov.APIKeyCommand = strings.TrimSpace(prov.APIKeyCommand)
 		prov.APIKeyCommandTimeout = strings.TrimSpace(prov.APIKeyCommandTimeout)
 		prov.APIKeyCommandTTL = strings.TrimSpace(prov.APIKeyCommandTTL)
@@ -284,30 +265,13 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			if prov.APIKeyCommand != "" {
 				return NewValidationError("provider %s: api_key_command is not supported for backend %q", name, prov.Backend)
 			}
-			if prov.Protocol != ProviderProtocolOpenAI {
-				return NewValidationError("provider %s: backend %q requires family 'openai', got %q", name, prov.Backend, prov.Protocol)
-			}
 			if prov.BackendProvider == "" {
 				return NewValidationError("provider %s: backend_provider is required when backend is %q", name, prov.Backend)
-			}
-			if len(prov.ServiceProtocols) == 0 {
-				return NewValidationError("provider %s: backend %q requires explicit service_protocols", name, prov.Backend)
 			}
 		default:
 			return NewValidationError("provider %s: invalid backend %q (must be cliproxy)", name, prov.Backend)
 		}
-		if len(prov.ServiceProtocols) > 0 {
-			if !validConfiguredServiceProtocols(prov.ServiceProtocols) {
-				return NewValidationError("provider %s: invalid service_protocols %v (must be chat/responses/anthropic/embeddings)", name, prov.ServiceProtocols)
-			}
-			prov.ServiceProtocols = normalizeConfiguredServiceProtocols(prov.ServiceProtocols)
-			allowedProtocols := DefaultServiceProtocols(prov)
-			for _, protocol := range prov.ServiceProtocols {
-				if !slices.Contains(allowedProtocols, protocol) {
-					return NewValidationError("provider %s: service_protocols %v is incompatible with adapter capabilities %v", name, prov.ServiceProtocols, allowedProtocols)
-				}
-			}
-		}
+
 		applyProviderDefaults(prov)
 
 		configDir, err := expandHomeDir(prov.ConfigDir)
@@ -315,30 +279,6 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			return NewValidationError("provider %s: %v", name, err)
 		}
 		prov.ConfigDir = configDir
-
-		if prov.URL == "" {
-			return NewValidationError("provider %s: url is required", name)
-		}
-		if err := validateHTTPURL("provider "+name, prov.URL); err != nil {
-			return err
-		}
-
-		switch prov.Protocol {
-		case ProviderProtocolOpenAI, ProviderProtocolAnthropic:
-		case ProviderProtocolCopilot:
-			if prov.APIKey.Value() == "" && prov.APIKeyCommand == "" {
-				if p := provider.Get(prov.Protocol); p != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), providerCredCheckTimeout)
-					err := p.CheckCredsReadable(ctx, prov.ConfigDir)
-					cancel()
-					if err != nil {
-						return NewValidationError("provider %s: %v", name, err)
-					}
-				}
-			}
-		default:
-			return NewValidationError("provider %s: invalid protocol %s (must be openai/anthropic/copilot)", name, prov.Protocol)
-		}
 
 		if prov.Timeout != "" {
 			if _, err := time.ParseDuration(prov.Timeout); err != nil {
@@ -352,14 +292,148 @@ func (c *ConfigStruct) validateProviderConfig() error {
 			}
 		}
 
-		if prov.ResponsesToChat && prov.Protocol != ProviderProtocolOpenAI {
-			return NewValidationError("provider %s: responses_to_chat requires family 'openai', got %q", name, prov.Protocol)
+		// Validate endpoints or shorthand fields.
+		if len(prov.Endpoints) > 0 {
+			if err := validateEndpoints(prov); err != nil {
+				return err
+			}
+		} else {
+			if err := validateShorthandProvider(prov); err != nil {
+				return err
+			}
 		}
-		if prov.AnthropicToChat && prov.Protocol != ProviderProtocolOpenAI {
-			return NewValidationError("provider %s: anthropic_to_chat requires family 'openai', got %q", name, prov.Protocol)
+	}
+
+	return nil
+}
+
+func validateShorthandProvider(prov *ProviderConfig) error {
+	// Normalize format, default to openai
+	prov.Format = normalizeProviderFormat(prov.Format)
+	if prov.Format == "" {
+		prov.Format = ProviderFormatOpenAI
+	}
+
+	// Apply copilot defaults after format is resolved
+	if prov.Format == ProviderFormatCopilot {
+		if prov.URL == "" {
+			prov.URL = "https://api.githubcopilot.com"
 		}
-		if prov.AnthropicToResponses && prov.Protocol != ProviderProtocolAnthropic {
-			return NewValidationError("provider %s: anthropic_to_responses requires family 'anthropic', got %q", name, prov.Protocol)
+		if prov.ConfigDir == "" {
+			prov.ConfigDir = "~/.config/github-copilot"
+		}
+	}
+
+	switch prov.Format {
+	case ProviderFormatOpenAI, ProviderFormatAnthropic, ProviderFormatCopilot:
+	default:
+		return NewValidationError("provider %s: invalid format %q (must be openai/anthropic/copilot)", prov.Name, prov.Format)
+	}
+
+	// Normalize and validate protocols
+	if len(prov.Protocols) > 0 {
+		if !validConfiguredServiceProtocols(prov.Protocols) {
+			return NewValidationError("provider %s: invalid protocols %v (must be chat/responses/anthropic/embeddings)", prov.Name, prov.Protocols)
+		}
+		prov.Protocols = normalizeConfiguredServiceProtocols(prov.Protocols)
+	}
+
+	// Validate bridge switches against format
+	if prov.ResponsesToChat && prov.Format != ProviderFormatOpenAI {
+		return NewValidationError("provider %s: responses_to_chat requires format 'openai', got %q", prov.Name, prov.Format)
+	}
+	if prov.AnthropicToChat && prov.Format != ProviderFormatOpenAI {
+		return NewValidationError("provider %s: anthropic_to_chat requires format 'openai', got %q", prov.Name, prov.Format)
+	}
+	if prov.AnthropicToResponses && prov.Format != ProviderFormatAnthropic {
+		return NewValidationError("provider %s: anthropic_to_responses requires format 'anthropic', got %q", prov.Name, prov.Format)
+	}
+
+	if prov.Backend == ProviderBackendCLIProxy && prov.Format != ProviderFormatOpenAI {
+		return NewValidationError("provider %s: backend %q requires format 'openai', got %q", prov.Name, prov.Backend, prov.Format)
+	}
+
+	if prov.URL == "" {
+		return NewValidationError("provider %s: url is required", prov.Name)
+	}
+	if err := validateHTTPURL("provider "+prov.Name, prov.URL); err != nil {
+		return err
+	}
+
+	// Copilot credential check
+	if prov.Format == ProviderFormatCopilot {
+		if prov.APIKey.Value() == "" && prov.APIKeyCommand == "" {
+			if p := provider.Get(prov.Format); p != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), providerCredCheckTimeout)
+				err := p.CheckCredsReadable(ctx, prov.ConfigDir)
+				cancel()
+				if err != nil {
+					return NewValidationError("provider %s: %v", prov.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateEndpoints(prov *ProviderConfig) error {
+	// Shorthand fields must be empty when endpoints are explicitly declared.
+	if prov.URL != "" {
+		return NewValidationError("provider %s: url must not be set when endpoint.* is declared; move it into the endpoint", prov.Name)
+	}
+	if prov.Format != "" {
+		return NewValidationError("provider %s: format must not be set when endpoint.* is declared; move it into the endpoint", prov.Name)
+	}
+	if len(prov.Protocols) > 0 {
+		return NewValidationError("provider %s: protocols must not be set when endpoint.* is declared; move them into the endpoint", prov.Name)
+	}
+	if prov.ResponsesToChat || prov.AnthropicToChat || prov.AnthropicToResponses {
+		return NewValidationError("provider %s: bridge switches must not be set when endpoint.* is declared; move them into the endpoint", prov.Name)
+	}
+
+	for epName, ep := range prov.Endpoints {
+		if ep == nil {
+			return NewValidationError("provider %s endpoint %s: config is required", prov.Name, epName)
+		}
+		ctx := "provider " + prov.Name + " endpoint " + epName
+
+		if ep.URL == "" {
+			return NewValidationError("%s: url is required", ctx)
+		}
+		if err := validateHTTPURL(ctx, ep.URL); err != nil {
+			return err
+		}
+
+		format := normalizeProviderFormat(ep.Format)
+		if format == "" {
+			format = ProviderFormatOpenAI
+		}
+		switch format {
+		case ProviderFormatOpenAI, ProviderFormatAnthropic, ProviderFormatCopilot:
+		default:
+			return NewValidationError("%s: invalid format %q (must be openai/anthropic/copilot)", ctx, format)
+		}
+
+		if prov.Backend == ProviderBackendCLIProxy && format != ProviderFormatOpenAI {
+			return NewValidationError("%s: backend %q requires format 'openai', got %q", ctx, prov.Backend, format)
+		}
+
+		if len(ep.Protocols) > 0 {
+			if !validConfiguredServiceProtocols(ep.Protocols) {
+				return NewValidationError("%s: invalid protocols %v (must be chat/responses/anthropic/embeddings)", ctx, ep.Protocols)
+			}
+		}
+
+		// Validate bridge switches against endpoint format
+		if ep.ResponsesToChat && format != ProviderFormatOpenAI {
+			return NewValidationError("%s: responses_to_chat requires format 'openai', got %q", ctx, format)
+		}
+		if ep.AnthropicToChat && format != ProviderFormatOpenAI {
+			return NewValidationError("%s: anthropic_to_chat requires format 'openai', got %q", ctx, format)
+		}
+		if ep.AnthropicToResponses && format != ProviderFormatAnthropic {
+			return NewValidationError("%s: anthropic_to_responses requires format 'anthropic', got %q", ctx, format)
 		}
 	}
 
@@ -708,15 +782,8 @@ func resolveWebhookReference(ctx, name string, webhooks map[string]*WebhookConfi
 }
 
 func applyProviderDefaults(prov *ProviderConfig) {
-	switch prov.Protocol {
-	case ProviderProtocolCopilot:
-		if prov.URL == "" {
-			prov.URL = "https://api.githubcopilot.com"
-		}
-		if prov.ConfigDir == "" {
-			prov.ConfigDir = "~/.config/github-copilot"
-		}
-	}
+	// Provider defaults that must run before validation.
+	// Copilot defaults are applied in validateShorthandProvider after format is resolved.
 }
 
 func expandHomeDir(pathValue string) (string, error) {

@@ -10,6 +10,7 @@
 
 - 系统级说明：[ARCHITECTURE.md](../ARCHITECTURE.md)
 - 项目入口：[README.md](../README.md)
+- Provider 专题：[docs/provider.md](../docs/provider.md)
 - 专题索引：[docs/README.md](../docs/README.md)
 
 ## Scope
@@ -30,79 +31,161 @@
 ## File Roles
 
 - `config.go`：核心配置类型定义与运行时访问方法
-- `provider_protocol.go`：provider family 常量与协议规范化辅助
+- `provider_protocol.go`：provider format / protocol 常量与规范化辅助
 - `validate.go`：配置校验与规范化逻辑
-- `route_runtime.go`：route 模型编译、通配符匹配、协议能力判断
+- `route_runtime.go`：route 模型编译、通配符匹配、协议能力判断、provider 级能力推导与 endpoint 定义规则
 - `secret.go`：`SecretString` 的安全序列化与显示
 - `warden.example.toml`：默认 TOML 示例配置
+
+## Provider 配置模型
+
+Provider 配置采用"**能力声明优先，接入方式推导**"模型：
+
+```toml
+# 国内主流 provider：最简配置
+[provider.kimi]
+url = "https://api.moonshot.cn/v1"
+api_key = "sk-xxx"
+models = ["kimi-k2", "kimi-k2.5"]
+# 默认 format="openai"，默认 protocols=["chat","responses","embeddings"]
+```
+
+```toml
+# 收窄能力
+[provider.ollama]
+url = "http://localhost:11434/v1"
+protocols = ["chat"]
+```
+
+```toml
+# Anthropic-native
+[provider.anthropic]
+url = "https://api.anthropic.com/v1"
+format = "anthropic"
+api_key = "sk-ant-xxx"
+```
+
+```toml
+# 桥接
+[provider.deepseek]
+url = "https://api.deepseek.com/v1"
+anthropic_to_chat = true
+```
+
+```toml
+# 多 endpoint（共享同一 API Key）
+[provider.unified]
+api_key = "${API_KEY}"
+
+[provider.unified.endpoint.openai]
+url = "https://gateway.corp.com/openai/v1"
+format = "openai"
+
+[provider.unified.endpoint.anthropic]
+url = "https://gateway.corp.com/anthropic/v1"
+format = "anthropic"
+```
+
+### 核心字段
+
+- `format` — 上游原生协议格式：`openai`（默认）、`anthropic`、`copilot`
+- `protocols` — 该 provider 支持的服务协议；省略时按 `format` 推导默认值
+- `anthropic_to_chat` / `responses_to_chat` / `anthropic_to_responses` — provider 级桥接开关
+- `endpoint.<name>` — 显式多 endpoint 定义；与 provider 级 shorthand 字段互斥
+
+### 能力推导规则
+
+`format` 省略时默认 `openai`：
+
+| `format` | 默认 `protocols` |
+|---|---|
+| `openai` | `chat`, `responses`, `embeddings` |
+| `anthropic` | `chat`, `anthropic` |
+| `copilot` | `chat` |
+
+桥接开关生效后追加对应协议到支持集合。
+
+### Endpoint 定义
+
+当 provider 需要同时暴露多个协议入口（如 Coding Plan 同时提供 OpenAI 和 Anthropic endpoint）时，使用显式 `endpoint`：
+
+- 声明 `endpoint.*` 后，provider 级 `url`、`format`、`protocols`、桥接开关必须为空
+- 每个 `endpoint.<name>` 是一个完整的接入点定义：
+  - `url` — 该 endpoint 的上游 base URL（必填）
+  - `format` — 该 endpoint 的协议格式（默认 `openai`）
+  - `protocols` — 该 endpoint 支持的服务协议（省略时按 `format` 推导）
+  - `headers` — 该 endpoint 的额外 HTTP headers（合并 provider 级 `headers`）
+  - `models` — 该 endpoint 的模型白名单（覆盖 provider 级 `models`）
+  - `anthropic_to_chat` / `responses_to_chat` / `anthropic_to_responses` — endpoint 级桥接开关
+
+### 旧配置兼容
+
+旧配置需要手动迁移：
+
+- `family` → `format`
+- `protocol` → `format`
+- `service_protocols` → `protocols`
+- `access.<mode>` → `endpoint.<name>`（注意：`endpoint` 要求 `url` 在每个 endpoint 内显式声明，不再继承 provider 级 `url`）
+
+```toml
+# 迁移前
+[provider.kimi]
+family = "anthropic"
+url = "https://api.kimi.com/coding/"
+api_key = "sk-provider-token"
+service_protocols = ["chat", "anthropic", "responses"]
+anthropic_to_responses = true
+
+# 迁移后
+[provider.kimi]
+url = "https://api.kimi.com/coding/"
+api_key = "sk-provider-token"
+format = "anthropic"
+protocols = ["chat", "anthropic", "responses"]
+anthropic_to_responses = true
+```
 
 ## Validation Rules
 
 - 只做本地可判定的静态校验，不做启动期网络探测
 - `provider.*.url` / `webhook.*.url` 必须是绝对 `http/https` URL
 - `webhook.*.body_template` 在校验阶段就会按 Go template + sprig 解析；坏模板不能留到运行时才暴露
-- `webhook.*.timeout` 如果设置，必须是大于 0 的时长，避免把网络调用退化成无界等待
+- `webhook.*.timeout` 如果设置，必须是大于 0 的时长
 - `provider.*.proxy` 只接受 `http`、`https`、`socks5`、`socks5h`
-- `provider.*.family` 必填；`provider.*.protocol` 只保留为兼容别名，不能与 `family` 冲突
-- `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `family: openai`、`backend_provider` 和显式 `service_protocols`
-- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`；该 URL 是 Warden 访问内嵌/本地 cliproxy 的 endpoint，不代表还要外接一个模型服务。`backend: cliproxy` provider 的 `provider.*.proxy` 不代理这段本机 HTTP 调用，只在 `cliproxy.proxy` 未设置时派生嵌入式服务访问真实上游的出站代理；多个不同 proxy 会被拒绝。
-- `cliproxy.auth_dir` 留空时默认使用 `/etc/warden`，与托管安装默认主配置 `/etc/warden/warden.toml` 共享目录，便于集中放置多账号授权 JSON；admin provider 页面上的 cliproxy 认证导入只会写入这个目录，不会把认证内容写进 `provider.*`
-- `backend: cliproxy` 的请求会默认移除客户端 CLI/SDK 指纹头、Codex turn metadata 和 Warden 生成的 forwarding 头；嵌入式 cliproxy 会写入 Codex/Claude 默认头，关闭 CLIProxyAPI response header passthrough，并启用 Claude device-profile stabilization。显式配置在 `provider.*.headers` 中的静态头仍会在清理后注入
+- `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且要求 `backend_provider`
+- `cliproxy.enabled` 启用嵌入式 CLIProxyAPI/cliproxy 服务；启用后至少需要一个 `backend: cliproxy` provider，且 provider URL 必须是共享的 `http://loopback:port/v1`
+- `cliproxy.auth_dir` 留空时默认使用 `/etc/warden`
+- `backend: cliproxy` 不支持 `api_key_command`
 - `~` 路径在校验阶段统一展开
-- `provider.*.timeout` 只限制从发出上游请求到收到首个响应 body/token 的时间；首 token 到达后，流式响应读取不再受该字段限制
-- `provider.*.api_key_command` 允许通过一行 shell 命令提供 provider API Key：Linux/macOS 使用 `sh -c`，Windows 使用 `cmd /C`。命令 stdout trim 后必须是非空单行；默认 `api_key_command_timeout = "5s"` 且必须大于 0；默认 `api_key_command_ttl = "5m"`，`api_key_command_ttl = "0s"` 表示每次请求都执行。
-- `provider.*.api_key_command` 与 `provider.*.api_key` 互斥；`Validate()` 只校验互斥关系和 duration 字段，不执行命令。该字段等同 RCE 级 operator-only 配置，命令以 Warden 服务用户身份执行。`backend: cliproxy` 不支持该字段。
-- `copilot` 在未设置 `api_key` 或 `api_key_command` 时校验本地 `config_dir` 下的凭证可读性；该检查带显式短超时，避免未来慢 I/O 把配置校验拖成无界阻塞
-- `route.<prefix>.api_keys` 是该路由自己的客户端访问密钥集合；为空时该路由不做客户端鉴权
-- 同一路由下的 `api_keys` 明文值必须唯一；否则按 key 名聚合的日志和指标归因会失去确定性
-- 顶层 `api_keys` 已废弃；校验阶段会直接报错，避免旧配置被静默放行为公开路由
-- `admin_password` / `route.<prefix>.api_keys` / `provider.*.api_key` 读取时接受明文或 base64，写回配置文件时统一编码为 base64
-- 该兼容模式建立在当前支持的 API key / password 格式不会与“可逆且规范化的 base64 文本”冲突这一前提上；任意自定义 secret 明文不保证避免歧义
+- `provider.*.timeout` 只限制从发出上游请求到收到首个响应 body/token 的时间
+- `provider.*.api_key_command` 允许通过 shell 命令提供 API Key；默认超时 `5s`，默认缓存 TTL `5m`
+- `provider.*.api_key_command` 与 `provider.*.api_key` 互斥
+- `route.<prefix>.api_keys` 是该路由自己的客户端访问密钥集合
+- 同一路由下的 `api_keys` 明文值必须唯一
+- 顶层 `api_keys` 已废弃；校验阶段会直接报错
+- `admin_password` / `route.<prefix>.api_keys` / `provider.*.api_key` 读取时接受明文或 base64，写回时统一编码为 base64
+- Provider 校验：
+  - `format` 必须为 `openai`、`anthropic`、`copilot` 之一（或省略，默认 `openai`）
+  - `protocols` 只能包含 `chat`、`responses`、`anthropic`、`embeddings`
+  - 桥接开关必须与 `format` 兼容（如 `anthropic_to_chat` 要求 `format = "openai"`）
+  - `backend = "cliproxy"` 要求 `format = "openai"`
+  - `endpoint.<name>.url` 必须是合法 http/https URL
 
 ## Compatibility Notes
 
-推荐先建立这个心智模型：
+推荐心智模型：
 
 - `provider` 描述上游能力与认证方式
 - `route` 描述对外暴露的协议面和模型面
-- 运行时路由真相由 `route.protocol + route model` 决定，不由展示层 probe 决定
-
+- 运行时路由真相由 `route.protocol + route model` 决定
 - route 配置的主结构是 `exact_models` / `wildcard_models`
 - `route.protocol` 是必填字段，且每个 route 只允许一个 `chat` / `responses` / `anthropic`
-- `/embeddings` 是额外 service protocol，不是新的 `route.protocol`；只有 route 内至少有一个 upstream/provider 支持 embeddings 时才会暴露
-- route model 的额外提示词由模型自身的 `prompt_enabled` + `system_prompt` 表达
-- `route.service_protocols` 可选；留空按 `route.protocol` 推导，显式配置时用于让同一路由暴露多个服务接口，且必须包含 `route.protocol`；显式声明的每个接口都必须至少有一个 route upstream/provider 支持，否则配置校验失败
-- `route.exact_models.<name>` 直接声明 `upstreams`
-- `route.wildcard_models.<pattern>` 直接声明 `providers`
-- `route.wildcard_models.<pattern>` 的 `*` 匹配完整模型 ID，包括 `vendor/model` 和 `vendor/model:free` 这类包含 `/` 的上游模型名
-- provider family 候选兼容能力由 `route_runtime.go` 统一推导，当前为 `openai => chat + responses + embeddings`，启用 `anthropic_to_chat` 时额外支持 `anthropic`；`anthropic => chat + anthropic`；`copilot => chat`
-- OpenAI-compatible 第三方上游（例如 Ollama）不再使用单独 family；统一配置为 `openai`，并通过 `service_protocols` 显式收窄能力，例如 `service_protocols = ["chat"]`
-- CLIProxyAPI/cliproxy 的 Codex、Gemini、Claude 等本地 provider 执行能力应作为 OpenAI-compatible backend 接入：`family: openai`、`backend: cliproxy`、`backend_provider: codex`，并显式声明 `service_protocols`
-- `cliproxy.enabled` 只管理本地 cliproxy 服务生命周期，不改变 provider 的协议适配；Warden 仍按普通 OpenAI-compatible HTTP 上游访问 `provider.url`
-- cliproxy 默认隐匿逻辑只覆盖 Warden 到 cliproxy 的 HTTP 头和嵌入式 SDK 配置；TLS 指纹、OAuth token 刷新、provider 原生执行和上游连接仍由 CLIProxyAPI 负责
-- admin 新建 provider 页面可以先按 provider preset 输入，再自动派生 `family`、`backend`、`backend_provider`、默认 `url` 与推荐 `service_protocols`；认证来源选择器只写回 `api_key`、`api_key_command` 或 `config_dir` 等既有字段，不新增 provider type。cliproxy 的 Codex、Claude、Gemini 预设默认都是 chat-only，并固定使用 CLIProxyAPI auth_dir；这些 preset 不会写入配置，配置真相仍然只有显式的 `provider.*` 字段。provider 详情页的 cliproxy 认证导入面板只负责写 auth_dir 下的 JSON 文件
-
-动态命令认证示例：
-
-```toml
-[provider.openai_cmd]
-family = "openai"
-url = "https://api.openai.com/v1"
-api_key_command = "op read 'op://LLM/OpenAI/api_key'"
-api_key_command_timeout = "5s"
-api_key_command_ttl = "10m"
-service_protocols = ["chat", "responses", "embeddings"]
-```
-
-`api_key_command` 只改变鉴权来源；provider 可用协议仍由 `family`、`service_protocols` 和 `anthropic_to_chat` 决定。
-
-- failover 只在命中的 route model 候选列表内发生，因此可以只给某一个配置模型单独做 HA
-- `responses` 协议的 route 默认按无状态请求走 inference handler;一旦请求体含 `previous_response_id`,网关会切换到透明转发链路(禁用 failover、跳过 tool hooks、原样透传请求与响应),由上游持有会话状态
-- `responses_to_chat` 只对无状态 Responses 请求生效;带 `previous_response_id` 的请求会绕过桥接,直接进入透明转发,不会被 Chat 兼容子集裁剪
-- `anthropic_to_chat` 只允许配置在 `openai` provider 上，并且只对 `route.protocol=anthropic` 的 `/messages` 入口生效
-- 原生 `anthropic` provider 不支持 `/embeddings`；`route.protocol=anthropic` 只有在命中的模型最终落到 OpenAI family provider 时才可承接 embeddings
-- `route` 的运行时派生字段只在 `Validate()` 后可依赖
-- `mcp` 与 `ssh` 配置块已移除，不再参与配置模型
+- `/embeddings` 是额外 service protocol，不是新的 `route.protocol`
+- `route.service_protocols` 可选；留空按 `route.protocol` 推导
+- `route.wildcard_models.<pattern>` 的 `*` 匹配完整模型 ID，包括 `vendor/model` 和 `vendor/model:free`
+- provider 协议能力由 `format` + `protocols` + 桥接开关决定，不再依赖单值 `family`
+- 运行时选择单元是 `provider + format + model + service_protocol`
+- failover 以 `provider + format` 为最小单元，避免 Anthropic endpoint 失败把同一 provider 的 OpenAI endpoint 也打死
 
 ## Related Files
 

@@ -95,7 +95,7 @@ func FromEmbeddingsJSON(body []byte) Observation {
 
 func FromStream(serviceProtocol, providerProtocol string, body []byte) Observation {
 	switch {
-	case providerProtocol == config.ProviderProtocolAnthropic:
+	case providerProtocol == config.ProviderFormatAnthropic:
 		return FromAnthropicStream(body)
 	case serviceProtocol == config.RouteProtocolResponses:
 		return FromResponsesStream(body)

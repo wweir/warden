@@ -138,7 +138,9 @@ func writeStreamResponse(w http.ResponseWriter, body []byte, warnMsg string) {
 	if _, err := w.Write(body); err != nil {
 		slog.Warn(warnMsg, "error", err)
 	}
-	w.(http.Flusher).Flush()
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func observeJSONTokenUsage(serviceProtocol string, respBody []byte) tokenusagepkg.Observation {

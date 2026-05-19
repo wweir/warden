@@ -13,7 +13,7 @@ import (
 func TestResolveAPIKeyCommand(t *testing.T) {
 	prov := &ProviderConfig{
 		Name:          "cmd",
-		Protocol:      ProviderProtocolOpenAI,
+		Format:      ProviderFormatOpenAI,
 		APIKeyCommand: helperCommand("token"),
 	}
 
@@ -136,7 +136,7 @@ func TestResolveAPIKeyCommandTTLZeroDisablesCache(t *testing.T) {
 func TestInvalidateAuthClearsAPIKeyCommandCache(t *testing.T) {
 	countFile := t.TempDir() + "/count"
 	prov := &ProviderConfig{
-		Protocol:         ProviderProtocolOpenAI,
+		Format:         ProviderFormatOpenAI,
 		APIKeyCommand:    helperCommand("counter", countFile),
 		APIKeyCommandTTL: "1m",
 	}

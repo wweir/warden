@@ -10,12 +10,12 @@ import (
 )
 
 // RecordOutcome records the result of an upstream request.
-func (s *Selector) RecordOutcome(name string, err error, latency time.Duration) {
-	s.RecordOutcomeWithSource(name, err, latency, "")
+func (s *Selector) RecordOutcome(name string, accessMode string, err error, latency time.Duration) {
+	s.RecordOutcomeWithSource(name, accessMode, err, latency, "")
 }
 
 // RecordOutcomeWithSource records the result of an upstream request with error source tracking.
-func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.Duration, errorSource string) {
+func (s *Selector) RecordOutcomeWithSource(name string, accessMode string, err error, latency time.Duration, errorSource string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -29,6 +29,10 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 		st.recordOutcome(true, latencyMs, errorSource)
 		st.consecutiveFailures = 0
 		st.suppressUntil = time.Time{}
+		if accessMode != "" && st.modeConsecutiveFailures != nil {
+			st.modeConsecutiveFailures[accessMode] = 0
+			st.modeSuppressUntil[accessMode] = time.Time{}
+		}
 		return
 	}
 	if ue, ok := err.(*UpstreamError); ok && !ue.IsRetryable() {
@@ -49,13 +53,32 @@ func (s *Selector) RecordOutcomeWithSource(name string, err error, latency time.
 
 	duration := baseSuppressDuration << (st.consecutiveFailures - 1)
 	st.suppressUntil = time.Now().Add(duration)
+
+	// Mode-aware suppression
+	if accessMode != "" {
+		if st.modeConsecutiveFailures == nil {
+			st.modeConsecutiveFailures = make(map[string]int)
+			st.modeSuppressUntil = make(map[string]time.Time)
+		}
+		st.modeConsecutiveFailures[accessMode]++
+		if st.modeConsecutiveFailures[accessMode] > maxConsecutiveFailures {
+			st.modeConsecutiveFailures[accessMode] = maxConsecutiveFailures
+		}
+		modeDuration := baseSuppressDuration << (st.modeConsecutiveFailures[accessMode] - 1)
+		st.modeSuppressUntil[accessMode] = time.Now().Add(modeDuration)
+	}
+
 	st.addSuppressReason(err)
 
 	attrs := []any{
 		"name", name,
+		"format", accessMode,
 		"consecutive_failures", st.consecutiveFailures,
 		"suppress_duration", duration,
 		"error_source", errorSource,
+	}
+	if accessMode != "" {
+		attrs = append(attrs, "mode_consecutive_failures", st.modeConsecutiveFailures[accessMode])
 	}
 	if ue, ok := err.(*UpstreamError); ok {
 		body := ue.Body
@@ -215,6 +238,10 @@ func (s *Selector) SetManualSuppress(name string, suppress bool) bool {
 	} else {
 		st.consecutiveFailures = 0
 		st.suppressUntil = time.Time{}
+		for mode := range st.modeConsecutiveFailures {
+			st.modeConsecutiveFailures[mode] = 0
+			st.modeSuppressUntil[mode] = time.Time{}
+		}
 		slog.Info("Provider manual suppression cleared", "name", name)
 	}
 	return true

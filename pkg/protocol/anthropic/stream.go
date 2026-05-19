@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -81,12 +82,15 @@ func (p *StreamParser) Parse(events []protocol.Event) ([]protocol.ToolCallInfo, 
 		return nil, nil
 	}
 
+	indexes := make([]int, 0, len(blocks))
+	for idx := range blocks {
+		indexes = append(indexes, idx)
+	}
+	slices.Sort(indexes)
+
 	var infos []protocol.ToolCallInfo
-	for i := range len(blocks) {
-		block, ok := blocks[i]
-		if !ok {
-			continue
-		}
+	for _, idx := range indexes {
+		block := blocks[idx]
 		infos = append(infos, protocol.ToolCallInfo{
 			ID:        block.ID,
 			Name:      block.Name,
@@ -432,12 +436,15 @@ func AssembleStream(rawSSE []byte) []byte {
 	}
 
 	// build content array in index order
+	indexes := make([]int, 0, len(blocks))
+	for idx := range blocks {
+		indexes = append(indexes, idx)
+	}
+	slices.Sort(indexes)
+
 	var content []any
-	for i := range len(blocks) {
-		b, ok := blocks[i]
-		if !ok {
-			continue
-		}
+	for _, idx := range indexes {
+		b := blocks[idx]
 		switch b.data["type"] {
 		case "text":
 			b.data["text"] = b.text

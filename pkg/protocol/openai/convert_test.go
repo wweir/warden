@@ -127,14 +127,17 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			errSubstr: "previous_response_id",
 		},
 		{
-			name: "reject unsupported stateless responses field",
+			name: "convert reasoning effort to reasoning_effort",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
 				Extra: map[string]json.RawMessage{"reasoning": json.RawMessage(`{"effort":"medium"}`)},
 			},
-			wantErr:   true,
-			errSubstr: "reasoning",
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if got := string(chatReq.Extra["reasoning_effort"]); got != `"medium"` {
+					t.Fatalf("reasoning_effort = %s, want \"medium\"", got)
+				}
+			},
 		},
 		{
 			name: "reject n greater than one",
@@ -147,14 +150,17 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			errSubstr: "n > 1",
 		},
 		{
-			name: "reject non function tool",
+			name: "skip non function tools",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
 				Tools: []json.RawMessage{json.RawMessage(`{"type":"web_search_preview"}`)},
 			},
-			wantErr:   true,
-			errSubstr: "unsupported tool type",
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Tools) != 0 {
+					t.Fatalf("expected 0 tools, got %d", len(chatReq.Tools))
+				}
+			},
 		},
 		{
 			name: "reject conflicting max_output_tokens and max_completion_tokens",
@@ -308,7 +314,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choi
 data: [DONE]
 `
 
-	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "event: response.output_text.delta") {
 		t.Fatal("expected response.output_text.delta event")
@@ -366,7 +375,10 @@ func TestChatSSEToResponsesSSEIncompleteStream(t *testing.T) {
 data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
 `
 
-	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "event: response.completed") {
 		t.Fatal("expected response.completed event")
@@ -389,7 +401,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choi
 data: [DONE]
 `
 
-	output := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
 	outputStr := string(output)
 	if !strings.Contains(outputStr, `"status":"incomplete"`) {
 		t.Fatal("expected status:incomplete for length finish_reason")

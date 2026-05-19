@@ -24,6 +24,10 @@ test: web
 	${GO} test ./...
 
 web:
+	@if [ -d web/admin/dist ] && find web/admin/dist -not -writable -print -quit | grep -q .; then \
+		echo "Fixing web/admin/dist permissions from previous sudo build..."; \
+		sudo rm -rf web/admin/dist; \
+	fi
 	cd web/admin && ${BUN} install --frozen-lockfile && ${BUN} run build
 
 build: web

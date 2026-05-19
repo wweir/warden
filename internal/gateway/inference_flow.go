@@ -72,13 +72,13 @@ func (g *Gateway) handleInference(
 		logParams := session.logParams()
 		session.publishPendingLog()
 
-		provReqBody, err := spec.prepareBody(session.provider.Protocol, prepareRawBody(req.RawBody, session.target))
+		provReqBody, err := spec.prepareBody(session.providerProtocol, prepareRawBody(req.RawBody, session.target))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return true
 		}
 
-		if req.Stream && specCanRelayStream(spec, session.provider.Protocol) {
+		if req.Stream && specCanRelayStream(spec, session.providerProtocol) {
 			if g.handleInferenceStreamRelay(w, r, session, spec, logParams, provReqBody) {
 				continue
 			}
@@ -118,7 +118,7 @@ func (g *Gateway) handleInferenceStreamRelay(
 		r.Context(),
 		r,
 		session.provider,
-		spec.upstreamPath(session.provider.Protocol),
+		upstreampkg.JoinBaseURLPath(session.target.URL, spec.upstreamPath(session.providerProtocol)),
 		provReqBody,
 	)
 	if sendErr != nil {
@@ -129,7 +129,7 @@ func (g *Gateway) handleInferenceStreamRelay(
 				return false
 			}
 		}
-		g.selector.RecordOutcomeWithSource(session.provider.Name, sendErr, latency, "pre_stream")
+		g.selector.RecordOutcomeWithSource(session.provider.Name, session.providerProtocol, sendErr, latency, "pre_stream")
 		g.RecordStreamErrorMetric(session.metricLabels, "pre_stream")
 		if session.handleError(sendErr) {
 			return true
@@ -145,12 +145,11 @@ func (g *Gateway) handleInferenceStreamRelay(
 	writeEventStreamHeaders(w)
 
 	rawResp, streamErr := spec.streamRelay(streamReader, w)
-	w.(http.Flusher).Flush()
 	errMsg := ""
 	if streamErr != nil {
 		errMsg = streamErr.Error()
 		if shouldRecordUpstreamStreamError(r, streamErr) {
-			g.selector.RecordOutcomeWithSource(session.provider.Name, streamErr, latency, "in_stream")
+			g.selector.RecordOutcomeWithSource(session.provider.Name, session.providerProtocol, streamErr, latency, "in_stream")
 			g.RecordStreamErrorMetric(session.metricLabels, "in_stream")
 		}
 		warn := spec.streamWarn
@@ -159,10 +158,10 @@ func (g *Gateway) handleInferenceStreamRelay(
 		}
 		slog.Warn(warn, "error", streamErr)
 	} else {
-		g.selector.RecordOutcome(session.provider.Name, nil, latency)
+		g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 	}
 
-	_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, rawResp, true)
+	_, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.providerProtocol, rawResp, true)
 	g.recordInferenceStreamResponse(session, spec, logParams.WithTTFT(latency), rawResp, errMsg, blockVerdicts, runAsync)
 	return false
 }
@@ -183,12 +182,12 @@ func (g *Gateway) handleInferenceBuffered(
 		r.Context(),
 		r,
 		session.provider,
-		spec.upstreamPath(session.provider.Protocol),
+		upstreampkg.JoinBaseURLPath(session.target.URL, spec.upstreamPath(session.providerProtocol)),
 		provReqBody,
 		stream,
 	)
 	if err != nil {
-		g.selector.RecordOutcome(session.provider.Name, err, latency)
+		g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, err, latency)
 		if session.handleError(err) {
 			return true
 		}
@@ -197,13 +196,13 @@ func (g *Gateway) handleInferenceBuffered(
 		return false
 	}
 
-	g.selector.RecordOutcome(session.provider.Name, nil, latency)
+	g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 	session.observeMatchedModel()
 	session.recordTTFT(latency)
-	respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, stream)
+	respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.providerProtocol, respBody, stream)
 
 	if stream {
-		spec.writeBufferedStream(w, session.provider.Protocol, respBody)
+		spec.writeBufferedStream(w, session.providerProtocol, respBody)
 		g.recordInferenceStreamResponse(session, spec, logParams.WithTTFT(latency), respBody, "", blockVerdicts, runAsync)
 		return false
 	}
@@ -229,10 +228,10 @@ func (g *Gateway) handleInferenceBuffered(
 }
 
 func (g *Gateway) finishInferenceNonStreamFallback(r *http.Request, session *inferenceSession, spec inferenceSpec, logParams observepkg.InferenceLogParams, respBody []byte, latency time.Duration) {
-	g.selector.RecordOutcome(session.provider.Name, nil, latency)
+	g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 	session.observeMatchedModel()
 	session.recordTTFT(latency)
-	respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.provider.Protocol, respBody, false)
+	respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.providerProtocol, respBody, false)
 	spec.writeNonStream(session.writer, respBody)
 	completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
 	observepkg.RecordSuccess(
@@ -270,8 +269,8 @@ func (g *Gateway) recordInferenceStreamResponse(session *inferenceSession, spec 
 		observepkg.RecordSuccess(
 			completedLogParams,
 			respBody,
-			observeStreamTokenUsage(spec.serviceProtocol, session.provider.Protocol, respBody),
-			spec.streamAssembler(session.provider.Protocol),
+			observeStreamTokenUsage(spec.serviceProtocol, session.providerProtocol, respBody),
+			spec.streamAssembler(session.providerProtocol),
 			recordTokens,
 			verdicts,
 			g.recordAndBroadcast,

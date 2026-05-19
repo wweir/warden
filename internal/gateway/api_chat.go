@@ -97,21 +97,21 @@ func (g *Gateway) handleChatCompletion(w http.ResponseWriter, r *http.Request, r
 
 // forwardNonStreamRequest sends a non-streaming chat completion request upstream.
 // Returns parsed response, raw body bytes, and first-token latency for passthrough optimization.
-func (g *Gateway) forwardNonStreamRequest(ctx context.Context, provCfg *config.ProviderConfig, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, []byte, time.Duration, error) {
+func (g *Gateway) forwardNonStreamRequest(ctx context.Context, provCfg *config.ProviderConfig, providerProtocol string, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, []byte, time.Duration, error) {
 	var resp openai.ChatCompletionResponse
 
-	reqBody, err := upstreampkg.MarshalProtocolRequest(provCfg.Protocol, req)
+	reqBody, err := upstreampkg.MarshalProtocolRequest(providerProtocol, req)
 	if err != nil {
 		return resp, nil, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
 	clientReq, _ := requestctxpkg.ClientRequestFromContext(ctx)
-	body, latency, err := upstreampkg.SendRequest(ctx, clientReq, provCfg, upstreampkg.ProtocolEndpoint(provCfg.Protocol, false), reqBody, false)
+	body, latency, err := upstreampkg.SendRequest(ctx, clientReq, provCfg, upstreampkg.JoinBaseURLPath(config.FormatEffectiveURL(provCfg, providerProtocol), upstreampkg.ProtocolEndpoint(providerProtocol, false)), reqBody, false)
 	if err != nil {
 		return resp, nil, latency, err
 	}
 
-	resp, err = upstreampkg.UnmarshalProtocolResponse(provCfg.Protocol, body)
+	resp, err = upstreampkg.UnmarshalProtocolResponse(providerProtocol, body)
 	if err != nil {
 		return resp, nil, latency, fmt.Errorf("unmarshal response: %w", err)
 	}

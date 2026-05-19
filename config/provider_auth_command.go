@@ -36,7 +36,7 @@ func (b *ProviderConfig) ResolveAPIKey(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if p := provider.Get(b.Protocol); p != nil {
+	if p := provider.Get(b.Format); p != nil {
 		token, err := p.GetAccessToken(ctx, b.ConfigDir)
 		if err != nil {
 			return "", err

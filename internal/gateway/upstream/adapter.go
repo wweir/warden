@@ -11,14 +11,54 @@ import (
 
 // ProtocolEndpoint returns the upstream API endpoint for a given protocol and API type.
 func ProtocolEndpoint(protocol string, isResponses bool) string {
-	if isResponses {
-		return "/responses"
+	format := config.ProviderFormatOpenAI
+	if protocol == "anthropic" {
+		format = config.ProviderFormatAnthropic
 	}
-	switch protocol {
-	case "anthropic":
-		return anthropic.Endpoint
+	serviceProtocol := "chat"
+	if isResponses {
+		serviceProtocol = "responses"
+	}
+	return ProtocolEndpointForFormat(format, serviceProtocol, false)
+}
+
+// ProtocolEndpointForFormat returns the upstream API endpoint based on format,
+// service protocol, and bridge configuration.
+func ProtocolEndpointForFormat(format string, serviceProtocol string, bridge bool) string {
+	switch format {
+	case config.ProviderFormatAnthropic:
+		switch serviceProtocol {
+		case "responses":
+			if bridge {
+				return anthropic.Endpoint
+			}
+			fallthrough
+		case "chat", "anthropic", "":
+			return anthropic.Endpoint
+		default:
+			return anthropic.Endpoint
+		}
+	case config.ProviderFormatOpenAI:
+		fallthrough
 	default:
-		return "/chat/completions"
+		switch serviceProtocol {
+		case "responses":
+			if bridge {
+				return "/chat/completions"
+			}
+			return "/responses"
+		case "anthropic":
+			if bridge {
+				return "/chat/completions"
+			}
+			return "/chat/completions"
+		case "chat":
+			return "/chat/completions"
+		case "embeddings":
+			return "/" + config.ServiceProtocolEmbeddings
+		default:
+			return "/chat/completions"
+		}
 	}
 }
 
