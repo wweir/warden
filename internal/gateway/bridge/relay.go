@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -12,6 +13,10 @@ import (
 	anthproto "github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
+
+// maxBufferedStreamBody is the upper bound for fully buffering an upstream
+// SSE response before conversion by StreamAnthropicAsResponses.
+var maxBufferedStreamBody = int64(64 << 20) // 64 MiB
 
 type ErrorSource string
 
@@ -228,7 +233,13 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 // through StreamChatAsResponses. The first return value is the raw upstream
 // SSE (Anthropic format) for token-usage and tool-call observation.
 func StreamAnthropicAsResponses(src io.Reader, dst http.ResponseWriter, model string) ([]byte, []byte, error) {
-	rawAnthropic, readErr := io.ReadAll(src)
+	rawAnthropic, readErr := io.ReadAll(io.LimitReader(src, maxBufferedStreamBody+1))
+	if int64(len(rawAnthropic)) > maxBufferedStreamBody {
+		return rawAnthropic[:maxBufferedStreamBody], nil, &relayError{
+			source: SourceUpstream,
+			err:    fmt.Errorf("anthropic stream body exceeds %d MiB limit", maxBufferedStreamBody>>20),
+		}
+	}
 	if readErr != nil {
 		return rawAnthropic, nil, &relayError{source: SourceUpstream, err: readErr}
 	}
