@@ -145,8 +145,9 @@ func (a *app) run() (err error) {
 	}
 
 	server := &http.Server{
-		Addr:    a.cfg.Addr,
-		Handler: a,
+		Addr:         a.cfg.Addr,
+		Handler:      a,
+		WriteTimeout: 10 * time.Minute,
 	}
 
 	go func() {
