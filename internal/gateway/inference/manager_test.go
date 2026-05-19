@@ -30,7 +30,7 @@ func newSingleProviderManager(t *testing.T) *Manager {
 
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary": {URL: "http://primary.example.com", Protocol: "openai"},
+			"primary": {URL: "http://primary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {
@@ -118,8 +118,8 @@ func TestManagerHandleErrorFailoversWhenAlternativeExists(t *testing.T) {
 
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
-			"primary":   {URL: "http://primary.example.com", Protocol: "openai"},
-			"secondary": {URL: "http://secondary.example.com", Protocol: "openai"},
+			"primary":   {URL: "http://primary.example.com", Format: "openai"},
+			"secondary": {URL: "http://secondary.example.com", Format: "openai"},
 		},
 		Route: map[string]*config.RouteConfig{
 			"/test": {

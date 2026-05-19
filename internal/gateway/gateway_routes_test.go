@@ -35,7 +35,7 @@ func TestGatewayModelsExposeObservedWildcardMatch(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 				Models:   []string{"gpt-4.1-mini"},
 			},
@@ -87,7 +87,7 @@ func TestObserveMatchedModelAddsWildcardMatchAfterSuccess(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      "http://openai.example.com",
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -166,7 +166,7 @@ func TestGatewayProxyWildcardMatchAppearsInModelsForOllamaStyleRoute(t *testing.
 		Provider: map[string]*config.ProviderConfig{
 			"ollama": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -226,7 +226,7 @@ func TestGatewayResponsesRouteExposesResponsesEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -294,7 +294,7 @@ func TestGatewayChatRouteExposesEmbeddingsEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -351,7 +351,7 @@ func TestGatewayEmbeddingsForwardsSupportedRequestShapes(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -483,7 +483,7 @@ func TestGatewayRouteExplicitServiceProtocolsExposeMultipleEndpoints(t *testing.
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -562,15 +562,15 @@ func TestGatewayMixedServiceProvidersSelectsProviderByEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"chat": {
 				URL:              upstream.URL,
-				Protocol:         "openai",
+				Format:         "openai",
 				APIKey:           config.SecretString("token"),
-				ServiceProtocols: []string{config.RouteProtocolChat},
+				Protocols: []string{config.RouteProtocolChat},
 			},
 			"embeddings": {
 				URL:              upstream.URL,
-				Protocol:         "openai",
+				Format:         "openai",
 				APIKey:           config.SecretString("token"),
-				ServiceProtocols: []string{config.ServiceProtocolEmbeddings},
+				Protocols: []string{config.ServiceProtocolEmbeddings},
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -631,7 +631,7 @@ func TestGatewayResponsesRouteExposesEmbeddingsEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -684,7 +684,7 @@ func TestGatewayAnthropicRouteExposesEmbeddingsEndpointViaOpenAIProvider(t *test
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -752,12 +752,12 @@ func TestGatewayAnthropicRouteEmbeddingsSkipsNativeAnthropicProvider(t *testing.
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:      anthropicUpstream.URL,
-				Protocol: "anthropic",
+				Format: "anthropic",
 				APIKey:   config.SecretString("token"),
 			},
 			"openai": {
 				URL:             openAIUpstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -807,7 +807,7 @@ func TestGatewayAnthropicRouteRejectsEmbeddingsOnNativeAnthropicProvider(t *test
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:      "https://anthropic.example.com",
-				Protocol: "anthropic",
+				Format: "anthropic",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -842,13 +842,13 @@ func TestGatewayAnthropicRouteRejectsEmbeddingsOnNativeAnthropicProvider(t *test
 	}
 }
 
-func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
+func TestGatewayResponsesToChatConvertsReasoningEffort(t *testing.T) {
 	t.Parallel()
 
-	upstreamHits := 0
+	var gotBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			upstreamHits++
+			gotBody, _ = io.ReadAll(r.Body)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_123","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
@@ -859,7 +859,7 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -887,14 +887,14 @@ func TestGatewayResponsesToChatRejectsUnsupportedStatelessField(t *testing.T) {
 
 	gw.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusBadRequest, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%q", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "reasoning") {
-		t.Fatalf("body = %q, want unsupported field message", rec.Body.String())
+	if !gjson.GetBytes(gotBody, "reasoning_effort").Exists() {
+		t.Fatalf("upstream body missing reasoning_effort: %s", string(gotBody))
 	}
-	if upstreamHits != 0 {
-		t.Fatalf("upstream hits = %d, want 0", upstreamHits)
+	if gjson.GetBytes(gotBody, "reasoning_effort").String() != "medium" {
+		t.Fatalf("reasoning_effort = %s, want medium", gjson.GetBytes(gotBody, "reasoning_effort").String())
 	}
 }
 
@@ -915,7 +915,7 @@ func TestGatewayResponsesToChatMapsMaxOutputTokensAndNormalizesToolChoice(t *tes
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -983,7 +983,7 @@ func TestGatewayResponsesToChatConvertsInstructionsToDeveloperMessage(t *testing
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -1051,7 +1051,7 @@ func TestGatewayResponsesToChatNormalizesUsageAndFinishReason(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -1131,7 +1131,7 @@ func TestGatewayResponsesToChatRetriesDeveloperRoleAsSystem(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -1193,7 +1193,7 @@ func TestGatewayAnthropicToChatLogsBridgeConversionFailure(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -1262,7 +1262,7 @@ func TestGatewayStatefulResponsesBypassResponsesToChatConversion(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -1318,7 +1318,7 @@ func TestGatewayChatRouteRejectsResponsesRequests(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -1374,7 +1374,7 @@ func TestGatewayChatRouteExposesChatEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"gmn": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -1438,7 +1438,7 @@ func TestGatewayAnthropicRouteExposesMessagesEndpoint(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:      upstream.URL,
-				Protocol: "anthropic",
+				Format: "anthropic",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -1499,7 +1499,7 @@ func TestGatewayAnthropicRouteBridgesToChatProvider(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -1573,7 +1573,7 @@ func TestGatewayResponsesRouteBridgesToMessagesProvider(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:                  upstream.URL,
-				Protocol:             "anthropic",
+				Format:             "anthropic",
 				APIKey:               config.SecretString("token"),
 				AnthropicToResponses: true,
 			},
@@ -1638,7 +1638,7 @@ func TestGatewayResponsesRouteRejectsStatefulOnMessagesBridge(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:                  upstream.URL,
-				Protocol:             "anthropic",
+				Format:             "anthropic",
 				APIKey:               config.SecretString("token"),
 				AnthropicToResponses: true,
 			},
@@ -1706,12 +1706,12 @@ func TestGatewayProxyPrefersLongestMatchingRoutePrefix(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"short": {
 				URL:      shortUpstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token-short"),
 			},
 			"long": {
 				URL:      longUpstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token-long"),
 			},
 		},
@@ -1790,13 +1790,13 @@ func TestGatewayAnthropicToChatFailoverKeepsPublicModelName(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"primary": {
 				URL:             primary.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
 			"fallback": {
 				URL:             fallback.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -1884,12 +1884,12 @@ func TestGatewayResponsesFailoverSwitchesToResponsesToChatProvider(t *testing.T)
 		Provider: map[string]*config.ProviderConfig{
 			"primary": {
 				URL:      primary.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token-primary"),
 			},
 			"fallback": {
 				URL:             fallback.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token-fallback"),
 				ResponsesToChat: true,
 			},
@@ -1980,12 +1980,12 @@ func TestGatewayAnthropicFailoverSwitchesToAnthropicToChatProvider(t *testing.T)
 		Provider: map[string]*config.ProviderConfig{
 			"primary": {
 				URL:      primary.URL + "/v1",
-				Protocol: "anthropic",
+				Format: "anthropic",
 				APIKey:   config.SecretString("token-primary"),
 			},
 			"fallback": {
 				URL:             fallback.URL,
-				Protocol:        "openai",
+				Format:        "openai",
 				APIKey:          config.SecretString("token-fallback"),
 				AnthropicToChat: true,
 			},
@@ -2055,7 +2055,7 @@ func TestGatewayProxyPassesThroughNonInferencePaths(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -2114,7 +2114,7 @@ func TestGatewayChatRouteInjectsSystemPromptOnlyWhenEnabled(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},
@@ -2199,7 +2199,7 @@ func TestGatewayResponsesRouteInjectsSystemPromptOnlyWhenEnabled(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:      upstream.URL,
-				Protocol: "openai",
+				Format: "openai",
 				APIKey:   config.SecretString("token"),
 			},
 		},

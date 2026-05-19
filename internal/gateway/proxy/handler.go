@@ -97,7 +97,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		provCfg = current.Provider
 		target = current.Target
 	} else {
-		provCfg = h.selectProviderWithoutModel(route, serviceProtocol, explicitProvider)
+		provCfg, target = h.selectProviderWithoutModel(route, serviceProtocol, explicitProvider)
 		if provCfg == nil {
 			http.Error(w, "provider not found for route", http.StatusBadRequest)
 			return
@@ -117,7 +117,11 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 	}
 	handleAttemptError := func(attemptErr error, latency time.Duration) (retry bool, canceled bool) {
 		if allowFailover {
-			h.deps.Selector.RecordOutcome(provCfg.Name, attemptErr, latency)
+			var format string
+			if target != nil {
+				format = target.Format
+			}
+			h.deps.Selector.RecordOutcome(provCfg.Name, format, attemptErr, latency)
 		}
 		if r.Context().Err() != nil {
 			return false, true
@@ -147,7 +151,11 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 			provReqBody = upstreampkg.RewriteModelRaw(reqBody, target.UpstreamModel)
 		}
 
-		targetURL := provCfg.URL + r.URL.Path
+		targetURL := provCfg.URL
+		if target != nil && target.URL != "" {
+			targetURL = target.URL
+		}
+		targetURL = upstreampkg.JoinBaseURLPath(targetURL, r.URL.Path)
 		if r.URL.RawQuery != "" {
 			targetURL += "?" + r.URL.RawQuery
 		}
@@ -161,7 +169,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		if provCfg.Backend == config.ProviderBackendCLIProxy {
 			upstreampkg.SanitizeCLIProxyRequestHeaders(proxyReq.Header)
 		}
-		if err := providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg); err != nil {
+		if err := providerauth.SetHeaders(r.Context(), proxyReq.Header, provCfg, targetURL); err != nil {
 			upErr := &sel.UpstreamError{Code: http.StatusUnauthorized, Body: providerauth.ClientAuthFailureBody}
 			if retry, canceled := handleAttemptError(upErr, 0); canceled {
 				return
@@ -221,7 +229,11 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 				continue
 			}
 		} else {
-			h.deps.Selector.RecordOutcome(provCfg.Name, nil, latency)
+			var accessMode string
+			if target != nil {
+				accessMode = target.Format
+			}
+			h.deps.Selector.RecordOutcome(provCfg.Name, accessMode, nil, latency)
 			h.deps.Selector.ObserveMatchedModel(target)
 			if stream && h.deps.RecordTTFT != nil {
 				h.deps.RecordTTFT(metricLabels, latency)
@@ -236,14 +248,18 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 
 		durationMs := time.Since(startTime).Milliseconds()
 		logResp := []byte(errBody)
+		providerProtocol := provCfg.Format
+		if target != nil && target.Format != "" {
+			providerProtocol = target.Format
+		}
 		if inspectableBody {
-			logResp = observepkg.AssembleResponse(serviceProtocol, provCfg.Protocol, decodedRespBody)
+			logResp = observepkg.AssembleResponse(serviceProtocol, providerProtocol, decodedRespBody)
 		}
 
 		observation := tokenusagepkg.Missing(tokenusagepkg.SourceReportedJSON)
 		hasTokenUsage := resp.StatusCode == http.StatusOK && inspectableBody
 		if hasTokenUsage {
-			observation = observeProxyTokenUsage(stream, serviceProtocol, provCfg.Protocol, decodedRespBody, logResp)
+			observation = observeProxyTokenUsage(stream, serviceProtocol, providerProtocol, decodedRespBody, logResp)
 			if h.deps.RecordTokenMetrics != nil {
 				h.deps.RecordTokenMetrics(metricLabels, observation, durationMs)
 			}
@@ -287,7 +303,7 @@ func (h *Handler) HandleModels(w http.ResponseWriter, route *config.RouteConfig)
 	})
 }
 
-func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceProtocol, explicitProvider string) *config.ProviderConfig {
+func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceProtocol, explicitProvider string) (*config.ProviderConfig, *sel.RouteTarget) {
 	for _, providerName := range route.ProviderNames() {
 		if explicitProvider != "" && providerName != explicitProvider {
 			continue
@@ -299,9 +315,39 @@ func (h *Handler) selectProviderWithoutModel(route *config.RouteConfig, serviceP
 		if serviceProtocol != "" && !config.ProviderSupportsServiceProtocol(candidate, serviceProtocol) {
 			continue
 		}
-		return candidate
+		format := inferProviderFormat(candidate, serviceProtocol)
+		target := &sel.RouteTarget{
+			ProviderName: providerName,
+			Format:       format,
+			URL:          config.FormatEffectiveURL(candidate, format),
+		}
+		if target.URL == "" {
+			target.URL = candidate.URL
+		}
+		return candidate, target
 	}
-	return nil
+	return nil, nil
+}
+
+func inferProviderFormat(provCfg *config.ProviderConfig, serviceProtocol string) string {
+	if provCfg == nil {
+		return ""
+	}
+	formats := config.ProviderFormats(provCfg)
+	if len(formats) == 0 {
+		return provCfg.Format
+	}
+	if len(formats) == 1 {
+		return formats[0]
+	}
+	for _, format := range formats {
+		for _, protocol := range config.FormatServiceProtocols(provCfg, format) {
+			if protocol == serviceProtocol {
+				return format
+			}
+		}
+	}
+	return formats[0]
 }
 
 func readBody(r *http.Request) ([]byte, error) {
