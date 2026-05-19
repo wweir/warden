@@ -37,6 +37,11 @@ import NavBar from './components/NavBar.vue'
   --c-success-text: #166534;
   --c-border: #e2e8f0;
   --c-border-light: #f1f5f9;
+  --c-bg-soft: var(--c-surface-soft);
+  --c-bg-1: var(--c-surface);
+  --c-bg-2: var(--c-bg);
+  --c-bg-3: var(--c-border-light);
+  --c-border-2: var(--c-border);
   --c-text: #1e293b;
   --c-text-2: #475569;
   --c-text-3: #64748b;
@@ -203,7 +208,7 @@ code {
   font-weight: 500;
   margin-bottom: 16px;
 }
-.msg-success, .msg.success { background: var(--c-success-bg); color: #065f46; }
+.msg-success, .msg.success { background: var(--c-success-bg); color: var(--c-success-text); }
 .msg-error, .msg.error { background: var(--c-danger-bg); color: #991b1b; }
 .msg-warning, .msg.warning { background: var(--c-warning-bg); color: #92400e; }
 
@@ -255,7 +260,7 @@ code {
   font-weight: 600;
   white-space: nowrap;
 }
-.badge-ok { background: var(--c-success-bg); color: #065f46; }
+.badge-ok { background: var(--c-success-bg); color: var(--c-success-text); }
 .badge-warn { background: var(--c-warning-bg); color: #92400e; }
 .badge-error { background: var(--c-danger-bg); color: #991b1b; }
 .badge-muted { background: var(--c-border-light); color: var(--c-text-3); }

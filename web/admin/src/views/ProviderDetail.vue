@@ -56,15 +56,14 @@
         <ProviderBasicForm
           v-model:provider-name="providerName"
           v-model:provider-config="providerConfig"
-          v-model:selected-preset-id="selectedPresetId"
-          v-model:selected-service-template-id="selectedServiceTemplateId"
+          :selected-preset-id="selectedPresetId"
+          :selected-service-template-id="selectedServiceTemplateId"
           v-model:selected-auth-source="selectedAuthSource"
           v-model:show-api-key="showAPIKey"
           v-model:api-key-touched="apiKeyTouched"
           :is-create="create"
           :provider-presets="providerPresets"
           :current-preset="currentPreset"
-          :is-managed-cli-proxy-access="isManagedCLIProxyAccess"
           :visible-service-protocol-templates="visibleServiceProtocolTemplates"
           :config-doc="configDoc"
           @access-type-change="handleAccessTypeChange"
@@ -91,8 +90,6 @@
       <ProviderRuntimeTools
         v-if="!create && detail"
         :detail="detail"
-        :provider-presets="providerPresets"
-        :discovered-model-ids="discoveredModelIds"
         :provider-config="providerConfig"
         @reload="load"
         @error="handleError"
@@ -123,6 +120,7 @@ import {
   providerBackend,
   providerFamily,
 } from "../config-utils.js";
+import { buildProviderSaveConfig, parseProviderModels } from "../utils/providerHelpers.ts";
 import { bindPollState, pollUntilAlive } from "../runtime-utils.js";
 import { useProviderForm } from "../composables/useProviderForm.ts";
 import ProviderBasicForm from "../components/ProviderBasicForm.vue";
@@ -163,7 +161,6 @@ const {
   providerPresets,
   currentPreset,
   currentServiceTemplate,
-  isManagedCLIProxyAccess,
   effectiveAuthSource,
   visibleServiceProtocolTemplates,
   handleAccessTypeChange: formHandleAccessTypeChange,
@@ -184,35 +181,13 @@ const pageTitle = computed(() =>
   props.create ? t("providerDetail.newProviderTitle") : providerName.value || props.name
 );
 
-const parsedModels = computed(() => {
-  if (!detail.value) return [];
-  return detail.value.models.map((model) => {
-    if (typeof model === "string") {
-      try {
-        return JSON.parse(model);
-      } catch {
-        return { id: model };
-      }
-    }
-    return model;
-  });
-});
-
-const discoveredModelIds = computed(() => {
-  const ids = [];
-  for (const model of parsedModels.value) {
-    const id = typeof model?.id === "string" ? model.id.trim() : "";
-    if (!id || ids.includes(id)) continue;
-    ids.push(id);
-  }
-  return ids;
-});
+const discoveredModelIds = computed(() => parseProviderModels(detail.value?.models).ids);
 
 const showsHeadersField = computed(
   () =>
     !!providerFamily(providerConfig.value) &&
     !["copilot"].includes(providerFamily(providerConfig.value)) &&
-    !isManagedCLIProxyAccess.value
+    providerBackend(providerConfig.value) !== "cliproxy"
 );
 
 function handleAccessTypeChange(presetID) {
@@ -274,79 +249,80 @@ function discard() {
   load();
 }
 
+function validateForm() {
+  if (!configSource.value?.source_type?.file) {
+    return { valid: false, error: t("config.savingDisabled") };
+  }
+
+  const name = providerName.value.trim();
+  if (!name) {
+    return { valid: false, error: t("providerDetail.nameRequired") };
+  }
+  if (!providerFamily(providerConfig.value)) {
+    return { valid: false, error: t("providerDetail.familyRequired") };
+  }
+  if (!currentPreset.value) {
+    return { valid: false, error: t("providerDetail.providerTypeRequired") };
+  }
+  const family = providerFamily(providerConfig.value);
+  if (!["copilot"].includes(family) && !providerConfig.value.url?.trim()) {
+    return { valid: false, error: t("providerDetail.urlRequired") };
+  }
+  const selectedAuthMode = effectiveAuthSource.value;
+  if (selectedAuthMode === "command" && !String(providerConfig.value.api_key_command || "").trim()) {
+    return { valid: false, error: t("providerDetail.apiKeyCommandRequired") };
+  }
+  const backend = family === "openai" ? providerBackend(providerConfig.value) : "";
+  if (backend === "cliproxy") {
+    if (!String(providerConfig.value.backend_provider || "").trim()) {
+      return { valid: false, error: t("providerDetail.backendProviderRequired") };
+    }
+    if ((providerConfig.value.service_protocols || []).length === 0) {
+      return { valid: false, error: t("providerDetail.backendServiceProtocolsRequired") };
+    }
+  }
+  if (!currentServiceTemplate.value) {
+    return { valid: false, error: t("providerDetail.interfaceTemplateRequired") };
+  }
+
+  return { valid: true, name };
+}
+
+function buildSavePayload(name) {
+  const nextConfig = cloneData(configDoc.value);
+  nextConfig.provider = nextConfig.provider || {};
+
+  if (props.create && nextConfig.provider[name]) {
+    throw new Error(t("providerDetail.providerExists", { name }));
+  }
+
+  const nextProviderConfig = cloneData(providerConfig.value);
+  nextProviderConfig.family = providerFamily(nextProviderConfig);
+  nextProviderConfig.backend = nextProviderConfig.family === "openai" ? providerBackend(nextProviderConfig) : "";
+  nextProviderConfig.backend_provider = normalizeLowerText(nextProviderConfig.backend_provider);
+  nextProviderConfig.service_protocols = normalizeServiceProtocols(nextProviderConfig.service_protocols);
+  if (!nextProviderConfig.backend) {
+    delete nextProviderConfig.backend;
+    delete nextProviderConfig.backend_provider;
+  }
+  applyProviderAuthSource(nextProviderConfig, effectiveAuthSource.value);
+
+  nextConfig.provider[name] = buildProviderSaveConfig(nextProviderConfig);
+  return nextConfig;
+}
+
 async function apply() {
   saving.value = true;
   message.value = "";
   error.value = "";
   try {
-    if (!configSource.value?.source_type?.file) {
-      error.value = t("config.savingDisabled");
+    const validation = validateForm();
+    if (!validation.valid) {
+      error.value = validation.error;
       return;
     }
 
-    const name = providerName.value.trim();
-    if (!name) {
-      error.value = t("providerDetail.nameRequired");
-      return;
-    }
-    if (!providerFamily(providerConfig.value)) {
-      error.value = t("providerDetail.familyRequired");
-      return;
-    }
-    if (!currentPreset.value) {
-      error.value = t("providerDetail.providerTypeRequired");
-      return;
-    }
-    const family = providerFamily(providerConfig.value);
-    if (!["copilot"].includes(family) && !providerConfig.value.url?.trim()) {
-      error.value = t("providerDetail.urlRequired");
-      return;
-    }
-    const selectedAuthMode = effectiveAuthSource.value;
-    if (selectedAuthMode === "command" && !String(providerConfig.value.api_key_command || "").trim()) {
-      error.value = t("providerDetail.apiKeyCommandRequired");
-      return;
-    }
-    const backend = family === "openai" ? providerBackend(providerConfig.value) : "";
-    if (backend === "cliproxy") {
-      if (!String(providerConfig.value.backend_provider || "").trim()) {
-        error.value = t("providerDetail.backendProviderRequired");
-        return;
-      }
-      if ((providerConfig.value.service_protocols || []).length === 0) {
-        error.value = t("providerDetail.backendServiceProtocolsRequired");
-        return;
-      }
-    }
-    if (!currentServiceTemplate.value) {
-      error.value = t("providerDetail.interfaceTemplateRequired");
-      return;
-    }
-
-    const nextConfig = cloneData(configDoc.value);
-    nextConfig.provider = nextConfig.provider || {};
-
-    if (props.create && nextConfig.provider[name]) {
-      error.value = t("providerDetail.providerExists", { name });
-      return;
-    }
-
-    const nextProviderConfig = cloneData(providerConfig.value);
-    nextProviderConfig.family = providerFamily(nextProviderConfig);
-    nextProviderConfig.backend = nextProviderConfig.family === "openai" ? providerBackend(nextProviderConfig) : "";
-    nextProviderConfig.backend_provider = normalizeLowerText(nextProviderConfig.backend_provider);
-    nextProviderConfig.service_protocols = normalizeServiceProtocols(nextProviderConfig.service_protocols);
-    if (!nextProviderConfig.backend) {
-      delete nextProviderConfig.backend;
-      delete nextProviderConfig.backend_provider;
-    }
-    if (nextProviderConfig.service_protocols.length === 0) {
-      delete nextProviderConfig.service_protocols;
-    }
-    delete nextProviderConfig.protocol;
-    applyProviderAuthSource(nextProviderConfig, selectedAuthMode);
-    nextConfig.provider[name] = nextProviderConfig;
-
+    const nextConfig = buildSavePayload(validation.name);
     const cleaned = cleanConfig(nextConfig);
     const result = await validateConfig(cleaned);
     if (!result.valid) {
@@ -368,12 +344,12 @@ async function apply() {
     }
 
     if (props.create) {
-      await router.replace(`/providers/${encodeURIComponent(name)}`);
+      await router.replace(`/providers/${encodeURIComponent(validation.name)}`);
     } else {
       await load();
     }
 
-    message.value = t("providerDetail.savedMsg", { name });
+    message.value = t("providerDetail.savedMsg", { name: validation.name });
   } catch (e) {
     if (e.message?.includes("config file changed externally")) {
       configFileChanged.value = true;

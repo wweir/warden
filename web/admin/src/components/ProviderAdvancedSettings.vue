@@ -10,25 +10,32 @@
     </p>
     <div class="form-grid">
       <template v-if="showsHeadersField">
-        <label>headers</label>
+        <label id="provider-headers-label">headers</label>
         <KeyValueEditor
           :model-value="headers"
           @update:model-value="$emit('update:headers', $event)"
           keyPlaceholder="Header name"
           valuePlaceholder="Value"
+          keyAriaLabel="Header name"
+          valueAriaLabel="Header value"
+          addAriaLabel="Add header"
+          deleteAriaLabel="Delete header"
+          aria-labelledby="provider-headers-label"
         />
       </template>
 
-      <label>proxy</label>
+      <label for="provider-proxy">proxy</label>
       <input
+        id="provider-proxy"
         :value="proxy"
         @input="$emit('update:proxy', $event.target.value)"
         class="form-input"
         :placeholder="$t('providerDetail.proxyPlaceholder')"
       />
 
-      <label>{{ $t("providerDetail.timeout") }}</label>
+      <label for="provider-timeout">{{ $t("providerDetail.timeout") }}</label>
       <input
+        id="provider-timeout"
         :value="timeout"
         @input="$emit('update:timeout', $event.target.value)"
         class="form-input"

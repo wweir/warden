@@ -5,6 +5,7 @@
         class="form-input kv-key"
         :value="row.key"
         :placeholder="keyPlaceholder"
+        :aria-label="keyAriaLabel"
         :readonly="keyReadonly"
         @input="updateKey(idx, $event.target.value)"
       />
@@ -12,11 +13,12 @@
         class="form-input kv-value"
         :value="row.value"
         :placeholder="valuePlaceholder"
+        :aria-label="valueAriaLabel"
         @input="updateValue(idx, $event.target.value)"
       />
-      <button class="btn-icon kv-del" @click="removeRow(idx)" title="Delete">&times;</button>
+      <button class="btn-icon kv-del" @click="removeRow(idx)" :title="deleteAriaLabel" :aria-label="deleteAriaLabel">&times;</button>
     </div>
-    <button class="kv-add" @click="addRow">+ Add</button>
+    <button class="kv-add" @click="addRow" :aria-label="addAriaLabel">+ Add</button>
   </div>
 </template>
 
@@ -27,6 +29,10 @@ const props = defineProps({
   modelValue: { type: Object, default: () => ({}) },
   keyPlaceholder: { type: String, default: 'Key' },
   valuePlaceholder: { type: String, default: 'Value' },
+  keyAriaLabel: { type: String, default: 'Key' },
+  valueAriaLabel: { type: String, default: 'Value' },
+  addAriaLabel: { type: String, default: 'Add row' },
+  deleteAriaLabel: { type: String, default: 'Delete row' },
   keyReadonly: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])

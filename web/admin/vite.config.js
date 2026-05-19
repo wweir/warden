@@ -10,12 +10,14 @@ export default defineConfig({
 			ext: ".br",
 			threshold: 0,
 			filter: /\.(js|mjs|json|css|html|svg)$/i,
+			verbose: false,
 		}),
 	],
 	base: "/_admin/",
 	build: {
 		outDir: "dist",
 		emptyOutDir: true,
+		reportCompressedSize: false,
 	},
 	server: {
 		proxy: {

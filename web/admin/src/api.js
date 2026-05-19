@@ -314,3 +314,11 @@ export function parseMetrics(text) {
 
 	return metrics;
 }
+
+export function probeProviderAccess(name, url, apiKey, headers = {}, proxy = "") {
+	return apiJSON("/_admin/api/providers/probe-access", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ name, url, api_key: apiKey, headers, proxy }),
+	});
+}

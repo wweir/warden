@@ -1,6 +1,6 @@
-import { providerBackend, providerFamily } from "../config-utils.js";
+import { normalizeServiceProtocols, providerBackend, providerFamily } from "../config-utils.js";
 
-export function providerEffectiveBackend(provider: any): string {
+function providerEffectiveBackend(provider: any): string {
   return providerFamily(provider) === "openai" ? providerBackend(provider) : "";
 }
 
@@ -38,7 +38,7 @@ export function inferAuthSource(provider: any): string {
   return "api_key";
 }
 
-export function authSourceIDs(provider: any): string[] {
+function authSourceIDs(provider: any): string[] {
   const family = providerFamily(provider);
   if (!family) return [];
   if (providerEffectiveBackend(provider) === "cliproxy") return ["none"];
@@ -80,6 +80,29 @@ export function inferPresetID(provider: any, presets: any[]): string {
   return "";
 }
 
+// parseProviderModels parses raw model entries (strings or objects) and extracts deduplicated IDs
+export function parseProviderModels(models: any[]): { parsed: any[]; ids: string[] } {
+  const parsed = (models || []).map((model) => {
+    if (typeof model === "string") {
+      try {
+        return JSON.parse(model);
+      } catch {
+        return { id: model };
+      }
+    }
+    return model;
+  });
+
+  const ids: string[] = [];
+  for (const model of parsed) {
+    const id = typeof model?.id === "string" ? model.id.trim() : "";
+    if (!id || ids.includes(id)) continue;
+    ids.push(id);
+  }
+
+  return { parsed, ids };
+}
+
 export function createEmptyProviderConfig() {
   return {
     url: "",
@@ -100,4 +123,110 @@ export function createEmptyProviderConfig() {
     api_key_command_timeout: "",
     api_key_command_ttl: "",
   };
+}
+
+// migrateAccessModeToLegacy converts backend endpoint config to form fields.
+// Handles multi-endpoint `endpoints` structure by using the first endpoint as primary.
+export function migrateAccessModeToLegacy(provider: any): any {
+  const endpoints = provider?.endpoints || provider?.endpoint;
+  const endpointNames = endpoints ? Object.keys(endpoints) : [];
+  const configuredProtocols = firstNonEmptyArray(provider?.service_protocols, provider?.protocols);
+  if (endpointNames.length === 0) {
+    return {
+      ...provider,
+      family: provider?.family || provider?.format || "",
+      service_protocols: configuredProtocols,
+    };
+  }
+
+  const result = { ...provider };
+  if (endpointNames.length === 1) {
+    const ep = endpoints[endpointNames[0]];
+    result.url = ep.url || provider.url || "";
+    result.family = ep.format || endpointNames[0];
+    result.service_protocols = firstNonEmptyArray(ep.protocols, configuredProtocols);
+    result.responses_to_chat = !!ep.responses_to_chat;
+    result.anthropic_to_chat = !!ep.anthropic_to_chat;
+    result.anthropic_to_responses = !!ep.anthropic_to_responses;
+    if (ep.models?.length) result.models = ep.models;
+    if (ep.headers) result.headers = { ...ep.headers };
+  } else {
+    // Multi-endpoint: merge all protocols for display; preserve endpoint structure
+    const allProtocols = new Set<string>();
+    for (const name of endpointNames) {
+      const ep = endpoints[name];
+      if (ep?.protocols) {
+        for (const p of ep.protocols) allProtocols.add(p);
+      }
+    }
+    const firstEp = endpoints[endpointNames[0]];
+    result.url = firstEp.url || provider.url || "";
+    result.family = firstEp.format || endpointNames[0];
+    result.service_protocols = Array.from(allProtocols);
+    result.endpoint = endpoints;
+  }
+  return result;
+}
+
+function firstNonEmptyArray(...values: any[]): any[] {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value;
+  }
+  return [];
+}
+
+// buildProviderSaveConfig converts frontend form fields to backend provider config fields.
+// Maps family -> format, service_protocols -> protocols, and ensures required defaults.
+export function buildProviderSaveConfig(provider: any): any {
+  const result = { ...provider };
+  const family = providerFamily(provider);
+
+  // Remove internal-only fields
+  delete result.family;
+  delete result.service_protocols;
+  delete result.protocol;
+
+  result.format = family || "openai";
+
+  if (family === "copilot") {
+    return result;
+  }
+
+  // Preserve multi-endpoint configuration
+  const endpoint = provider.endpoint || provider.endpoints;
+  if (endpoint && Object.keys(endpoint).length > 1) {
+    const protocols = normalizeServiceProtocols(provider.service_protocols);
+    for (const name of Object.keys(endpoint)) {
+      const ep = endpoint[name];
+      if (ep.format === "openai") {
+        ep.protocols = Array.from(new Set([...protocols.filter((p: string) => p !== "anthropic"), "chat"]));
+      } else if (ep.format === "anthropic") {
+        ep.protocols = ["chat", "anthropic"];
+      }
+    }
+    result.endpoint = endpoint;
+    delete result.url;
+    delete result.format;
+    delete result.protocols;
+    delete result.anthropic_to_chat;
+    delete result.anthropic_to_responses;
+    return result;
+  }
+
+  const sp = new Set<string>();
+  if (provider.service_protocols) {
+    for (const p of provider.service_protocols) sp.add(p);
+  }
+  sp.add("chat");
+
+  // Derive bridge flags from selected protocols
+  if (family === "openai") {
+    result.anthropic_to_chat = sp.has("anthropic");
+  } else if (family === "anthropic") {
+    sp.add("anthropic");
+    result.anthropic_to_responses = sp.has("responses");
+  }
+  result.protocols = Array.from(sp);
+
+  return result;
 }

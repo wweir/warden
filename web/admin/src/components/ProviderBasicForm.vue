@@ -10,10 +10,12 @@
           <span class="badge badge-ok">{{ currentPreset.title }}</span>
         </div>
       </div>
+
       <div class="form-grid">
-        <label>{{ $t("providerDetail.providerType") }} <span class="req">*</span></label>
+        <label for="provider-type">{{ $t("providerDetail.providerType") }} <span class="req">*</span></label>
         <div class="field-stack">
           <select
+            id="provider-type"
             :value="selectedPresetId"
             class="form-input"
             @change="$emit('access-type-change', $event.target.value)"
@@ -21,59 +23,56 @@
             <option v-if="!selectedPresetId" value="" disabled>
               {{ $t("providerDetail.selectProviderTypePlaceholder") }}
             </option>
-            <option v-for="option in accessTypeOptions" :key="option.id" :value="option.id">
-              {{ accessTypeTitle(option) }}
+            <option v-for="option in providerPresets" :key="option.id" :value="option.id">
+              {{ option?.title || "" }}
             </option>
           </select>
-          <p class="hint">{{ currentAccessTypeSummary }}</p>
+          <p class="hint">{{ currentPreset?.summary || "" }}</p>
           <p v-if="!currentPreset" class="hint">{{ $t("providerDetail.noPresetWarning") }}</p>
         </div>
 
-        <label>{{ $t("providerDetail.name") }} <span class="req">*</span></label>
+        <label for="provider-name">{{ $t("providerDetail.name") }} <span class="req">*</span></label>
         <input
           v-if="isCreate"
+          id="provider-name"
           :value="providerName"
           @input="$emit('update:providerName', $event.target.value.trim())"
           class="form-input"
           :placeholder="$t('providerDetail.namePlaceholder')"
         />
-        <input v-else :value="providerName" class="form-input" readonly />
+        <input v-else id="provider-name" :value="providerName" class="form-input" readonly />
 
-        <template v-if="showsURLField">
-          <label>{{ providerUrlLabel }} <span class="req">*</span></label>
+        <template v-if="mode === 'direct'">
+          <label for="provider-url">url <span class="req">*</span></label>
           <div class="field-stack">
             <input
+              id="provider-url"
               v-model="localProviderConfig.url"
               class="form-input"
               :placeholder="providerUrlPlaceholder(localProviderConfig)"
             />
-            <p v-if="providerUrlHint" class="hint">{{ providerUrlHint }}</p>
           </div>
-        </template>
 
-        <template v-else>
-          <label>{{ $t("providerDetail.connectionSection") }}</label>
-          <div class="section-note">{{ connectionNote }}</div>
-        </template>
-
-        <template v-if="authSourceOptions.length > 0">
-          <label>{{ $t("providerDetail.authSource") }}</label>
+          <label for="auth-source">{{ $t("providerDetail.authSource") }}</label>
           <div class="field-stack">
             <select
+              id="auth-source"
               :value="selectedAuthSource"
               @change="$emit('update:selectedAuthSource', $event.target.value)"
               class="form-input"
             >
-              <option v-for="option in authSourceOptions" :key="option.id" :value="option.id">
+              <option v-for="option in directAuthOptions" :key="option.id" :value="option.id">
                 {{ option.title }}
               </option>
             </select>
             <p v-if="authSourceHint" class="hint">{{ authSourceHint }}</p>
+
             <div class="auth-source-details">
-              <template v-if="authMode === 'api_key'">
-                <label class="auth-detail-label">api_key</label>
+              <template v-if="effectiveAuthMode === 'api_key'">
+                <label class="auth-detail-label" for="api-key-input">api_key</label>
                 <div class="secret-field">
                   <input
+                    id="api-key-input"
                     :type="showAPIKey ? 'text' : 'password'"
                     :value="secretDisplay(localProviderConfig.api_key)"
                     @input="handleApiKeyInput"
@@ -89,19 +88,24 @@
                     {{ showAPIKey ? "🙈" : "👁" }}
                   </button>
                   <span :class="['badge', isSecretConfigured(localProviderConfig.api_key) ? 'badge-ok' : 'badge-none']">
-                    {{
-                      isSecretConfigured(localProviderConfig.api_key)
-                        ? $t("common.configured")
-                        : $t("common.notSet")
-                    }}
+                    {{ isSecretConfigured(localProviderConfig.api_key) ? $t("common.configured") : $t("common.notSet") }}
                   </span>
                 </div>
+                <ConnectionProbe
+                  :provider-name="providerName"
+                  :url="localProviderConfig.url"
+                  :api-key="localProviderConfig.api_key"
+                  :headers="localProviderConfig.headers"
+                  :proxy="localProviderConfig.proxy"
+                  @suggest="handleProbeSuggest"
+                />
               </template>
 
-              <template v-else-if="authMode === 'command'">
-                <label class="auth-detail-label">api_key_command</label>
+              <template v-else-if="effectiveAuthMode === 'command'">
+                <label class="auth-detail-label" for="api-key-command">api_key_command</label>
                 <div class="field-stack">
                   <input
+                    id="api-key-command"
                     v-model="localProviderConfig.api_key_command"
                     class="form-input"
                     :placeholder="$t('providerDetail.apiKeyCommandPlaceholder')"
@@ -110,41 +114,72 @@
                 </div>
                 <div class="auth-command-grid">
                   <div class="field-stack">
-                    <label class="auth-detail-label">{{ $t("providerDetail.apiKeyCommandTimeout") }}</label>
-                    <input v-model="localProviderConfig.api_key_command_timeout" class="form-input" placeholder="5s" />
+                    <label class="auth-detail-label" for="api-key-command-timeout">{{ $t("providerDetail.apiKeyCommandTimeout") }}</label>
+                    <input id="api-key-command-timeout" v-model="localProviderConfig.api_key_command_timeout" class="form-input" placeholder="5s" />
                   </div>
                   <div class="field-stack">
-                    <label class="auth-detail-label">{{ $t("providerDetail.apiKeyCommandTTL") }}</label>
-                    <input v-model="localProviderConfig.api_key_command_ttl" class="form-input" placeholder="5m" />
+                    <label class="auth-detail-label" for="api-key-command-ttl">{{ $t("providerDetail.apiKeyCommandTTL") }}</label>
+                    <input id="api-key-command-ttl" v-model="localProviderConfig.api_key_command_ttl" class="form-input" placeholder="5m" />
                   </div>
                 </div>
               </template>
-
-              <template v-else-if="authMode === 'config_dir'">
-                <label class="auth-detail-label">config_dir</label>
-                <input v-model="localProviderConfig.config_dir" class="form-input" :placeholder="configDirPlaceholder" />
-              </template>
-
-              <template v-else>
-                <div class="section-note">{{ authNote }}</div>
-                <CLIProxyAuthManager
-                  v-if="isManagedCLIProxyAccess"
-                  :is-managed-cli-proxy-access="isManagedCLIProxyAccess"
-                  :config-doc="configDoc"
-                  :is-create="isCreate"
-                  :provider-name="providerName"
-                  :verify-model="verifyModel"
-                  @success="handleAuthSuccess"
-                  @error="handleAuthError"
-                />
-              </template>
             </div>
+          </div>
+
+        </template>
+
+        <template v-else-if="mode === 'cliproxy'">
+          <label for="provider-url">{{ $t("providerDetail.cliproxyEndpoint") }}</label>
+          <div class="field-stack">
+            <input
+              id="provider-url"
+              v-model="localProviderConfig.url"
+              class="form-input"
+              :placeholder="providerUrlPlaceholder(localProviderConfig)"
+            />
+            <p class="hint">{{ $t("providerDetail.cliproxyEndpointHint") }}</p>
+          </div>
+
+          <label for="backend-provider">backend_provider <span class="req">*</span></label>
+          <div class="field-stack">
+            <input
+              id="backend-provider"
+              v-model="localProviderConfig.backend_provider"
+              class="form-input"
+              placeholder="codex"
+            />
+          </div>
+
+          <div class="form-grid-full">
+            <CLIProxyAuthManager
+              :is-managed-cli-proxy-access="true"
+              :config-doc="configDoc"
+              :is-create="isCreate"
+              :provider-name="providerName"
+              verify-model=""
+              @success="$emit('auth-success', $event)"
+              @error="$emit('auth-error', $event)"
+            />
           </div>
         </template>
 
-        <label>{{ $t("providerDetail.availableInterfaces") }}</label>
+        <template v-else-if="mode === 'copilot'">
+          <label for="config-dir">config_dir <span class="req">*</span></label>
+          <div class="field-stack">
+            <input
+              id="config-dir"
+              v-model="localProviderConfig.config_dir"
+              class="form-input"
+              :placeholder="configDirPlaceholder"
+            />
+            <p class="hint">{{ $t("providerDetail.configDirAuthHint") }}</p>
+          </div>
+        </template>
+
+        <label for="service-interface">{{ $t("providerDetail.availableInterfaces") }}</label>
         <div class="field-stack">
           <select
+            id="service-interface"
             :value="selectedServiceTemplateId"
             class="form-input"
             @change="$emit('service-template-change', $event.target.value)"
@@ -152,24 +187,11 @@
             <option v-if="!selectedServiceTemplateId" value="" disabled>
               {{ $t("providerDetail.selectInterfacePlaceholder") }}
             </option>
-            <option v-for="template in capabilityTemplateOptions" :key="template.id" :value="template.id">
+            <option v-for="template in visibleServiceProtocolTemplates" :key="template.id" :value="template.id">
               {{ serviceTemplateTitle(template) }}
             </option>
           </select>
           <p class="hint">{{ currentServiceTemplateSummary }}</p>
-        </div>
-
-        <div class="form-grid-full interface-preview">
-          <span class="interface-preview-title">{{ $t("providerDetail.finalInterfaces") }}</span>
-          <div class="protocol-chip-list">
-            <span v-for="protocol in effectiveServiceProtocols" :key="protocol" class="badge badge-muted">
-              {{ serviceProtocolTitle(protocol) }}
-            </span>
-            <span v-if="effectiveServiceProtocols.length === 0" class="hint">
-              {{ $t("providerDetail.noEffectiveProtocols") }}
-            </span>
-          </div>
-          <p class="hint">{{ $t("providerDetail.finalInterfacesHint") }}</p>
         </div>
       </div>
     </section>
@@ -181,17 +203,17 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   normalizeServiceProtocols,
+  providerBackend,
   providerFamily,
 } from "../config-utils.js";
 import {
-  authSourceIDs,
   effectiveAuthSource as resolveEffectiveAuthSource,
   isSecretConfigured,
-  providerEffectiveBackend,
   providerUrlPlaceholder,
   secretDisplay,
 } from "../utils/providerHelpers.ts";
 import CLIProxyAuthManager from "./CLIProxyAuthManager.vue";
+import ConnectionProbe from "./ConnectionProbe.vue";
 
 const { t } = useI18n();
 
@@ -206,7 +228,6 @@ const props = defineProps({
   isCreate: { type: Boolean, default: false },
   providerPresets: { type: Array, required: true },
   currentPreset: { type: Object, default: null },
-  isManagedCLIProxyAccess: { type: Boolean, required: true },
   visibleServiceProtocolTemplates: { type: Array, required: true },
   configDoc: { type: Object, required: true },
 });
@@ -214,8 +235,6 @@ const props = defineProps({
 const emit = defineEmits([
   "update:providerName",
   "update:providerConfig",
-  "update:selectedPresetId",
-  "update:selectedServiceTemplateId",
   "update:selectedAuthSource",
   "update:showAPIKey",
   "update:apiKeyTouched",
@@ -225,74 +244,38 @@ const emit = defineEmits([
   "auth-error",
 ]);
 
-
-const localProviderConfig = computed({
-  get: () => props.providerConfig,
-  set: (val) => emit("update:providerConfig", val),
-});
-
-const accessTypeOptions = computed(() => props.providerPresets);
-
-const currentAccessTypeSummary = computed(() => {
-  const current = accessTypeOptions.value.find((option) => option.id === props.selectedPresetId);
-  return current?.summary || "";
-});
-
-const capabilityTemplateOptions = computed(() => props.visibleServiceProtocolTemplates);
+// Read-only access to providerConfig. Template v-model on nested properties
+// mutates the object directly; the parent detects changes via deep watch.
+const localProviderConfig = computed(() => props.providerConfig);
 
 const currentServiceTemplateSummary = computed(() => {
   if (!props.selectedServiceTemplateId) return t("providerDetail.interfaceTemplateNoMatchDesc");
-  const current = capabilityTemplateOptions.value.find((template) => template.id === props.selectedServiceTemplateId);
+  const current = props.visibleServiceProtocolTemplates.find((template) => template.id === props.selectedServiceTemplateId);
   return current?.summary || t("providerDetail.interfaceTemplateNoMatchDesc");
 });
 
-const effectiveServiceProtocols = computed(() => {
-  return normalizeServiceProtocols(props.providerConfig.service_protocols);
+const mode = computed(() => {
+  const family = providerFamily(props.providerConfig);
+  const backend = providerBackend(props.providerConfig);
+  if (family === "copilot") return "copilot";
+  if (backend === "cliproxy") return "cliproxy";
+  return "direct";
 });
 
-const showsURLField = computed(
-  () =>
-    !!providerFamily(props.providerConfig) &&
-    !["copilot"].includes(providerFamily(props.providerConfig)) &&
-    !props.isManagedCLIProxyAccess
-);
-
-const isCLIProxyBackend = computed(() => providerEffectiveBackend(props.providerConfig) === "cliproxy");
-
-const connectionNote = computed(() =>
-  props.isManagedCLIProxyAccess ? t("providerDetail.cliproxyConnectionNote") : t("providerDetail.noUrlRequired")
-);
-
-const authNote = computed(() =>
-  props.isManagedCLIProxyAccess ? t("providerDetail.cliproxyAuthNote") : t("providerDetail.authManagedByBackend")
-);
-
-const providerUrlLabel = computed(() =>
-  isCLIProxyBackend.value ? t("providerDetail.cliproxyEndpoint") : "url"
-);
-
-const providerUrlHint = computed(() =>
-  isCLIProxyBackend.value ? t("providerDetail.cliproxyEndpointHint") : ""
-);
-
-const authSourceOptions = computed(() => {
-  return authSourceIDs(props.providerConfig).map((id) => ({
+const directAuthOptions = computed(() => {
+  return ["api_key", "command", "none"].map((id) => ({
     id,
-    title: id === "none" && isCLIProxyBackend.value ? t("providerDetail.authSourceCLIProxyAuthDir") : authSourceTitle(id),
+    title: authSourceTitle(id),
   }));
 });
 
-const authMode = computed(() => {
+const effectiveAuthMode = computed(() => {
   return resolveEffectiveAuthSource(props.providerConfig, props.selectedAuthSource);
 });
 
 const authSourceHint = computed(() => {
-  if (props.isManagedCLIProxyAccess) {
-    return t("providerDetail.cliproxyAuthNote");
-  }
-  switch (authMode.value) {
+  switch (effectiveAuthMode.value) {
     case "command": return t("providerDetail.apiKeyCommandSecurityHint");
-    case "config_dir": return t("providerDetail.configDirAuthHint");
     case "none": return t("providerDetail.noAuthHint");
     default: return "";
   }
@@ -300,29 +283,15 @@ const authSourceHint = computed(() => {
 
 const configDirPlaceholder = computed(() => {
   if (props.currentPreset?.default_config_dir) return props.currentPreset.default_config_dir;
-  switch (providerFamily(props.providerConfig)) {
-    case "copilot": return "~/.config/github-copilot";
-    default: return "";
-  }
+  if (providerFamily(props.providerConfig) === "copilot") return "~/.config/github-copilot";
+  return "";
 });
-
-const verifyModel = computed(() => "");
-
-function accessTypeTitle(option) {
-  return option?.title || "";
-}
 
 function serviceTemplateTitle(template) {
   if (!template?.id) return "";
   const key = `providerDetail.interfaceTemplate_${template.id}`;
   const translated = t(key);
   return translated === key ? template.title || template.id : translated;
-}
-
-function serviceProtocolTitle(protocol) {
-  const key = `providerDetail.serviceProtocol_${protocol}`;
-  const translated = t(key);
-  return translated === key ? protocol : translated;
 }
 
 function authSourceTitle(source) {
@@ -341,12 +310,58 @@ function handleApiKeyInput(event) {
   emit("update:providerConfig", newConfig);
 }
 
-function handleAuthSuccess(filename) {
-  emit("auth-success", filename);
-}
+function handleProbeSuggest(suggestion) {
+  const newConfig = { ...props.providerConfig };
+  const capabilities = suggestion.capabilities || [];
+  const formats = suggestion.formats || [];
 
-function handleAuthError(error) {
-  emit("auth-error", error);
+  newConfig.service_protocols = [...capabilities];
+
+  // Dual-protocol provider: create multi-endpoint configuration
+  if (formats.length > 1 && formats.includes("openai") && formats.includes("anthropic")) {
+    const url = suggestion.resolvedURL || props.providerConfig.url;
+    newConfig.endpoint = {
+      default: {
+        url,
+        format: "openai",
+        protocols: capabilities.filter((p) => p !== "anthropic"),
+      },
+      anthropic: {
+        url,
+        format: "anthropic",
+        protocols: ["chat", "anthropic"],
+      },
+    };
+    newConfig.family = "openai";
+  } else {
+    if (formats.length === 1) {
+      newConfig.family = formats[0];
+    } else if (formats.length > 1) {
+      const currentFamily = providerFamily(newConfig);
+      if (!formats.includes(currentFamily)) {
+        newConfig.family = "openai";
+      }
+    }
+
+    if (newConfig.family === "openai") {
+      newConfig.anthropic_to_chat = capabilities.includes("anthropic");
+    } else if (newConfig.family === "anthropic") {
+      newConfig.anthropic_to_responses = capabilities.includes("responses");
+    }
+  }
+
+  emit("update:providerConfig", newConfig);
+
+  const suggested = normalizeServiceProtocols(capabilities);
+  const matchedTemplate = props.visibleServiceProtocolTemplates.find((template) => {
+    const templateProtocols = normalizeServiceProtocols(template.service_protocols);
+    if (templateProtocols.length !== suggested.length) return false;
+    return templateProtocols.every((p) => suggested.includes(p));
+  });
+
+  if (matchedTemplate) {
+    emit("service-template-change", matchedTemplate.id);
+  }
 }
 </script>
 
@@ -436,33 +451,6 @@ function handleAuthError(error) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-}
-
-.protocol-chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.interface-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--c-bg-soft);
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-}
-
-.interface-preview-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--c-text-2);
-}
-
-.section-note {
-  font-size: 13px;
-  color: var(--c-text-3);
 }
 
 .req {

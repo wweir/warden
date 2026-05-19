@@ -35,56 +35,12 @@
       </span>
     </section>
 
-    <details class="info-section runtime-panel" open>
-      <summary>{{ $t("providerDetail.runtimeOverview") }}</summary>
+    <details class="info-section runtime-panel">
+      <summary>
+        <span>{{ $t("providerDetail.runtimeOverview") }}</span>
+        <span class="runtime-summary">{{ runtimeSummary }}</span>
+      </summary>
       <div class="runtime-tables">
-        <table class="info-table">
-          <tr>
-            <td>{{ $t("providerDetail.name") }}</td>
-            <td>{{ detail.name }}</td>
-          </tr>
-          <tr>
-            <td>{{ $t("providerDetail.providerType") }}</td>
-            <td>{{ runtimeAccessTypeTitle }}</td>
-          </tr>
-          <tr v-if="!detailIsManagedCLIProxy">
-            <td>{{ $t("providerDetail.url") }}</td>
-            <td><code>{{ detail.url }}</code></td>
-          </tr>
-          <tr v-if="!detailIsManagedCLIProxy">
-            <td>{{ $t("providerDetail.family") }}</td>
-            <td>{{ detail.family || detail.protocol }}</td>
-          </tr>
-          <tr v-if="!detailIsManagedCLIProxy && detail.backend">
-            <td>backend</td>
-            <td>{{ detail.backend }}</td>
-          </tr>
-          <tr v-if="!detailIsManagedCLIProxy && detail.backend_provider">
-            <td>backend_provider</td>
-            <td>{{ detail.backend_provider }}</td>
-          </tr>
-          <tr v-if="detailIsManagedCLIProxy">
-            <td>{{ $t("providerDetail.connectionSection") }}</td>
-            <td>{{ $t("providerDetail.cliproxyConnectionNote") }}</td>
-          </tr>
-          <tr>
-            <td>{{ $t("providerDetail.serviceInterfaces") }}</td>
-            <td>{{ (detail.service_protocols || []).join(", ") || "-" }}</td>
-          </tr>
-          <tr>
-            <td>{{ $t("providerDetail.displayProtocols") }}</td>
-            <td>{{ (detail.display_protocols || []).join(", ") || "-" }}</td>
-          </tr>
-          <tr v-if="detailIsManagedCLIProxy">
-            <td>{{ $t("providerDetail.authSourceRuntime") }}</td>
-            <td>{{ $t("providerDetail.authSourceCLIProxyAuthDir") }}</td>
-          </tr>
-          <tr v-else>
-            <td>{{ $t("providerDetail.authSourceRuntime") }}</td>
-            <td>{{ runtimeAuthSourceTitle }}</td>
-          </tr>
-        </table>
-
         <table v-if="detail.status" class="info-table">
           <tr>
             <td>{{ $t("providerDetail.suppressed") }}</td>
@@ -150,15 +106,21 @@
       </div>
 
       <div class="probe-grid">
-        <select v-model="selectedProbeModel" class="form-input">
+        <label class="probe-field">
+          <span>{{ $t("providerDetail.probeModelLabel") }}</span>
+          <select v-model="selectedProbeModel" class="form-input">
           <option value="">{{ $t("providerDetail.selectModel") }}</option>
           <option v-for="model in probeableModels" :key="model" :value="model">{{ model }}</option>
-        </select>
-        <select v-model="selectedProbeProtocol" class="form-input">
+          </select>
+        </label>
+        <label class="probe-field">
+          <span>{{ $t("providerDetail.probeProtocolLabel") }}</span>
+          <select v-model="selectedProbeProtocol" class="form-input">
           <option value="chat">chat</option>
           <option value="responses">responses</option>
           <option value="anthropic">anthropic</option>
-        </select>
+          </select>
+        </label>
         <button @click="handleProbe" class="btn btn-primary" :disabled="exactProbing || !selectedProbeModel">
           {{ exactProbing ? $t("providerDetail.probing") : $t("providerDetail.probeModelProtocol") }}
         </button>
@@ -208,15 +170,12 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useProviderRuntime } from "../composables/useProviderRuntime.ts";
 import { formatTime } from "../utils/providerFormatters.ts";
-import { inferAuthSource, inferPresetID } from "../utils/providerHelpers.ts";
-import { providerBackend } from "../config-utils.js";
+import { parseProviderModels } from "../utils/providerHelpers.ts";
 
 const { t } = useI18n();
 
 const props = defineProps({
   detail: { type: Object, required: true },
-  providerPresets: { type: Array, required: true },
-  discoveredModelIds: { type: Array, required: true },
   providerConfig: { type: Object, required: true },
 });
 
@@ -237,22 +196,11 @@ const {
   unsuppressProvider,
 } = useProviderRuntime(props.detail.name);
 
-const parsedModels = computed(() => {
-  if (!props.detail) return [];
-  return props.detail.models.map((model) => {
-    if (typeof model === "string") {
-      try {
-        return JSON.parse(model);
-      } catch {
-        return { id: model };
-      }
-    }
-    return model;
-  });
-});
+const parsedModels = computed(() => parseProviderModels(props.detail?.models).parsed);
+const runtimeDiscoveredModelIds = computed(() => parseProviderModels(props.detail?.models).ids);
 
 const probeableModels = computed(() =>
-  props.discoveredModelIds.length > 0 ? props.discoveredModelIds : [...(props.providerConfig.models || [])]
+  runtimeDiscoveredModelIds.value.length > 0 ? runtimeDiscoveredModelIds.value : [...(props.providerConfig.models || [])]
 );
 
 const exactProbeResults = computed(() => {
@@ -264,24 +212,15 @@ const exactProbeResults = computed(() => {
   });
 });
 
-const detailIsManagedCLIProxy = computed(() => providerBackend(props.detail) === "cliproxy");
-
-const runtimeAccessTypeTitle = computed(() => {
-  if (!props.detail) return "-";
-  const presetID = inferPresetID(props.detail, props.providerPresets);
-  const preset = props.providerPresets.find((item) => item.id === presetID);
-  return preset?.title || props.detail.family || props.detail.protocol || "-";
-});
-
-const runtimeAuthSourceTitle = computed(() => {
-  const source = props.detail?.auth_source || inferAuthSource(props.detail);
-  switch (source) {
-    case "api_key": return t("providerDetail.authSourceStatic");
-    case "command": return t("providerDetail.authSourceCommand");
-    case "config_dir": return t("providerDetail.authSourceConfigDir");
-    case "none": return t("providerDetail.authSourceNone");
-    default: return source || "-";
-  }
+const runtimeSummary = computed(() => {
+  const status = props.detail?.status;
+  const suppressed = status?.suppressed ? t("providerDetail.suppressedState") : t("providerDetail.notSuppressed");
+  const failures = status?.consecutive_failures ?? 0;
+  return t("providerDetail.runtimeSummary", {
+    models: parsedModels.value.length,
+    suppressed,
+    failures,
+  });
 });
 
 async function handleDetectProtocols() {

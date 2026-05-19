@@ -5,7 +5,8 @@ import {
   effectiveAuthSource as resolveEffectiveAuthSource,
   inferAuthSource,
   inferPresetID,
-} from "../utils/providerHelpers.js";
+  migrateAccessModeToLegacy,
+} from "../utils/providerHelpers.ts";
 
 const REDACTED = "__REDACTED__";
 const CLEAR_API_KEY_MARKER = "__clear_api_key__";
@@ -43,8 +44,10 @@ export function useProviderForm(providerFormMeta: any) {
   const visibleServiceProtocolTemplates = computed(() => {
     const family = providerFamily(providerConfig.value);
     const backend = providerBackend(providerConfig.value);
+    const endpoint = providerConfig.value?.endpoint || providerConfig.value?.endpoints;
+    const isMultiEndpoint = endpoint && Object.keys(endpoint).length > 1;
     return serviceProtocolTemplates.value.filter((template: any) => {
-      if (Array.isArray(template.families) && template.families.length > 0 && !template.families.includes(family)) {
+      if (!isMultiEndpoint && Array.isArray(template.families) && template.families.length > 0 && !template.families.includes(family)) {
         return false;
       }
       if (Array.isArray(template.backends) && template.backends.length > 0 && !template.backends.includes(backend)) {
@@ -82,11 +85,9 @@ export function useProviderForm(providerFormMeta: any) {
       selectedAuthSource.value = resolveEffectiveAuthSource(providerConfig.value, selectedAuthSource.value);
       syncSelectedServiceTemplate();
     },
-    { deep: true }
   );
 
   function inferServiceTemplateID(provider: any) {
-    if (provider.responses_to_chat) return "";
     for (const template of visibleServiceProtocolTemplates.value) {
       if (!serviceProtocolsEqual(provider.service_protocols, template.service_protocols)) continue;
       if (!!provider.anthropic_to_chat !== !!template.anthropic_to_chat) continue;
@@ -104,7 +105,7 @@ export function useProviderForm(providerFormMeta: any) {
     const template = serviceProtocolTemplates.value.find((item: any) => item.id === templateID);
     if (!template) return;
     providerConfig.value.service_protocols = [...(template.service_protocols || [])];
-    providerConfig.value.responses_to_chat = false;
+    providerConfig.value.responses_to_chat = !!template.responses_to_chat;
     providerConfig.value.anthropic_to_chat = !!template.anthropic_to_chat;
     providerConfig.value.anthropic_to_responses = !!template.anthropic_to_responses;
     selectedServiceTemplateId.value = templateID;
@@ -229,13 +230,15 @@ export function useProviderForm(providerFormMeta: any) {
   }
 
   function loadProviderConfig(provider: any) {
+    // Migrate access mode config to legacy fields for internal form representation
+    const migrated = migrateAccessModeToLegacy(provider);
     providerConfig.value = {
       ...createEmptyProviderConfig(),
-      ...cloneData(provider),
-      family: provider.family || provider.protocol || "",
-      service_protocols: [...(provider.service_protocols || [])],
-      models: [...(provider.models || [])],
-      headers: cloneData(provider.headers || {}),
+      ...cloneData(migrated),
+      family: migrated.family || migrated.format || "",
+      service_protocols: [...(migrated.service_protocols || [])],
+      models: [...(migrated.models || [])],
+      headers: cloneData(migrated.headers || {}),
     };
     selectedPresetId.value = inferPresetID(providerConfig.value, providerPresets.value);
     selectedAuthSource.value = inferAuthSource(providerConfig.value);

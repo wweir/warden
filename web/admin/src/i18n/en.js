@@ -495,6 +495,25 @@ export default {
 	},
 	providerDetail: {
 		newProviderTitle: "New Provider",
+
+		// Connection probe
+		detectAccessModes: "Auto Detect",
+		accessProbing: "Detecting...",
+		applyProbeSuggestion: "Apply Detection",
+		probeSuggestion: "Detected {capability}",
+		available: "Available",
+		unavailable: "Unavailable",
+		resolvedURL: "Resolved URL",
+		discoveredModels: "Discovered models",
+		bridgeOptions: "Bridge Options",
+		anthropicToChatBridge: "Enable Anthropic bridge",
+		anthropicToChatBridgeHint: "Route Anthropic /messages through OpenAI /chat/completions",
+		responsesToChatBridge: "Enable Responses bridge",
+		responsesToChatBridgeHint: "Convert Responses requests to Chat requests",
+		anthropicToResponsesBridge: "Enable Responses bridge",
+		anthropicToResponsesBridgeHint: "Route stateless Responses through Anthropic /messages",
+		probeFailed: "Probe failed",
+		probeDetectedFormats: "Detected available protocols:",
 		configEditor: "Provider Config",
 		configEditorDesc:
 			"Start with a provider type, then fill connection, auth, and capability details. Saving still writes the full config file and restarts the gateway.",
@@ -504,7 +523,7 @@ export default {
 		selectProviderTypePlaceholder: "Select a provider type",
 		quickSetupSection: "Common Config",
 		quickSetupDesc:
-			"Keep only the fields needed for creation and routine edits here: type, connection, auth, and available interfaces.",
+			"Keep only the fields needed for creation and routine edits here: type, connection, auth, and interface capabilities.",
 		connectionSection: "Connection",
 		authSection: "Authentication",
 		authSource: "Auth Source",
@@ -518,14 +537,11 @@ export default {
 		advancedSectionDesc:
 			"Only low-frequency network and HTTP header fields live here. Provider type and interface capabilities stay in Common Config.",
 		noPresetWarning: "The current fields do not match any preset; the underlying fields stay in the config, but this page does not edit them directly.",
-		availableInterfaces: "Available Interfaces",
-		selectInterfacePlaceholder: "Select available interfaces",
-		finalInterfaces: "Final Available Interfaces",
-		finalInterfacesHint:
-			"Routes can only use the interfaces shown here. Saving writes the matching service_protocols.",
+		availableInterfaces: "Interface Capabilities",
+		selectInterfacePlaceholder: "Select interface capabilities",
 		interfaceTemplateNoMatchDesc:
 			"The current interface fields do not match a built-in supported combination. Select an interface set explicitly supported by Warden.",
-		interfaceTemplateRequired: "Select an available interface set explicitly supported by Warden",
+		interfaceTemplateRequired: "Select an interface capability set explicitly supported by Warden",
 		interfaceTemplate_chat_only: "Chat Only",
 		interfaceTemplate_chat_only_desc:
 			"Allow chat only. Recommended for Ollama, cliproxy, or upstreams where other interfaces are not verified.",
@@ -547,7 +563,7 @@ export default {
 		serviceProtocol_responses: "Responses",
 		serviceProtocol_embeddings: "Embeddings",
 		serviceProtocol_anthropic: "Anthropic Messages",
-		noEffectiveProtocols: "No available interfaces yet",
+		noEffectiveProtocols: "No interface capabilities yet",
 		noUrlRequired: "This provider type does not require a separate HTTP URL.",
 		cliproxyEndpoint: "cliproxy endpoint",
 		cliproxyEndpointHint:
@@ -647,8 +663,6 @@ export default {
 		backendProviderRequired: "cliproxy backend requires backend_provider",
 		backendServiceProtocolsRequired: "cliproxy backend requires explicit service_protocols",
 		configuredProtocols: "Configured Route Protocols",
-		serviceInterfaces: "Configured Service Interfaces",
-		displayProtocols: "Detected Display Interfaces",
 		timeout: "Timeout",
 		defaultTimeout: "default (120s)",
 		apiKey: "API Key",
@@ -656,8 +670,11 @@ export default {
 		runtimeToolsDesc:
 			"Health checks, suppression, and protocol probes are runtime actions, so they stay out of the main saved-config form.",
 		runtimeOverview: "Runtime Overview",
+		runtimeSummary: "{models} models · {suppressed} · {failures} failures",
 		consecutiveFailures: "Consecutive Failures",
 		suppressed: "Auto Suppressed",
+		suppressedState: "Suppressed",
+		notSuppressed: "Not suppressed",
 		yes: "Yes",
 		no: "No",
 		suppressedUntil: "Suppressed Until",
@@ -689,6 +706,8 @@ export default {
 		detecting: "Detecting...",
 		detectDisplayProtocols: "Detect Display Protocols",
 		selectModel: "Select model",
+		probeModelLabel: "Model",
+		probeProtocolLabel: "Protocol",
 		probing: "Probing...",
 		probeModelProtocol: "Probe Model Protocol",
 		probeColModel: "Model",

@@ -144,6 +144,7 @@
 </template>
 
 <script setup>
+import { toRef } from "vue";
 import { useCliproxyAuth } from "../composables/useCliproxyAuth.ts";
 import { formatTime } from "../utils/providerFormatters.ts";
 
@@ -175,7 +176,7 @@ const {
   deleteCliproxyAuth,
   cliproxyAuthOnlineDisabled,
   formatters,
-} = useCliproxyAuth(() => props.isManagedCLIProxyAccess, () => props.configDoc);
+} = useCliproxyAuth(toRef(props, "isManagedCLIProxyAccess"), toRef(props, "configDoc"));
 
 async function handleImport() {
   try {

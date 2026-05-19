@@ -1,15 +1,16 @@
 <template>
-  <section class="form-panel optional-panel">
-    <div class="form-panel-head">
-      <div>
-        <h4>
+  <details class="form-panel optional-panel" :open="shouldOpen">
+    <summary>
+      <h4>
           {{ $t("providerDetail.staticModelsSection") }}
           <span class="summary-count">
             {{ $t("providerDetail.modelsConfiguredCount", { n: modelValue.length }) }}
           </span>
-        </h4>
-      </div>
-    </div>
+      </h4>
+      <span v-if="!isCreate && discoveredModelIds.length > 0" class="hint">
+        {{ $t("providerDetail.modelsDiscoveredCount", { n: discoveredModelIds.length }) }}
+      </span>
+    </summary>
     <p class="section-desc advanced-desc">
       {{ $t("providerDetail.staticModelsSectionDesc") }}
     </p>
@@ -17,9 +18,6 @@
       <div class="models-toolbar">
         <div class="models-meta">
           <span class="badge badge-none">{{ $t("providerDetail.modelsOptional") }}</span>
-          <span v-if="!isCreate" class="hint">
-            {{ $t("providerDetail.modelsDiscoveredCount", { n: discoveredModelIds.length }) }}
-          </span>
         </div>
         <button
           v-if="missingDiscoveredModelIds.length > 0"
@@ -45,7 +43,7 @@
       />
       <p class="hint models-hint">{{ $t("providerDetail.modelsBehaviorHint") }}</p>
     </div>
-  </section>
+  </details>
 </template>
 
 <script setup>
@@ -64,6 +62,8 @@ const missingDiscoveredModelIds = computed(() =>
   props.discoveredModelIds.filter((id) => !props.modelValue.includes(id))
 );
 
+const shouldOpen = computed(() => props.modelValue.length > 0 || props.discoveredModelIds.length === 0);
+
 function appendDiscoveredModels() {
   if (missingDiscoveredModelIds.value.length === 0) return;
   emit("update:modelValue", [...props.modelValue, ...missingDiscoveredModelIds.value]);
@@ -76,15 +76,16 @@ function appendDiscoveredModels() {
   padding-top: 18px;
 }
 
-.form-panel-head {
+summary {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
+  cursor: pointer;
   margin-bottom: 12px;
 }
 
-.form-panel-head h4 {
+summary h4 {
   margin: 0;
   font-size: 15px;
 }
