@@ -17,8 +17,8 @@
   Linux / macOS / Windows 的运行、托管与运维边界
 - [responses-protocol-support.md](./responses-protocol-support.md)
   `responses` 协议的实现边界:无状态请求的 inference 链路、带 `previous_response_id` 的透明转发链路,以及 `responses_to_chat` 的兼容范围
-- [provider-dynamic-capability-discovery-plan.md](./provider-dynamic-capability-discovery-plan.md)
-  provider 协议能力展示、单协议 route 设计和运行时真相来源
+- [provider.md](./provider.md)
+  provider 子系统一站式文档：配置模型、access mode、单协议 route、能力探测、创建体验、兼容迁移与设计决策
 - [anthropic-messages-to-chat-plan.md](./anthropic-messages-to-chat-plan.md)
   `anthropic_to_chat` 的受控桥接范围
 - [api-key-design.md](./api-key-design.md)
@@ -29,9 +29,6 @@
   `/embeddings` 的 service protocol 暴露面、provider 兼容边界与 Anthropic route 语义
 - [cliproxy-backend.md](./cliproxy-backend.md)
   通过 OpenAI-compatible sidecar 接入 CLIProxyAPI/cliproxy 的边界与配置约束
-- [provider-creation-experience.md](./provider-creation-experience.md)
-  provider 新建页的 intent-first 创建层、preset 元数据和 capability template 边界
-
 ## Rules
 
 - 变更现状时，先判断应该更新根文档还是专题文档，不要机械地到处复制
