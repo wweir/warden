@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	responsesMessageOutputIndex = 0
-	responsesMessageContentIdx  = 0
+	responsesReasoningOutputIndex = 0
+	responsesMessageOutputIndex   = 0
+	responsesMessageContentIdx    = 0
 )
 
 // ChatResponseToResponsesResponse converts a Chat Completions response to a Responses API response.
@@ -46,6 +47,18 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 
 	choice := chatResp.Choices[0]
 	msg := choice.Message
+	if msg.ReasoningContent != "" {
+		item := map[string]any{
+			"type":    "reasoning",
+			"id":      makeReasoningItemID(chatResp.ID),
+			"summary": makeReasoningSummary(msg.ReasoningContent),
+		}
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return resp, fmt.Errorf("marshal reasoning item: %w", err)
+		}
+		resp.Output = append(resp.Output, raw)
+	}
 	if msg.Content != nil {
 		item := map[string]any{
 			"type":    "message",
@@ -82,7 +95,7 @@ func normalizeChatContentForResponses(content any) any {
 	if text, ok := content.(string); ok {
 		return []any{map[string]any{
 			"type": "output_text",
-			"text": text,
+			"text": sanitizeAssistantText(text),
 		}}
 	}
 
@@ -186,6 +199,23 @@ func mustMarshalRaw(v any) json.RawMessage {
 	return b
 }
 
+func makeReasoningSummary(content string) []any {
+	if content == "" {
+		return []any{}
+	}
+	return []any{map[string]any{
+		"type": "summary_text",
+		"text": content,
+	}}
+}
+
+func makeReasoningItemID(responseID string) string {
+	if responseID != "" {
+		return responseID + "_rs_0"
+	}
+	return "rs_0"
+}
+
 type responsesToolStreamState struct {
 	callID    string
 	name      string
@@ -193,18 +223,22 @@ type responsesToolStreamState struct {
 }
 
 type ChatResponsesStreamState struct {
-	responseID     string
-	model          string
-	createdSent    bool
-	inProgressSent bool
-	messageAdded   bool
-	messageDone    bool
-	messageItemID  string
-	messageContent string
-	toolAdded      map[int]bool
-	toolDone       map[int]bool
-	toolItemID     map[int]string
-	tools          map[int]*responsesToolStreamState
+	responseID       string
+	model            string
+	createdSent      bool
+	inProgressSent   bool
+	reasoningAdded   bool
+	reasoningDone    bool
+	reasoningItemID  string
+	reasoningContent string
+	messageAdded     bool
+	messageDone      bool
+	messageItemID    string
+	messageContent   string
+	toolAdded        map[int]bool
+	toolDone         map[int]bool
+	toolItemID       map[int]string
+	tools            map[int]*responsesToolStreamState
 }
 
 func NewChatResponsesStreamState() *ChatResponsesStreamState {
@@ -247,11 +281,26 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 
 	var responseChunks []string
 	responseChunks = append(responseChunks, s.ensureLifecycleEvents()...)
+	if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
+		if !s.reasoningAdded {
+			s.reasoningItemID = s.makeReasoningItemID()
+			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+				"output_index": responsesReasoningOutputIndex,
+				"item": map[string]any{
+					"id":      s.reasoningItemID,
+					"type":    "reasoning",
+					"summary": makeReasoningSummary(s.reasoningContent),
+				},
+			}))
+			s.reasoningAdded = true
+		}
+		s.reasoningContent += reasoningContent
+	}
 	if content, ok := delta["content"].(string); ok && content != "" {
 		if !s.messageAdded {
 			s.messageItemID = s.makeMessageItemID()
 			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
-				"output_index": responsesMessageOutputIndex,
+				"output_index": s.messageOutputIndex(),
 				"item": map[string]any{
 					"id":      s.messageItemID,
 					"type":    "message",
@@ -261,13 +310,16 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 			}))
 			s.messageAdded = true
 		}
-		s.messageContent += content
-		responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{
-			"output_index":  responsesMessageOutputIndex,
-			"item_id":       s.messageItemID,
-			"content_index": responsesMessageContentIdx,
-			"delta":         content,
-		}))
+		clean := sanitizeAssistantText(content)
+		if clean != "" {
+			s.messageContent += clean
+			responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{
+				"output_index":  s.messageOutputIndex(),
+				"item_id":       s.messageItemID,
+				"content_index": responsesMessageContentIdx,
+				"delta":         clean,
+			}))
+		}
 	}
 
 	deltaToolCalls, _ := asArray(delta["tool_calls"])
@@ -292,7 +344,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 				}
 			}
 			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
-				"output_index": idx + 1,
+				"output_index": s.toolOutputIndex(idx),
 				"item":         item,
 			}))
 			s.toolAdded[idx] = true
@@ -346,15 +398,26 @@ func (s *ChatResponsesStreamState) ensureLifecycleEvents() []string {
 
 func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 	var events []string
+	if s.reasoningAdded && !s.reasoningDone {
+		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
+			"output_index": responsesReasoningOutputIndex,
+			"item": map[string]any{
+				"id":      s.reasoningItemID,
+				"type":    "reasoning",
+				"summary": makeReasoningSummary(s.reasoningContent),
+			},
+		}))
+		s.reasoningDone = true
+	}
 	if s.messageAdded && !s.messageDone {
 		events = append(events, formatResponsesEvent("response.output_text.done", map[string]any{
-			"output_index":  responsesMessageOutputIndex,
+			"output_index":  s.messageOutputIndex(),
 			"item_id":       s.messageItemID,
 			"content_index": responsesMessageContentIdx,
 			"text":          s.messageContent,
 		}))
 		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
-			"output_index": responsesMessageOutputIndex,
+			"output_index": s.messageOutputIndex(),
 			"item": map[string]any{
 				"id":   s.messageItemID,
 				"type": "message",
@@ -391,12 +454,12 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 			item["name"] = toolState.name
 		}
 		events = append(events, formatResponsesEvent("response.function_call_arguments.done", map[string]any{
-			"output_index": idx + 1,
+			"output_index": s.toolOutputIndex(idx),
 			"item_id":      s.toolItemID[idx],
 			"arguments":    toolState.arguments,
 		}))
 		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
-			"output_index": idx + 1,
+			"output_index": s.toolOutputIndex(idx),
 			"item":         item,
 		}))
 		s.toolDone[idx] = true
@@ -423,6 +486,27 @@ func (s *ChatResponsesStreamState) makeMessageItemID() string {
 		return s.responseID + "_msg_0"
 	}
 	return "msg_0"
+}
+
+func (s *ChatResponsesStreamState) makeReasoningItemID() string {
+	if s.responseID != "" {
+		return s.responseID + "_rs_0"
+	}
+	return "rs_0"
+}
+
+func (s *ChatResponsesStreamState) messageOutputIndex() int {
+	if s.reasoningAdded {
+		return 1
+	}
+	return responsesMessageOutputIndex
+}
+
+func (s *ChatResponsesStreamState) toolOutputIndex(idx int) int {
+	if s.reasoningAdded {
+		return idx + 2
+	}
+	return idx + 1
 }
 
 func (s *ChatResponsesStreamState) makeToolItemID(idx int, toolCall map[string]any) string {

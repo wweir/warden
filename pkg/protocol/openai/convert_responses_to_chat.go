@@ -117,6 +117,9 @@ func convertResponsesRequestExtras(messages []Message, extra map[string]json.Raw
 			}
 			if effort != "" {
 				chatExtra["reasoning_effort"] = json.RawMessage(strconv.Quote(effort))
+			} else {
+				// preserve original reasoning object for upstream providers that understand it
+				chatExtra["reasoning"] = raw
 			}
 		case "include", "truncation":
 			// ignored: Responses-only features not available in Chat Completions
@@ -235,7 +238,16 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: content})
 
 		case "reasoning":
-			return nil, fmt.Errorf("unsupported input item type %q", itemType.Type)
+			var reasoningItem map[string]any
+			if err := json.Unmarshal(raw, &reasoningItem); err != nil {
+				return nil, fmt.Errorf("unmarshal reasoning item: %w", err)
+			}
+			reasoningJSON, _ := json.Marshal(reasoningItem)
+			msg := Message{
+				Role:             "assistant",
+				ReasoningContent: string(reasoningJSON),
+			}
+			messages = append(messages, msg)
 
 		default:
 			return nil, fmt.Errorf("unsupported input item type %q", itemType.Type)
@@ -288,8 +300,13 @@ func convertResponsesMessageItem(raw json.RawMessage) (Message, error) {
 		msg.Content = content
 		delete(fields, "content")
 	}
-	if _, ok := fields["reasoning_content"]; ok {
-		return Message{}, fmt.Errorf("reasoning_content is not supported in responses_to_chat mode")
+	if v, ok := fields["reasoning_content"]; ok {
+		var rc string
+		if err := json.Unmarshal(v, &rc); err != nil {
+			return Message{}, fmt.Errorf("unmarshal message reasoning_content: %w", err)
+		}
+		msg.ReasoningContent = rc
+		delete(fields, "reasoning_content")
 	}
 	if v, ok := fields["name"]; ok {
 		if err := json.Unmarshal(v, &msg.Name); err != nil {

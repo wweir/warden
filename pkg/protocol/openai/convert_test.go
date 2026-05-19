@@ -414,22 +414,31 @@ data: [DONE]
 	}
 }
 
-func TestResponsesRequestToChatRequestRejectReasoningItem(t *testing.T) {
+func TestResponsesRequestToChatRequestWithReasoningItem(t *testing.T) {
 	respReq := ResponsesRequest{
 		Model: "gpt-4o",
 		Input: json.RawMessage(`[
 			{"type":"message","role":"user","content":"What is 2+2?"},
-			{"type":"reasoning","summary":"step by step"},
+			{"type":"reasoning","id":"rs_1","summary":[]},
 			{"type":"message","role":"assistant","content":"The answer is 4."}
 		]`),
 	}
 
-	_, err := ResponsesRequestToChatRequest(respReq)
-	if err == nil {
-		t.Fatal("expected error for reasoning item")
-	}
-	if !strings.Contains(err.Error(), `unsupported input item type "reasoning"`) {
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chatReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+	}
+	if chatReq.Messages[1].Role != "assistant" {
+		t.Fatalf("expected assistant role for reasoning message, got %s", chatReq.Messages[1].Role)
+	}
+	if chatReq.Messages[1].ReasoningContent == "" {
+		t.Fatalf("expected reasoning_content to be set")
+	}
+	if !strings.Contains(chatReq.Messages[1].ReasoningContent, `"type":"reasoning"`) {
+		t.Fatalf("expected reasoning_content to contain item type, got %s", chatReq.Messages[1].ReasoningContent)
 	}
 }
 
@@ -448,5 +457,75 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `unsupported input item type "unknown_type"`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestChatResponseToResponsesResponseWithReasoningContent(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:             "assistant",
+				ReasoningContent: "Let me think step by step.",
+				Content:          "The answer is 4.",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"reasoning"`) || !strings.Contains(got, `"id":"chatcmpl_123_rs_0"`) {
+		t.Fatalf("unexpected reasoning item: %s", got)
+	}
+	if got := string(resp.Output[1]); !strings.Contains(got, `"type":"output_text"`) || !strings.Contains(got, `"text":"The answer is 4."`) {
+		t.Fatalf("unexpected message item: %s", got)
+	}
+}
+
+func TestChatSSEToResponsesSSEWithReasoningContent(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":" step by step."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"The answer is 4."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, `"type":"reasoning"`) {
+		t.Fatal("expected reasoning type in output")
+	}
+	if !strings.Contains(outputStr, `"id":"chatcmpl_1_rs_0"`) {
+		t.Fatal("expected reasoning item id")
+	}
+	if !strings.Contains(outputStr, "event: response.output_item.done") {
+		t.Fatal("expected response.output_item.done event")
+	}
+	// reasoning done event should appear before message done event
+	reasoningDoneIdx := strings.Index(outputStr, `"type":"reasoning"},"output_index":0,"type":"response.output_item.done"`)
+	messageDoneIdx := strings.Index(outputStr, `"type":"message"},"output_index":1,"type":"response.output_item.done"`)
+	if reasoningDoneIdx == -1 || messageDoneIdx == -1 {
+		t.Fatal("expected both reasoning and message done events")
+	}
+	if reasoningDoneIdx > messageDoneIdx {
+		t.Fatal("expected reasoning done before message done")
 	}
 }
