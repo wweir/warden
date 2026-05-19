@@ -134,10 +134,8 @@ func effectiveCLIProxyProxy(cfg *config.ConfigStruct) string {
 				continue
 			}
 			if proxy != firstProxy {
-				// Multiple cliproxy providers have different proxies.
-				// Return the first one found; caller should avoid this
-				// configuration by setting cliproxy.proxy explicitly.
-				return firstProxy
+				slog.Warn("Multiple embedded cliproxy providers with different proxies, using first one",
+					"first", firstProxy, "current", proxy)
 			}
 		}
 	}

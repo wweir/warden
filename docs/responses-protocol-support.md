@@ -1,6 +1,6 @@
 # Responses 协议支持现状
 
-> 更新日期：2026-05-12
+> 更新日期：2026-05-19
 >
 > 状态：current
 
@@ -42,13 +42,16 @@ Responses 相关 route 锁定唯一协议：
 无状态请求下，`responses_to_chat` 仍然遵守以下约束：
 
 - 顶层 `instructions` 会转换成首条 `developer` message；若上游以 `400` 明确拒绝 `developer` role，bridge 在同一 provider 上自动降级重试为 `system`
+- 多条 `system`/`developer` 消息会自动合并为单条并置顶，兼容对多 system 消息敏感的模型（如 Qwen）
 - 只接受受控的 Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 直接返回 `400`
+- `input_image` 会正确转换为 Chat Completions 的 `image_url` 嵌套对象格式
 - 会显式兼容 `max_output_tokens -> max_completion_tokens`
 - 会校验并规范化 Responses 风格 `tool_choice`；未知形状或引用未知 `function` tool 直接返回 `400`
 - `function_call_output.output` 可为字符串或任意 JSON；转换到 Chat `tool` message 时规范化成字符串内容
 - Chat -> Responses 回写会把 Chat `usage` 规范化为 Responses 风格的 `input_tokens` / `output_tokens`，并映射 `prompt_tokens_details/completion_tokens_details`
 - Chat -> Responses 回写会把 Chat `finish_reason` 映射为 Responses `status` / `incomplete_details`
 - 流式桥会补齐更接近原生 Responses 的生命周期事件和关联字段；`response.output_item.done` 会附带最终 item 快照
+- 支持 `reasoning_content` 字段和 `<think>` 标签两种 reasoning 格式的透传，流式场景会发出 `response.reasoning.delta` 事件
 
 ## 4. `anthropic_to_responses`(Anthropic family 上游)
 
@@ -74,7 +77,7 @@ client /responses
 
 - 只支持**无状态** Responses 请求;带 `previous_response_id` 的请求在 dispatch 时被 `400` 拒绝(因为 Anthropic 没有 server-managed conversation state)
 - 配置层要求 `family == "anthropic"`,与 `anthropic_to_chat` 要求 `family == "openai"` 对称
-- Anthropic extended thinking blocks 当前不会作为 Responses `reasoning` items 暴露,这是已知 lossy 点
+- Anthropic extended thinking blocks 已作为 Responses `reasoning` items 暴露（流式和非流式路径均已支持）；`anthropic_to_chat` 反向转换时 assistant 历史中的 `thinking` blocks 会被静默丢弃，因为 Chat Completions 没有原生等价物
 - 由于通过 chat IR 中转,使用受限于 chat 表达能力的 Responses 子集(与 `responses_to_chat` 相同)
 
 ## 5. 管理端协同
@@ -98,3 +101,16 @@ client /responses
 - `anthropic_to_responses` provider 上的 `previous_response_id`(直接 `400`)
 - 任何需要网关自己维护 Responses 会话状态的能力
 - 依赖网关多 upstream failover 维持同一条 Responses 多轮会话的能力
+
+## 7. 本次桥接审查结论
+
+这次对 `responses` ↔ `chat completions` bridge 的核对结果是：主链路已经覆盖了大部分关键映射，尤其是 `instructions -> developer/system`、`function_call_output -> tool`、`input_image -> content[].image_url`、`output[] -> choices[0].message`、`finish_reason` 以及流式 `response.*` 事件转换，当前实现不是空壳。
+
+`DSML` 参数解析中 `string` 属性缺省时的语义已修复：现在会优先尝试 JSON 字面量解析，成功时保留原始类型（如布尔值 `true`、数字 `42`），失败时才回退为字符串。该修复使 DSML 工具调用解析从"部分成立"提升为完整正确。
+
+因此，当前准确表述应该是：
+
+- 主要请求/响应映射已实现
+- 多模态 `input_image`、system/developer 合并、`<think>` 标签 reasoning 识别、`reasoning_content` 流式 delta 以及 SSE 生命周期事件已实现
+- `DSML` 工具调用解析语义正确
+- Anthropic extended thinking 已透传为 Responses reasoning items
