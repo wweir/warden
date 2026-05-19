@@ -529,3 +529,427 @@ data: [DONE]
 		t.Fatal("expected reasoning done before message done")
 	}
 }
+
+func TestChatResponseToResponsesResponseWithDSML(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:    "assistant",
+				Content: "Let me check.\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"get_weather\">\n<｜DSML｜parameter name=\"city\" string=\"true\">Paris</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	// First item should be message with DSML stripped
+	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"message"`) || strings.Contains(got, "DSML") {
+		t.Fatalf("unexpected message item: %s", got)
+	}
+	// Second item should be function_call
+	if got := string(resp.Output[1]); !strings.Contains(got, `"type":"function_call"`) || !strings.Contains(got, `"name":"get_weather"`) {
+		t.Fatalf("unexpected function_call item: %s", got)
+	}
+}
+
+func TestChatSSEToResponsesSSEWithDSML(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Let me check.\n"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"lookup\">\n<｜DSML｜parameter name=\"q\" string=\"true\">test</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "event: response.output_text.delta") {
+		t.Fatal("expected response.output_text.delta event")
+	}
+	if strings.Contains(outputStr, "DSML") {
+		t.Fatal("expected no raw DSML tags in output")
+	}
+	if !strings.Contains(outputStr, `"type":"function_call"`) {
+		t.Fatal("expected function_call output item")
+	}
+	if !strings.Contains(outputStr, `"name":"lookup"`) {
+		t.Fatal("expected lookup function name")
+	}
+}
+
+func TestResponsesRequestToChatRequestInputImage(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"What is in this image?"},
+				{"type":"input_image","image_url":"https://example.com/img.png","detail":"high"}
+			]}
+		]`),
+	}
+
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chatReq.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(chatReq.Messages))
+	}
+	blocks, ok := chatReq.Messages[0].Content.([]any)
+	if !ok || len(blocks) != 2 {
+		t.Fatalf("expected 2 content blocks, got %#v", chatReq.Messages[0].Content)
+	}
+	imgBlock, ok := blocks[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected image block map, got %#v", blocks[1])
+	}
+	if imgBlock["type"] != "image_url" {
+		t.Fatalf("expected type image_url, got %v", imgBlock["type"])
+	}
+	imgURL, ok := imgBlock["image_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested image_url object, got %#v", imgBlock["image_url"])
+	}
+	if imgURL["url"] != "https://example.com/img.png" {
+		t.Fatalf("unexpected url: %v", imgURL["url"])
+	}
+	if imgURL["detail"] != "high" {
+		t.Fatalf("unexpected detail: %v", imgURL["detail"])
+	}
+}
+
+func TestCoalesceSystemMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []Message
+		expected []Message
+	}{
+		{
+			name: "no system messages",
+			input: []Message{
+				{Role: "user", Content: "hello"},
+				{Role: "assistant", Content: "hi"},
+			},
+			expected: []Message{
+				{Role: "user", Content: "hello"},
+				{Role: "assistant", Content: "hi"},
+			},
+		},
+		{
+			name: "single system message at start",
+			input: []Message{
+				{Role: "system", Content: "be helpful"},
+				{Role: "user", Content: "hello"},
+			},
+			expected: []Message{
+				{Role: "system", Content: "be helpful"},
+				{Role: "user", Content: "hello"},
+			},
+		},
+		{
+			name: "single system message moved to start",
+			input: []Message{
+				{Role: "user", Content: "hello"},
+				{Role: "system", Content: "be helpful"},
+			},
+			expected: []Message{
+				{Role: "system", Content: "be helpful"},
+				{Role: "user", Content: "hello"},
+			},
+		},
+		{
+			name: "multiple system messages coalesced",
+			input: []Message{
+				{Role: "user", Content: "hello"},
+				{Role: "system", Content: "be helpful"},
+				{Role: "developer", Content: "be precise"},
+				{Role: "assistant", Content: "hi"},
+			},
+			expected: []Message{
+				{Role: "system", Content: "be helpful\n\nbe precise"},
+				{Role: "user", Content: "hello"},
+				{Role: "assistant", Content: "hi"},
+			},
+		},
+		{
+			name: "developer message preserved when alone",
+			input: []Message{
+				{Role: "developer", Content: "think step by step"},
+				{Role: "user", Content: "hello"},
+			},
+			expected: []Message{
+				{Role: "developer", Content: "think step by step"},
+				{Role: "user", Content: "hello"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := coalesceSystemMessages(tt.input)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("expected %d messages, got %d: %#v", len(tt.expected), len(got), got)
+			}
+			for i, msg := range got {
+				if msg.Role != tt.expected[i].Role || msg.Content != tt.expected[i].Content {
+					t.Fatalf("message[%d] mismatch: got {role:%s content:%s}, want {role:%s content:%s}",
+						i, msg.Role, msg.Content, tt.expected[i].Role, tt.expected[i].Content)
+				}
+			}
+		})
+	}
+}
+
+func TestChatResponseToResponsesResponseWithThinkTags(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:    "assistant",
+				Content: "<think>\nLet me think step by step.\n</think>\nThe answer is 4.",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	// First item should be reasoning extracted from <think>
+	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"reasoning"`) || !strings.Contains(got, `"text":"Let me think step by step."`) {
+		t.Fatalf("unexpected reasoning item: %s", got)
+	}
+	// Second item should be message with think tags stripped
+	if got := string(resp.Output[1]); !strings.Contains(got, `"text":"The answer is 4."`) || strings.Contains(got, "think") {
+		t.Fatalf("unexpected message item: %s", got)
+	}
+}
+
+func TestChatSSEToResponsesSSEWithThinkTags(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<think>\nLet me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":" step by step.\n</think>\nThe answer is 4."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "event: response.reasoning.delta") {
+		t.Fatal("expected response.reasoning.delta event")
+	}
+	if !strings.Contains(outputStr, "event: response.output_text.delta") {
+		t.Fatal("expected response.output_text.delta event")
+	}
+	if strings.Contains(outputStr, "<think>") {
+		t.Fatal("expected no raw think tags in output")
+	}
+	if !strings.Contains(outputStr, `"text":"The answer is 4."`) {
+		t.Fatal("expected final text snapshot")
+	}
+}
+
+func TestChatSSEToResponsesSSEReasoningDelta(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":" step by step."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"The answer is 4."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "event: response.reasoning.delta") {
+		t.Fatal("expected response.reasoning.delta event")
+	}
+	// Should contain two reasoning deltas
+	reasoningDeltaCount := strings.Count(outputStr, "event: response.reasoning.delta")
+	if reasoningDeltaCount < 2 {
+		t.Fatalf("expected at least 2 reasoning.delta events, got %d", reasoningDeltaCount)
+	}
+	if !strings.Contains(outputStr, `"delta":"Let me think"`) {
+		t.Fatal("expected first reasoning delta")
+	}
+	if !strings.Contains(outputStr, `"delta":" step by step."`) {
+		t.Fatal("expected second reasoning delta")
+	}
+}
+
+func TestExtractThinkTagsMultipleBlocks(t *testing.T) {
+	text := "prefix<think>first reasoning</think>middle<think>second reasoning</think>suffix"
+	reasoning, remaining := extractThinkTags(text)
+	if reasoning != "first reasoning\n\nsecond reasoning" {
+		t.Fatalf("unexpected reasoning: %q", reasoning)
+	}
+	if remaining != "prefixmiddlesuffix" {
+		t.Fatalf("unexpected remaining: %q", remaining)
+	}
+}
+
+func TestExtractThinkTagsEmptyBlock(t *testing.T) {
+	text := "prefix<think></think>suffix"
+	reasoning, remaining := extractThinkTags(text)
+	if reasoning != "" {
+		t.Fatalf("expected empty reasoning, got %q", reasoning)
+	}
+	if remaining != "prefixsuffix" {
+		t.Fatalf("unexpected remaining: %q", remaining)
+	}
+}
+
+func TestExtractThinkTagsUnclosed(t *testing.T) {
+	text := "prefix<think>unfinished reasoning"
+	reasoning, remaining := extractThinkTags(text)
+	if reasoning != "" {
+		t.Fatalf("expected empty reasoning for unclosed tag, got %q", reasoning)
+	}
+	if remaining != text {
+		t.Fatalf("expected original text for unclosed tag, got %q", remaining)
+	}
+}
+
+func TestChatResponseToResponsesResponseWithThinkInArrayBlocks(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:    "assistant",
+				Content: []any{map[string]any{"type": "text", "text": "<think>\nStep 1.\n</think>\nResult."}},
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"reasoning"`) || !strings.Contains(got, `"text":"Step 1."`) {
+		t.Fatalf("unexpected reasoning item: %s", got)
+	}
+	if got := string(resp.Output[1]); !strings.Contains(got, `"text":"Result."`) || strings.Contains(got, "think") {
+		t.Fatalf("unexpected message item: %s", got)
+	}
+}
+
+func TestChatSSEToResponsesSSEWithSplitThinkTags(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<thin"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"k>reasoning</think>\ntext"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "event: response.reasoning.delta") {
+		t.Fatal("expected response.reasoning.delta event")
+	}
+	if !strings.Contains(outputStr, "event: response.output_text.delta") {
+		t.Fatal("expected response.output_text.delta event")
+	}
+	if strings.Contains(outputStr, "<think>") {
+		t.Fatal("expected no raw think tags in output")
+	}
+	if !strings.Contains(outputStr, `"text":"text"`) {
+		t.Fatal("expected final text snapshot")
+	}
+}
+
+func TestChatSSEToResponsesSSEWithDanglingThink(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<think>\nunfinished"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "event: response.reasoning.delta") {
+		t.Fatal("expected response.reasoning.delta event for dangling think")
+	}
+	if !strings.Contains(outputStr, `"type":"reasoning"`) {
+		t.Fatal("expected reasoning item in completed response")
+	}
+	if strings.Contains(outputStr, "<think>") {
+		t.Fatal("expected no raw think tags in output")
+	}
+}
+
+func TestCoalesceSystemMessagesWithArrayContent(t *testing.T) {
+	messages := []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "system", Content: []any{map[string]any{"type": "text", "text": "be helpful"}}},
+		{Role: "developer", Content: "be precise"},
+	}
+	got := coalesceSystemMessages(messages)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(got))
+	}
+	if got[0].Role != "system" {
+		t.Fatalf("expected system role, got %s", got[0].Role)
+	}
+	// The string content from array block should be collected.
+	expectedContent := "be helpful\n\nbe precise"
+	if got[0].Content != expectedContent {
+		t.Fatalf("expected content %q, got %v", expectedContent, got[0].Content)
+	}
+}

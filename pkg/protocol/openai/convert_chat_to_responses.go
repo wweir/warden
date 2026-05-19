@@ -47,6 +47,9 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 
 	choice := chatResp.Choices[0]
 	msg := choice.Message
+	var dsmlCalls []dsmlToolCall
+	content := extractThinkFromContent(msg.Content, &msg.ReasoningContent)
+
 	if msg.ReasoningContent != "" {
 		item := map[string]any{
 			"type":    "reasoning",
@@ -59,11 +62,48 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 		}
 		resp.Output = append(resp.Output, raw)
 	}
-	if msg.Content != nil {
+
+	if text, ok := content.(string); ok && text != "" {
+		remaining, calls, found := parseDSMLToolCalls(text)
+		if found {
+			content = remaining
+			dsmlCalls = append(dsmlCalls, calls...)
+		}
+	} else if blocks, ok := content.([]any); ok {
+		var newBlocks []any
+		for _, block := range blocks {
+			bm, ok := block.(map[string]any)
+			if !ok {
+				newBlocks = append(newBlocks, block)
+				continue
+			}
+			if typ, _ := bm["type"].(string); typ == "text" {
+				if text, _ := bm["text"].(string); text != "" {
+					remaining, calls, found := parseDSMLToolCalls(text)
+					if found {
+						dsmlCalls = append(dsmlCalls, calls...)
+						if remaining != "" {
+							cloned := make(map[string]any, len(bm))
+							for k, v := range bm {
+								cloned[k] = v
+							}
+							cloned["text"] = remaining
+							newBlocks = append(newBlocks, cloned)
+						}
+						continue
+					}
+				}
+			}
+			newBlocks = append(newBlocks, block)
+		}
+		content = newBlocks
+	}
+
+	if content != nil && !isEmptyContent(content) {
 		item := map[string]any{
 			"type":    "message",
 			"role":    messageRoleOrDefault(msg.Role),
-			"content": normalizeChatContentForResponses(msg.Content),
+			"content": normalizeChatContentForResponses(content),
 		}
 		raw, err := json.Marshal(item)
 		if err != nil {
@@ -87,8 +127,40 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 		resp.Output = append(resp.Output, raw)
 	}
 
+	for i, tc := range dsmlCalls {
+		callID := tc.ID
+		if callID == "" {
+			callID = generateDSMLCallID(i)
+		}
+		fc := FunctionCallItem{
+			Type:      "function_call",
+			CallID:    callID,
+			Name:      tc.Name,
+			Arguments: tc.Arguments,
+			Status:    "completed",
+		}
+		raw, err := json.Marshal(fc)
+		if err != nil {
+			return resp, fmt.Errorf("marshal dsml function_call item: %w", err)
+		}
+		resp.Output = append(resp.Output, raw)
+	}
+
 	applyFinishReasonToResponsesResponse(&resp, choice.FinishReason)
 	return resp, nil
+}
+
+func isEmptyContent(content any) bool {
+	if content == nil {
+		return true
+	}
+	if text, ok := content.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	if blocks, ok := content.([]any); ok {
+		return len(blocks) == 0
+	}
+	return false
 }
 
 func normalizeChatContentForResponses(content any) any {
@@ -194,6 +266,98 @@ func rawMessageToInterface(raw json.RawMessage) any {
 	return v
 }
 
+func extractThinkTags(text string) (reasoning string, remaining string) {
+	var reasoningParts []string
+	remaining = text
+
+	for {
+		startIdx := strings.Index(remaining, "<think>")
+		if startIdx == -1 {
+			break
+		}
+		afterOpen := remaining[startIdx+len("<think>"):]
+		endIdx := strings.Index(afterOpen, "</think>")
+		if endIdx == -1 {
+			break
+		}
+		part := strings.TrimSpace(afterOpen[:endIdx])
+		if part != "" {
+			reasoningParts = append(reasoningParts, part)
+		}
+		remaining = remaining[:startIdx] + afterOpen[endIdx+len("</think>"):]
+	}
+
+	if len(reasoningParts) == 0 && remaining == text {
+		return "", text
+	}
+	remaining = strings.TrimSpace(remaining)
+	return strings.Join(reasoningParts, "\n\n"), remaining
+}
+
+// extractThinkFromContent extracts <think> tags from string or text-block array
+// content and appends the reasoning to reasoningContent. Returns the content
+// with think tags stripped.
+func extractThinkFromContent(content any, reasoningContent *string) any {
+	if text, ok := content.(string); ok && text != "" {
+		reasoning, remaining := extractThinkTags(text)
+		if reasoning != "" {
+			if *reasoningContent != "" {
+				*reasoningContent += "\n\n" + reasoning
+			} else {
+				*reasoningContent = reasoning
+			}
+		}
+		if reasoning != "" || remaining != text {
+			return remaining
+		}
+		return content
+	}
+
+	blocks, ok := content.([]any)
+	if !ok {
+		return content
+	}
+
+	var newBlocks []any
+	var reasoningParts []string
+	for _, block := range blocks {
+		bm, ok := block.(map[string]any)
+		if !ok {
+			newBlocks = append(newBlocks, block)
+			continue
+		}
+		if typ, _ := bm["type"].(string); typ == "text" {
+			if text, _ := bm["text"].(string); text != "" {
+				reasoning, remaining := extractThinkTags(text)
+				if reasoning != "" {
+					reasoningParts = append(reasoningParts, reasoning)
+				}
+				if remaining != "" {
+					cloned := make(map[string]any, len(bm))
+					for k, v := range bm {
+						cloned[k] = v
+					}
+					cloned["text"] = remaining
+					newBlocks = append(newBlocks, cloned)
+					continue
+				}
+				// text was entirely think tags: drop this block
+				continue
+			}
+		}
+		newBlocks = append(newBlocks, block)
+	}
+	if len(reasoningParts) > 0 {
+		joined := strings.Join(reasoningParts, "\n\n")
+		if *reasoningContent != "" {
+			*reasoningContent += "\n\n" + joined
+		} else {
+			*reasoningContent = joined
+		}
+	}
+	return newBlocks
+}
+
 func mustMarshalRaw(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
@@ -223,22 +387,27 @@ type responsesToolStreamState struct {
 }
 
 type ChatResponsesStreamState struct {
-	responseID       string
-	model            string
-	createdSent      bool
-	inProgressSent   bool
-	reasoningAdded   bool
-	reasoningDone    bool
-	reasoningItemID  string
-	reasoningContent string
-	messageAdded     bool
-	messageDone      bool
-	messageItemID    string
-	messageContent   string
-	toolAdded        map[int]bool
-	toolDone         map[int]bool
-	toolItemID       map[int]string
-	tools            map[int]*responsesToolStreamState
+	responseID        string
+	model             string
+	createdSent       bool
+	inProgressSent    bool
+	reasoningAdded    bool
+	reasoningDone     bool
+	reasoningItemID   string
+	reasoningContent  string
+	messageAdded      bool
+	messageDone       bool
+	messageItemID     string
+	messageContent    string
+	toolAdded         map[int]bool
+	toolDone          map[int]bool
+	toolItemID        map[int]string
+	tools             map[int]*responsesToolStreamState
+	pendingContent    string
+	nextDSMLToolIndex int
+	// thinking tracks whether we are inside a <think>...</think> block.
+	thinking       bool
+	thinkingBuffer string
 }
 
 func NewChatResponsesStreamState() *ChatResponsesStreamState {
@@ -295,30 +464,45 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 			s.reasoningAdded = true
 		}
 		s.reasoningContent += reasoningContent
+		s.emitReasoningDelta(reasoningContent, &responseChunks)
 	}
 	if content, ok := delta["content"].(string); ok && content != "" {
-		if !s.messageAdded {
-			s.messageItemID = s.makeMessageItemID()
-			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
-				"output_index": s.messageOutputIndex(),
-				"item": map[string]any{
-					"id":      s.messageItemID,
-					"type":    "message",
-					"role":    "assistant",
-					"content": []any{},
-				},
-			}))
-			s.messageAdded = true
-		}
 		clean := sanitizeAssistantText(content)
 		if clean != "" {
-			s.messageContent += clean
-			responseChunks = append(responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{
-				"output_index":  s.messageOutputIndex(),
-				"item_id":       s.messageItemID,
-				"content_index": responsesMessageContentIdx,
-				"delta":         clean,
-			}))
+			clean = s.processThinkTags(clean, &responseChunks)
+			if clean != "" {
+				s.pendingContent += clean
+
+				for {
+					loc := dsmlBlockPattern.FindStringIndex(s.pendingContent)
+					if loc == nil {
+						break
+					}
+					if loc[0] > 0 {
+						prefix := strings.TrimRight(s.pendingContent[:loc[0]], " \t\n\r")
+						if prefix != "" {
+							s.emitTextDelta(prefix, &responseChunks)
+						}
+					}
+					block := s.pendingContent[loc[0]:loc[1]]
+					submatch := dsmlBlockPattern.FindStringSubmatch(block)
+					if len(submatch) >= 2 {
+						calls := parseDSMLInvokes(submatch[1])
+						for _, tc := range calls {
+							s.emitDSMLToolCall(tc, &responseChunks)
+						}
+					}
+					s.pendingContent = s.pendingContent[loc[1]:]
+					s.pendingContent = strings.TrimLeft(s.pendingContent, " \t\n\r")
+				}
+
+				if !hasIncompleteDSML(s.pendingContent) {
+					if s.pendingContent != "" {
+						s.emitTextDelta(s.pendingContent, &responseChunks)
+						s.pendingContent = ""
+					}
+				}
+			}
 		}
 	}
 
@@ -398,6 +582,65 @@ func (s *ChatResponsesStreamState) ensureLifecycleEvents() []string {
 
 func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 	var events []string
+
+	// Flush any dangling <think> buffer as reasoning.
+	if s.thinking {
+		reasoning := strings.TrimSpace(s.thinkingBuffer)
+		s.thinkingBuffer = ""
+		s.thinking = false
+		if reasoning != "" {
+			if !s.reasoningAdded {
+				s.reasoningItemID = s.makeReasoningItemID()
+				events = append(events, formatResponsesEvent("response.output_item.added", map[string]any{
+					"output_index": responsesReasoningOutputIndex,
+					"item": map[string]any{
+						"id":      s.reasoningItemID,
+						"type":    "reasoning",
+						"summary": makeReasoningSummary(s.reasoningContent),
+					},
+				}))
+				s.reasoningAdded = true
+			}
+			s.reasoningContent += reasoning
+			s.emitReasoningDelta(reasoning, &events)
+		}
+	} else if s.thinkingBuffer != "" {
+		// Defensive: buffer has content but thinking flag is false.
+		// Treat remaining buffer as pending content to avoid data loss.
+		s.pendingContent += s.thinkingBuffer
+		s.thinkingBuffer = ""
+	}
+
+	// Flush any buffered content with final DSML parse attempt.
+	if s.pendingContent != "" {
+		for {
+			loc := dsmlBlockPattern.FindStringIndex(s.pendingContent)
+			if loc == nil {
+				break
+			}
+			if loc[0] > 0 {
+				prefix := strings.TrimRight(s.pendingContent[:loc[0]], " \t\n\r")
+				if prefix != "" {
+					s.emitTextDelta(prefix, &events)
+				}
+			}
+			block := s.pendingContent[loc[0]:loc[1]]
+			submatch := dsmlBlockPattern.FindStringSubmatch(block)
+			if len(submatch) >= 2 {
+				calls := parseDSMLInvokes(submatch[1])
+				for _, tc := range calls {
+					s.emitDSMLToolCall(tc, &events)
+				}
+			}
+			s.pendingContent = s.pendingContent[loc[1]:]
+			s.pendingContent = strings.TrimLeft(s.pendingContent, " \t\n\r")
+		}
+		if s.pendingContent != "" {
+			s.emitTextDelta(s.pendingContent, &events)
+			s.pendingContent = ""
+		}
+	}
+
 	if s.reasoningAdded && !s.reasoningDone {
 		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
 			"output_index": responsesReasoningOutputIndex,
@@ -526,6 +769,200 @@ func (s *ChatResponsesStreamState) ensureToolState(idx int) *responsesToolStream
 	toolState := &responsesToolStreamState{}
 	s.tools[idx] = toolState
 	return toolState
+}
+
+func (s *ChatResponsesStreamState) emitReasoningDelta(delta string, responseChunks *[]string) {
+	if delta == "" || s.reasoningItemID == "" {
+		return
+	}
+	*responseChunks = append(*responseChunks, formatResponsesEvent("response.reasoning.delta", map[string]any{
+		"output_index": responsesReasoningOutputIndex,
+		"item_id":      s.reasoningItemID,
+		"delta":        delta,
+	}))
+}
+
+// processThinkTags extracts reasoning content from <think>...</think> tags that
+// some models (e.g. DeepSeek R1) emit inside assistant content. It returns the
+// remaining text after stripping think tags and emits reasoning delta events.
+// hasIncompleteThinkTag reports whether text ends with a prefix of <think> or
+// </think> that could be completed by a future chunk.
+func hasIncompleteThinkTag(text string) bool {
+	for _, tag := range []string{"<think>", "</think>"} {
+		for i := 1; i <= len(tag); i++ {
+			if strings.HasSuffix(text, tag[:i]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks *[]string) string {
+	if !s.thinking {
+		// Fast path: no pending buffer and no '<' that could start a think tag.
+		if s.thinkingBuffer == "" && !strings.Contains(text, "<") {
+			return text
+		}
+	}
+
+	s.thinkingBuffer += text
+
+	for {
+		if !s.thinking {
+			idx := strings.Index(s.thinkingBuffer, "<think>")
+			if idx == -1 {
+				// No complete <think> found. If buffer doesn't end with an
+				// incomplete think-tag prefix, flush the entire buffer.
+				if !hasIncompleteThinkTag(s.thinkingBuffer) {
+					result := s.thinkingBuffer
+					s.thinkingBuffer = ""
+					return result
+				}
+				// Buffer may contain an incomplete <think> tag: keep buffering.
+				return ""
+			}
+			// Emit any text before <think> and enter thinking state.
+			prefix := strings.TrimRight(s.thinkingBuffer[:idx], " \t\n\r")
+			s.thinkingBuffer = s.thinkingBuffer[idx+len("<think>"):]
+			s.thinking = true
+			if prefix != "" {
+				return prefix
+			}
+		}
+
+		// Inside <think>: look for closing tag.
+		idx := strings.Index(s.thinkingBuffer, "</think>")
+		if idx == -1 {
+			// Still inside think block: flush as reasoning.
+			reasoning := s.thinkingBuffer
+			s.thinkingBuffer = ""
+			if reasoning != "" {
+				if !s.reasoningAdded {
+					s.reasoningItemID = s.makeReasoningItemID()
+					*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+						"output_index": responsesReasoningOutputIndex,
+						"item": map[string]any{
+							"id":      s.reasoningItemID,
+							"type":    "reasoning",
+							"summary": makeReasoningSummary(s.reasoningContent),
+						},
+					}))
+					s.reasoningAdded = true
+				}
+				s.reasoningContent += reasoning
+				s.emitReasoningDelta(reasoning, responseChunks)
+			}
+			return ""
+		}
+
+		reasoning := strings.TrimSpace(s.thinkingBuffer[:idx])
+		s.thinkingBuffer = s.thinkingBuffer[idx+len("</think>"):]
+		s.thinking = false
+		if reasoning != "" {
+			if !s.reasoningAdded {
+				s.reasoningItemID = s.makeReasoningItemID()
+				*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+					"output_index": responsesReasoningOutputIndex,
+					"item": map[string]any{
+						"id":      s.reasoningItemID,
+						"type":    "reasoning",
+						"summary": makeReasoningSummary(s.reasoningContent),
+					},
+				}))
+				s.reasoningAdded = true
+			}
+			s.reasoningContent += reasoning
+			s.emitReasoningDelta(reasoning, responseChunks)
+		}
+		// Continue loop to process any text after </think>.
+	}
+}
+
+func (s *ChatResponsesStreamState) emitTextDelta(text string, responseChunks *[]string) {
+	if text == "" {
+		return
+	}
+	if !s.messageAdded {
+		s.messageItemID = s.makeMessageItemID()
+		*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+			"output_index": s.messageOutputIndex(),
+			"item": map[string]any{
+				"id":      s.messageItemID,
+				"type":    "message",
+				"role":    "assistant",
+				"content": []any{},
+			},
+		}))
+		s.messageAdded = true
+	}
+	s.messageContent += text
+	*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_text.delta", map[string]any{
+		"output_index":  s.messageOutputIndex(),
+		"item_id":       s.messageItemID,
+		"content_index": responsesMessageContentIdx,
+		"delta":         text,
+	}))
+}
+
+func (s *ChatResponsesStreamState) emitDSMLToolCall(tc dsmlToolCall, responseChunks *[]string) {
+	// Find a slot that doesn't conflict with native tool calls.
+	idx := s.nextDSMLToolIndex
+	for s.toolAdded[idx] {
+		idx++
+	}
+	s.nextDSMLToolIndex = idx + 1
+	itemID := s.makeToolItemID(idx, nil)
+	callID := tc.ID
+	if callID == "" {
+		callID = generateDSMLCallID(idx)
+	}
+	s.toolItemID[idx] = itemID
+	s.toolAdded[idx] = true
+
+	toolState := s.ensureToolState(idx)
+	toolState.callID = callID
+	toolState.name = tc.Name
+	toolState.arguments = tc.Arguments
+
+	// output_item.added
+	item := map[string]any{"id": itemID, "type": "function_call"}
+	if callID != "" {
+		item["call_id"] = callID
+	}
+	if tc.Name != "" {
+		item["name"] = tc.Name
+	}
+	*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
+		"output_index": s.toolOutputIndex(idx),
+		"item":         item,
+	}))
+
+	// function_call_arguments.done
+	*responseChunks = append(*responseChunks, formatResponsesEvent("response.function_call_arguments.done", map[string]any{
+		"output_index": s.toolOutputIndex(idx),
+		"item_id":      itemID,
+		"arguments":    tc.Arguments,
+	}))
+
+	// output_item.done
+	doneItem := map[string]any{
+		"id":        itemID,
+		"type":      "function_call",
+		"status":    "completed",
+		"arguments": tc.Arguments,
+	}
+	if callID != "" {
+		doneItem["call_id"] = callID
+	}
+	if tc.Name != "" {
+		doneItem["name"] = tc.Name
+	}
+	*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.done", map[string]any{
+		"output_index": s.toolOutputIndex(idx),
+		"item":         doneItem,
+	}))
+	s.toolDone[idx] = true
 }
 
 func BuildChatResponsesCompletedEvent(rawSSE []byte, model string, streamComplete bool) []byte {

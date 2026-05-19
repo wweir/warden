@@ -57,7 +57,7 @@ func ResponsesRequestToChatRequest(respReq ResponsesRequest) (ChatCompletionRequ
 	if err != nil {
 		return chatReq, err
 	}
-	chatReq.Messages = messages
+	chatReq.Messages = coalesceSystemMessages(messages)
 	if len(extra) > 0 {
 		maps.Copy(chatReq.Extra, extra)
 	}
@@ -358,11 +358,94 @@ func normalizeResponsesBlocksToChat(blocks []any) []any {
 			switch typ {
 			case "input_text", "output_text":
 				cloned["type"] = "text"
+			case "input_image":
+				// Responses API uses flat image_url string; Chat Completions expects nested object.
+				if imageURL, ok := cloned["image_url"].(string); ok && imageURL != "" {
+					detail, _ := cloned["detail"].(string)
+					cloned["type"] = "image_url"
+					imageURLObj := map[string]any{"url": imageURL}
+					if detail != "" {
+						imageURLObj["detail"] = detail
+					}
+					cloned["image_url"] = imageURLObj
+					delete(cloned, "detail")
+				} else {
+					// Drop invalid input_image blocks that can't be mapped to Chat Completions.
+					continue
+				}
 			}
 		}
 		normalized = append(normalized, cloned)
 	}
 	return normalized
+}
+
+// coalesceSystemMessages merges multiple system/developer messages into a single
+// message and ensures it is placed at the beginning of the conversation.
+// Some models (e.g. Qwen) require a single system message at the start.
+// Text content from blocks arrays is also collected.
+func coalesceSystemMessages(messages []Message) []Message {
+	var sysTexts []string
+	var sysRole string
+	var others []Message
+	sysIndices := make(map[int]struct{})
+
+	for i, msg := range messages {
+		if msg.Role == "system" || msg.Role == "developer" {
+			sysIndices[i] = struct{}{}
+			// Prefer "system" over "developer" because some providers reject "developer".
+			if sysRole == "" || msg.Role == "system" {
+				sysRole = msg.Role
+			}
+			switch v := msg.Content.(type) {
+			case string:
+				if v != "" {
+					sysTexts = append(sysTexts, v)
+				}
+			case []any:
+				for _, block := range v {
+					bm, ok := block.(map[string]any)
+					if !ok {
+						continue
+					}
+					if typ, _ := bm["type"].(string); typ == "text" || typ == "input_text" {
+						if text, _ := bm["text"].(string); text != "" {
+							sysTexts = append(sysTexts, text)
+						}
+					}
+				}
+			}
+		} else {
+			others = append(others, msg)
+		}
+	}
+
+	if len(sysIndices) == 0 {
+		return messages
+	}
+
+	// Single system message not at start: move it to the front.
+	if len(sysIndices) == 1 {
+		for idx := range sysIndices {
+			if idx == 0 {
+				return messages
+			}
+			return append([]Message{messages[idx]}, append(messages[:idx], messages[idx+1:]...)...)
+		}
+	}
+
+	// Multiple system/developer messages: coalesce into one.
+	var mergedContent any
+	if len(sysTexts) > 0 {
+		mergedContent = strings.Join(sysTexts, "\n\n")
+	} else {
+		mergedContent = ""
+	}
+	if sysRole == "" {
+		sysRole = "system"
+	}
+
+	return append([]Message{{Role: sysRole, Content: mergedContent}}, others...)
 }
 
 func convertResponsesTools(rawTools []json.RawMessage) ([]Tool, map[string]struct{}, error) {
