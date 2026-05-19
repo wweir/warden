@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -92,25 +93,25 @@ func (c *ConfigStruct) LogValue() slog.Value {
 }
 
 type ProviderConfig struct {
-	Name                 string            `json:"-"` // populated from map key
-	Disabled             bool              `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
-	URL                  string            `json:"url,omitempty" usage:"Upstream LLM base URL (shorthand for single-endpoint providers)"`
-	Format               string            `json:"format,omitempty" usage:"Upstream native protocol format: openai, anthropic, copilot; empty defaults to openai (shorthand for single-endpoint providers)"`
-	Protocols            []string          `json:"protocols,omitempty" usage:"Supported service protocols: chat, responses, anthropic, embeddings; empty uses format defaults (shorthand for single-endpoint providers)"`
-	Backend              string            `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
-	BackendProvider      string            `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
-	APIKey               SecretString      `json:"api_key" usage:"API key for authentication"`
-	APIKeyCommand        string            `json:"api_key_command" usage:"Shell command that prints an API key to stdout"`
-	APIKeyCommandTimeout string            `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
-	APIKeyCommandTTL     string            `json:"api_key_command_ttl" usage:"Cache TTL for api_key_command output, default 5m; 0s disables cache"`
-	ConfigDir            string            `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
-	Timeout              string            `json:"timeout" usage:"First-token timeout from upstream request start to first response body byte (e.g. 30s, 2m); body reading after the first token has no time limit"`
-	Proxy                string            `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
-	Headers              map[string]string `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
-	Models               []string          `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
-	ResponsesToChat      bool              `json:"responses_to_chat,omitempty" usage:"Route responses to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
-	AnthropicToChat      bool              `json:"anthropic_to_chat,omitempty" usage:"Route anthropic /messages to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
-	AnthropicToResponses bool              `json:"anthropic_to_responses,omitempty" usage:"Route responses to upstream /messages for anthropic format (stateless only) (shorthand for single-endpoint providers)"`
+	Name                 string                             `json:"-"` // populated from map key
+	Disabled             bool                               `json:"disabled,omitempty" usage:"Disable this provider from receiving traffic (manual suppress)"`
+	URL                  string                             `json:"url,omitempty" usage:"Upstream LLM base URL (shorthand for single-endpoint providers)"`
+	Format               string                             `json:"format,omitempty" usage:"Upstream native protocol format: openai, anthropic, copilot; empty defaults to openai (shorthand for single-endpoint providers)"`
+	Protocols            []string                           `json:"protocols,omitempty" usage:"Supported service protocols: chat, responses, anthropic, embeddings; empty uses format defaults (shorthand for single-endpoint providers)"`
+	Backend              string                             `json:"backend" usage:"Optional upstream backend marker, currently cliproxy"`
+	BackendProvider      string                             `json:"backend_provider" usage:"Provider name inside the upstream backend, for example codex"`
+	APIKey               SecretString                       `json:"api_key" usage:"API key for authentication"`
+	APIKeyCommand        string                             `json:"api_key_command" usage:"Shell command that prints an API key to stdout"`
+	APIKeyCommandTimeout string                             `json:"api_key_command_timeout" usage:"Timeout for api_key_command, default 5s"`
+	APIKeyCommandTTL     string                             `json:"api_key_command_ttl" usage:"Cache TTL for api_key_command output, default 5m; 0s disables cache"`
+	ConfigDir            string                             `json:"config_dir" usage:"Local CLI config directory for OAuth credentials (required for copilot)"`
+	Timeout              string                             `json:"timeout" usage:"First-token timeout from upstream request start to first response body byte (e.g. 30s, 2m); body reading after the first token has no time limit"`
+	Proxy                string                             `json:"proxy" usage:"HTTP/SOCKS proxy URL (e.g. http://host:port, socks5://host:port)"`
+	Headers              map[string]string                  `json:"headers" usage:"Custom HTTP headers to send with upstream requests (overrides defaults)"`
+	Models               []string                           `json:"models" usage:"Extra model IDs always included; /models discovery results are merged when available"`
+	ResponsesToChat      bool                               `json:"responses_to_chat,omitempty" usage:"Route responses to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
+	AnthropicToChat      bool                               `json:"anthropic_to_chat,omitempty" usage:"Route anthropic /messages to upstream /chat/completions for openai format (shorthand for single-endpoint providers)"`
+	AnthropicToResponses bool                               `json:"anthropic_to_responses,omitempty" usage:"Route responses to upstream /messages for anthropic format (stateless only) (shorthand for single-endpoint providers)"`
 	Endpoints            map[string]*ProviderEndpointConfig `json:"endpoint,omitempty" usage:"Explicit protocol endpoints for multi-endpoint providers"`
 
 	clientCache   map[time.Duration]*http.Client // cached clients by timeout
@@ -193,6 +194,10 @@ func (b *ProviderConfig) HTTPClient(override time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = timeout
 	transport.IdleConnTimeout = 30 * time.Second
+	transport.DialContext = (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 15 * time.Second,
+	}).DialContext
 	if b.Backend == ProviderBackendCLIProxy {
 		transport.Proxy = nil
 	} else if b.Proxy != "" {
