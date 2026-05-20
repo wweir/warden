@@ -46,11 +46,14 @@ func (g *Gateway) handleChatBridge(
 	startTime time.Time,
 	reqID string,
 	spec chatBridgeSpec,
-) {
+) error {
 	chatReq, logModel, err := spec.buildChatRequest(rawReqBody)
 	if err != nil {
+		if errors.Is(err, openai.ErrBridgeUnsupported) {
+			return err
+		}
 		http.Error(w, fmt.Sprintf("convert to chat: %v", err), http.StatusBadRequest)
-		return
+		return nil
 	}
 
 	sessionReq := inferenceRequest{
@@ -71,7 +74,7 @@ func (g *Gateway) handleChatBridge(
 			reqBody, marshalErr := upstreampkg.MarshalProtocolRequest(session.providerProtocol, chatReq)
 			if marshalErr != nil {
 				http.Error(w, fmt.Sprintf("marshal chat request: %v", marshalErr), http.StatusInternalServerError)
-				return
+				return nil
 			}
 
 			streamReader, latency, sendErr := upstreampkg.SendStreamingRequest(
@@ -93,7 +96,7 @@ func (g *Gateway) handleChatBridge(
 				}
 				observepkg.RecordError(logParams, nil, sendErr.Error(), nil, g.recordAndBroadcast)
 				upstreampkg.WriteUpstreamAwareError(w, sendErr)
-				return
+				return nil
 			}
 			defer streamReader.Close()
 
@@ -139,7 +142,7 @@ func (g *Gateway) handleChatBridge(
 				emitStreamLog(asyncVerdicts, nil)
 			}()
 			emitStreamLog(nil, g.RecordTokenMetrics)
-			return
+			return nil
 		}
 
 		chatResp, rawRespBody, latency, forwardErr := g.forwardNonStreamRequest(r.Context(), session.provider, session.providerProtocol, chatReq)
@@ -154,7 +157,7 @@ func (g *Gateway) handleChatBridge(
 			}
 			observepkg.RecordError(logParams, nil, forwardErr.Error(), nil, g.recordAndBroadcast)
 			upstreampkg.WriteUpstreamAwareError(w, forwardErr)
-			return
+			return nil
 		}
 		session.observeMatchedModel()
 
@@ -163,7 +166,7 @@ func (g *Gateway) handleChatBridge(
 			g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
 			observepkg.RecordError(logParams, rawRespBody, convErr.Error(), nil, g.recordAndBroadcast)
 			spec.writeConvertResponseError(w, convErr)
-			return
+			return nil
 		}
 
 		g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
@@ -188,7 +191,7 @@ func (g *Gateway) handleChatBridge(
 				g.recordAndBroadcast,
 			)
 		})
-		return
+		return nil
 	}
 }
 

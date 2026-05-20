@@ -86,11 +86,23 @@ func (g *Gateway) handleResponses(w http.ResponseWriter, r *http.Request, route 
 			currentAccessMode = currentTarget.Format
 		}
 		if providerNeedsChatBridge(current, currentAccessMode) {
-			g.handleResponsesViaChat(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
+			if err := g.handleResponsesViaChat(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID); err != nil {
+				if manager.HandleError(err) {
+					continue
+				}
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			return
 		}
 		if providerNeedsMessagesBridge(current, currentAccessMode) {
-			g.handleResponsesViaMessages(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
+			if err := g.handleResponsesViaMessages(w, r, route, req.RawBody, req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID); err != nil {
+				if manager.HandleError(err) {
+					continue
+				}
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			return
 		}
 
@@ -172,8 +184,8 @@ func (g *Gateway) forwardResponsesTransparently(w http.ResponseWriter, r *http.R
 // responses_to_chat (family=openai).
 func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, manager *inferencepkg.Manager, startTime time.Time, reqID string,
-) {
-	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
+) error {
+	return g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
 		g.responsesBridgeSpec(bridgepkg.StreamChatAsResponses, "ResponsesToChat stream terminated early"))
 }
 
@@ -184,8 +196,8 @@ func (g *Gateway) handleResponsesViaChat(w http.ResponseWriter, r *http.Request,
 // then refolded through Chat IR into Responses SSE.
 func (g *Gateway) handleResponsesViaMessages(w http.ResponseWriter, r *http.Request, route *config.RouteConfig,
 	rawReqBody []byte, model string, stream bool, manager *inferencepkg.Manager, startTime time.Time, reqID string,
-) {
-	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
+) error {
+	return g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID,
 		g.responsesBridgeSpec(bridgepkg.StreamAnthropicAsResponses, "AnthropicToResponses stream terminated early"))
 }
 

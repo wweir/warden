@@ -41,7 +41,13 @@ func (g *Gateway) handleAnthropicMessages(w http.ResponseWriter, r *http.Request
 	for {
 		current := manager.Current()
 		if current.Target != nil && current.Target.Format == string(config.ProviderFormatOpenAI) && config.FormatHasBridge(current.Provider, config.ProviderFormatOpenAI, "anthropic_to_chat") {
-			g.handleAnthropicMessagesViaChat(w, r, route, prepareRawBody(req.RawBody, current.Target), req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID)
+			if err := g.handleAnthropicMessagesViaChat(w, r, route, prepareRawBody(req.RawBody, current.Target), req.Model, req.Stream, manager, bootstrap.startTime, bootstrap.requestID); err != nil {
+				if manager.HandleError(err) {
+					continue
+				}
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			return
 		}
 		if g.handleInference(w, r, route, req, manager, bootstrap.startTime, bootstrap.requestID, inferenceSpec{
@@ -103,9 +109,9 @@ func (g *Gateway) handleAnthropicMessagesViaChat(
 	manager *inferencepkg.Manager,
 	startTime time.Time,
 	reqID string,
-) {
+) error {
 	hookGateway := g.hookGatewayTarget()
-	g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID, chatBridgeSpec{
+	return g.handleChatBridge(w, r, route, rawReqBody, model, stream, manager, startTime, reqID, chatBridgeSpec{
 		serviceProtocol:   config.RouteProtocolAnthropic,
 		endpoint:          "messages",
 		streamWarn:        "AnthropicToChat stream terminated early",
