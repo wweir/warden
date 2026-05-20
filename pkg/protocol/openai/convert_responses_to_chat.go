@@ -2,11 +2,16 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strconv"
 	"strings"
 )
+
+// ErrBridgeUnsupported is returned when a Responses API request cannot be
+// bridged to Chat Completions because it uses features unsupported by the bridge.
+var ErrBridgeUnsupported = errors.New("bridge unsupported")
 
 var responsesToChatAllowedExtraFields = map[string]struct{}{
 	"audio":                 {},
@@ -236,6 +241,9 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 				return nil, fmt.Errorf("normalize function_call_output.output: %w", err)
 			}
 			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: content})
+
+		case "custom_tool_call":
+			return nil, fmt.Errorf("%w: custom_tool_call is not supported in responses_to_chat mode; use a native responses provider", ErrBridgeUnsupported)
 
 		case "reasoning":
 			var reasoningItem map[string]any
@@ -474,7 +482,10 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, bool, error) {
 	if err := json.Unmarshal(raw, &typeCheck); err != nil {
 		return Tool{}, false, fmt.Errorf("unmarshal tool type: %w", err)
 	}
-	if typeCheck.Type != "function" && typeCheck.Type != "custom" {
+	if typeCheck.Type == "custom" {
+		return Tool{}, false, fmt.Errorf("%w: custom tools are not supported in responses_to_chat mode; use a native responses provider", ErrBridgeUnsupported)
+	}
+	if typeCheck.Type != "function" {
 		return Tool{}, false, nil
 	}
 

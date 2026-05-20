@@ -164,6 +164,16 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "reject custom tools",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Tools: []json.RawMessage{json.RawMessage(`{"type":"custom","name":"shell"}`)},
+			},
+			wantErr:   true,
+			errSubstr: `custom tools are not supported in responses_to_chat mode`,
+		},
+		{
 			name: "reject conflicting max_output_tokens and max_completion_tokens",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
@@ -457,6 +467,24 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 		t.Fatal("expected error for unknown input item")
 	}
 	if !strings.Contains(err.Error(), `unsupported input item type "unknown_type"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResponsesRequestToChatRequestRejectCustomToolCall(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Hello"},
+			{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"}
+		]`),
+	}
+
+	_, err := ResponsesRequestToChatRequest(respReq)
+	if err == nil {
+		t.Fatal("expected error for custom tool call")
+	}
+	if !strings.Contains(err.Error(), `custom_tool_call is not supported in responses_to_chat mode`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
