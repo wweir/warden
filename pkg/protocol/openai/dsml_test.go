@@ -88,6 +88,20 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			wantFirstArgs: `{"a":42,"b":true}`,
 		},
 		{
+			name: "ascii tool call wrapper",
+			input: "\n\n<tool_call>\n" +
+				"<function=lookup_weather>\n" +
+				"<parameter=city>\n" +
+				"Hangzhou\n" +
+				"</parameter>\n" +
+				"</function>\n" +
+				"</tool_call>",
+			wantText:      "",
+			wantCalls:     1,
+			wantFirstName: "lookup_weather",
+			wantFirstArgs: `{"city":"Hangzhou"}`,
+		},
+		{
 			name:      "unclosed tag returns original",
 			input:     `text <｜DSML｜tool_calls> incomplete`,
 			wantText:  `text <｜DSML｜tool_calls> incomplete`,

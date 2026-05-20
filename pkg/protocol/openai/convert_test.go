@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tidwall/gjson"
+	"github.com/wweir/warden/pkg/protocol"
 )
 
 func TestResponsesRequestToChatRequest(t *testing.T) {
@@ -530,6 +531,116 @@ data: [DONE]
 	}
 }
 
+func TestChatSSEToResponsesSSEReasoningAddedSummaryIncludesFirstDelta(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	for _, evt := range protocol.ParseEvents(output) {
+		if evt.EventType != "response.output_item.added" {
+			continue
+		}
+		result := gjson.Parse(evt.Data)
+		if result.Get("item.type").String() != "reasoning" {
+			continue
+		}
+		if got := result.Get("item.summary.0.text").String(); got != "Let me think" {
+			t.Fatalf("reasoning output_item.added summary = %q, want %q", got, "Let me think")
+		}
+		return
+	}
+	t.Fatalf("expected reasoning output_item.added event, got: %s", string(output))
+}
+
+func TestChatSSEToResponsesSSEToolCallOutputIndexIncludesReasoningOffset(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Need a lookup."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+
+	events := protocol.ParseEvents(output)
+	var addedIndex, deltaIndex, doneIndex *int
+	for _, evt := range events {
+		if evt.Data == "" {
+			continue
+		}
+		result := gjson.Parse(evt.Data)
+		if evt.EventType == "response.output_item.added" && result.Get("item.type").String() == "function_call" {
+			idx := int(result.Get("output_index").Int())
+			addedIndex = &idx
+		}
+		if evt.EventType == "response.function_call_arguments.delta" {
+			idx := int(result.Get("output_index").Int())
+			deltaIndex = &idx
+		}
+		if evt.EventType == "response.function_call_arguments.done" {
+			idx := int(result.Get("output_index").Int())
+			doneIndex = &idx
+		}
+	}
+
+	if addedIndex == nil || deltaIndex == nil || doneIndex == nil {
+		t.Fatalf("expected added, delta, and done tool events, got: %s", string(output))
+	}
+	if *addedIndex != 2 || *deltaIndex != *addedIndex || *doneIndex != *addedIndex {
+		t.Fatalf("tool output indexes added/delta/done = %d/%d/%d, want all 2", *addedIndex, *deltaIndex, *doneIndex)
+	}
+}
+
+func TestChatSSEToResponsesSSEPreservesReasoningWhenNormalizingAsciiToolCallArguments(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen","choices":[{"index":0,"delta":{"reasoning_content":"Need to call a tool."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\n\n<tool_call>\n<function=lookup_weather>\n<parameter=city>\nHangzhou\n</parameter>\n</function>\n</tool_call>"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "qwen")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, `event: response.reasoning.delta`) || !strings.Contains(outputStr, `Need to call a tool.`) {
+		t.Fatalf("expected reasoning content to be preserved, got: %s", outputStr)
+	}
+	if strings.Contains(outputStr, "<tool_call>") || strings.Contains(outputStr, "<function=lookup_weather>") {
+		t.Fatalf("expected ASCII tool markup to be normalized out of arguments, got: %s", outputStr)
+	}
+	if !strings.Contains(outputStr, `"arguments":"{\"city\":\"Hangzhou\"}"`) {
+		t.Fatalf("expected normalized JSON arguments, got: %s", outputStr)
+	}
+}
+
 func TestChatResponseToResponsesResponseWithDSML(t *testing.T) {
 	chatResp := ChatCompletionResponse{
 		ID:     "chatcmpl_123",
@@ -951,5 +1062,80 @@ func TestCoalesceSystemMessagesWithArrayContent(t *testing.T) {
 	expectedContent := "be helpful\n\nbe precise"
 	if got[0].Content != expectedContent {
 		t.Fatalf("expected content %q, got %v", expectedContent, got[0].Content)
+	}
+}
+
+// TestChatSSEToResponsesSSEWithDanglingThinkSummary verifies that when a dangling
+// think tag is flushed at stream end, the output_item.added event contains the
+// correct summary with the reasoning content (not empty).
+func TestChatSSEToResponsesSSEWithDanglingThinkSummary(t *testing.T) {
+	// Simulate a stream where thinking starts but never properly closes
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<think>\nthinking in progress"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+
+	// Find the output_item.added event for reasoning
+	if !strings.Contains(outputStr, `event: response.output_item.added`) {
+		t.Fatal("expected response.output_item.added event")
+	}
+
+	// The summary should contain the thinking content, not be empty
+	// Check that output_item.added contains the thinking summary
+	if !strings.Contains(outputStr, `"type":"reasoning"`) {
+		t.Fatal("expected reasoning item type")
+	}
+
+	// Verify the summary contains our thinking text
+	// The reasoning summary should be present in output_item.added
+	if !strings.Contains(outputStr, `"summary":[{"type":"summary_text","text":"thinking in progress"}]`) &&
+		!strings.Contains(outputStr, "thinking in progress") {
+		t.Fatalf("expected reasoning summary to contain 'thinking in progress', got: %s", outputStr)
+	}
+}
+
+// TestChatSSEToResponsesSSEWithSplitThinkTagsSummary verifies that when think tags
+// are split across chunks, the output_item.added event contains the correct summary.
+func TestChatSSEToResponsesSSEWithSplitThinkTagsSummary(t *testing.T) {
+	// Think tag opens and closes in different chunks
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"<think>"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"step by step"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"</think>"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Final answer."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+
+	// Find the output_item.added event for reasoning - it should have the correct summary
+	if !strings.Contains(outputStr, `step by step`) {
+		t.Fatalf("expected reasoning summary to contain 'step by step', got: %s", outputStr)
+	}
+
+	// Also verify the reasoning delta contains the content
+	if !strings.Contains(outputStr, `event: response.reasoning.delta`) {
+		t.Fatal("expected response.reasoning.delta event")
 	}
 }

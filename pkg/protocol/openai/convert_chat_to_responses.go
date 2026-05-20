@@ -113,11 +113,12 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 	}
 
 	for _, tc := range msg.ToolCalls {
+		name, arguments := normalizeToolCallArguments(tc.Function.Name, tc.Function.Arguments)
 		fc := FunctionCallItem{
 			Type:      "function_call",
 			CallID:    tc.ID,
-			Name:      tc.Function.Name,
-			Arguments: tc.Function.Arguments,
+			Name:      name,
+			Arguments: arguments,
 			Status:    "completed",
 		}
 		raw, err := json.Marshal(fc)
@@ -451,6 +452,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 	var responseChunks []string
 	responseChunks = append(responseChunks, s.ensureLifecycleEvents()...)
 	if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
+		s.reasoningContent += reasoningContent
 		if !s.reasoningAdded {
 			s.reasoningItemID = s.makeReasoningItemID()
 			responseChunks = append(responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
@@ -463,7 +465,6 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 			}))
 			s.reasoningAdded = true
 		}
-		s.reasoningContent += reasoningContent
 		s.emitReasoningDelta(reasoningContent, &responseChunks)
 	}
 	if content, ok := delta["content"].(string); ok && content != "" {
@@ -547,7 +548,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 			if args, ok := fn["arguments"].(string); ok && args != "" {
 				toolState.arguments += args
 				payload := map[string]any{
-					"output_index": idx + 1,
+					"output_index": s.toolOutputIndex(idx),
 					"item_id":      s.toolItemID[idx],
 					"delta":        args,
 				}
@@ -589,6 +590,9 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 		s.thinkingBuffer = ""
 		s.thinking = false
 		if reasoning != "" {
+			// Update content first before sending events
+			s.reasoningContent += reasoning
+
 			if !s.reasoningAdded {
 				s.reasoningItemID = s.makeReasoningItemID()
 				events = append(events, formatResponsesEvent("response.output_item.added", map[string]any{
@@ -601,7 +605,6 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 				}))
 				s.reasoningAdded = true
 			}
-			s.reasoningContent += reasoning
 			s.emitReasoningDelta(reasoning, &events)
 		}
 	} else if s.thinkingBuffer != "" {
@@ -685,21 +688,22 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 		}
 		toolState := s.ensureToolState(idx)
 		item := map[string]any{
-			"id":        s.toolItemID[idx],
-			"type":      "function_call",
-			"status":    "completed",
-			"arguments": toolState.arguments,
+			"id":     s.toolItemID[idx],
+			"type":   "function_call",
+			"status": "completed",
 		}
+		name, arguments := normalizeToolCallArguments(toolState.name, toolState.arguments)
+		item["arguments"] = arguments
 		if toolState.callID != "" {
 			item["call_id"] = toolState.callID
 		}
-		if toolState.name != "" {
-			item["name"] = toolState.name
+		if name != "" {
+			item["name"] = name
 		}
 		events = append(events, formatResponsesEvent("response.function_call_arguments.done", map[string]any{
 			"output_index": s.toolOutputIndex(idx),
 			"item_id":      s.toolItemID[idx],
-			"arguments":    toolState.arguments,
+			"arguments":    arguments,
 		}))
 		events = append(events, formatResponsesEvent("response.output_item.done", map[string]any{
 			"output_index": s.toolOutputIndex(idx),
@@ -838,6 +842,9 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 			reasoning := s.thinkingBuffer
 			s.thinkingBuffer = ""
 			if reasoning != "" {
+				// Update content first before sending events
+				s.reasoningContent += reasoning
+
 				if !s.reasoningAdded {
 					s.reasoningItemID = s.makeReasoningItemID()
 					*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
@@ -850,7 +857,6 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 					}))
 					s.reasoningAdded = true
 				}
-				s.reasoningContent += reasoning
 				s.emitReasoningDelta(reasoning, responseChunks)
 			}
 			return ""
@@ -860,6 +866,9 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 		s.thinkingBuffer = s.thinkingBuffer[idx+len("</think>"):]
 		s.thinking = false
 		if reasoning != "" {
+			// Update content first before sending events
+			s.reasoningContent += reasoning
+
 			if !s.reasoningAdded {
 				s.reasoningItemID = s.makeReasoningItemID()
 				*responseChunks = append(*responseChunks, formatResponsesEvent("response.output_item.added", map[string]any{
@@ -872,7 +881,6 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 				}))
 				s.reasoningAdded = true
 			}
-			s.reasoningContent += reasoning
 			s.emitReasoningDelta(reasoning, responseChunks)
 		}
 		// Continue loop to process any text after </think>.
@@ -963,6 +971,19 @@ func (s *ChatResponsesStreamState) emitDSMLToolCall(tc dsmlToolCall, responseChu
 		"item":         doneItem,
 	}))
 	s.toolDone[idx] = true
+}
+
+func normalizeToolCallArguments(name string, arguments string) (string, string) {
+	_, calls, found := parseDSMLToolCalls(arguments)
+	if !found || len(calls) == 0 {
+		return name, arguments
+	}
+
+	call := calls[0]
+	if call.Name != "" {
+		name = call.Name
+	}
+	return name, call.Arguments
 }
 
 func BuildChatResponsesCompletedEvent(rawSSE []byte, model string, streamComplete bool) []byte {

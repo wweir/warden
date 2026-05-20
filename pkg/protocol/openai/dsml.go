@@ -17,6 +17,10 @@ var (
 
 	// dsmlParamPattern matches parameter elements inside an invoke.
 	dsmlParamPattern = regexp.MustCompile(`(?s)<｜DSML｜parameter\s+name="([^"]*)"(?:\s+string="(true|false)")?\s*>(.*?)</｜DSML｜parameter>`)
+
+	asciiToolCallBlockPattern = regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
+	asciiFunctionPattern      = regexp.MustCompile(`(?s)<function=([^>\s]+)>(.*?)</function>`)
+	asciiParamPattern         = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
 )
 
 // dsmlToolCall holds a single parsed DSML tool invocation.
@@ -33,17 +37,12 @@ func parseDSMLToolCalls(text string) (string, []dsmlToolCall, bool) {
 	remaining := text
 
 	for {
-		loc := dsmlBlockPattern.FindStringIndex(remaining)
+		loc := firstToolCallBlockIndex(remaining)
 		if loc == nil {
 			break
 		}
-		submatch := dsmlBlockPattern.FindStringSubmatch(remaining[loc[0]:loc[1]])
-		if len(submatch) < 2 {
-			break
-		}
-		inner := submatch[1]
-
-		invokes := parseDSMLInvokes(inner)
+		block := remaining[loc[0]:loc[1]]
+		invokes := parseToolCallBlock(block)
 		calls = append(calls, invokes...)
 
 		prefix := strings.TrimRight(remaining[:loc[0]], " \t\n\r")
@@ -56,6 +55,31 @@ func parseDSMLToolCalls(text string) (string, []dsmlToolCall, bool) {
 	}
 
 	return strings.TrimSpace(remaining), calls, len(calls) > 0
+}
+
+func firstToolCallBlockIndex(text string) []int {
+	dsmlLoc := dsmlBlockPattern.FindStringIndex(text)
+	asciiLoc := asciiToolCallBlockPattern.FindStringIndex(text)
+	switch {
+	case dsmlLoc == nil:
+		return asciiLoc
+	case asciiLoc == nil:
+		return dsmlLoc
+	case dsmlLoc[0] <= asciiLoc[0]:
+		return dsmlLoc
+	default:
+		return asciiLoc
+	}
+}
+
+func parseToolCallBlock(block string) []dsmlToolCall {
+	if submatch := dsmlBlockPattern.FindStringSubmatch(block); len(submatch) >= 2 {
+		return parseDSMLInvokes(submatch[1])
+	}
+	if submatch := asciiToolCallBlockPattern.FindStringSubmatch(block); len(submatch) >= 2 {
+		return parseAsciiToolCallInvokes(submatch[1])
+	}
+	return nil
 }
 
 func parseDSMLInvokes(inner string) []dsmlToolCall {
@@ -91,19 +115,59 @@ func parseDSMLParams(content string) string {
 		if stringAttr == "true" {
 			params[paramName] = value
 		} else {
-			// string="false" or no string attribute: try JSON literal first,
-			// fall back to string on parse error.
-			var v any
-			if err := json.Unmarshal([]byte(value), &v); err == nil {
-				params[paramName] = v
-			} else {
-				params[paramName] = value
-			}
+			params[paramName] = parseLooseJSONValue(value)
 		}
 	}
 
-	// If there is exactly one top-level parameter named "arguments",
-	// unwrap it so the actual argument object sits at the top level.
+	return marshalToolCallParams(params)
+}
+
+func parseAsciiToolCallInvokes(inner string) []dsmlToolCall {
+	var calls []dsmlToolCall
+	matches := asciiFunctionPattern.FindAllStringSubmatch(inner, -1)
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		args := parseAsciiToolCallParams(match[2])
+		calls = append(calls, dsmlToolCall{
+			Name:      name,
+			Arguments: args,
+		})
+	}
+	return calls
+}
+
+func parseAsciiToolCallParams(content string) string {
+	params := make(map[string]any)
+	matches := asciiParamPattern.FindAllStringSubmatch(content, -1)
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		value := strings.TrimSpace(match[2])
+		if name == "" {
+			continue
+		}
+		params[name] = parseLooseJSONValue(value)
+	}
+	return marshalToolCallParams(params)
+}
+
+func parseLooseJSONValue(value string) any {
+	if value == "" {
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal([]byte(value), &v); err == nil {
+		return v
+	}
+	return value
+}
+
+func marshalToolCallParams(params map[string]any) string {
 	if len(params) == 1 {
 		if v, ok := params["arguments"]; ok {
 			switch val := v.(type) {

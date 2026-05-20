@@ -124,7 +124,7 @@ func (g *Gateway) handleChatBridge(
 				observepkg.RecordSuccess(
 					completedLogParams,
 					clientBody,
-					observeStreamTokenUsage(config.RouteProtocolChat, session.providerProtocol, rawChat),
+					observeStreamTokenUsage(config.RouteProtocolChat, session.providerProtocol, rawChat, session.rawBody, session.model),
 					spec.streamLogAssembler,
 					recordTokens,
 					verdicts,

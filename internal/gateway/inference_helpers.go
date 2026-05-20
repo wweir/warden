@@ -154,6 +154,14 @@ func observeBridgeJSONTokenUsage(respBody []byte) tokenusagepkg.Observation {
 	return tokenusagepkg.FromJSON(respBody).WithSource(tokenusagepkg.SourceBridgeNormalized)
 }
 
-func observeStreamTokenUsage(serviceProtocol, providerProtocol string, respBody []byte) tokenusagepkg.Observation {
-	return tokenusagepkg.FromStream(serviceProtocol, providerProtocol, respBody)
+func observeStreamTokenUsage(serviceProtocol, providerProtocol string, respBody []byte, reqBody []byte, model string) tokenusagepkg.Observation {
+	obs := tokenusagepkg.FromStream(serviceProtocol, providerProtocol, respBody)
+
+	// If no usage found and this is a streaming request, estimate from request/response
+	if !obs.HasUsage() && len(reqBody) > 0 && model != "" {
+		accumulatedOutput := tokenusagepkg.ExtractOutputText(respBody)
+		obs = tokenusagepkg.EstimateTokenUsage(reqBody, model, accumulatedOutput)
+	}
+
+	return obs
 }

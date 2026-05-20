@@ -269,7 +269,7 @@ func (g *Gateway) recordInferenceStreamResponse(session *inferenceSession, spec 
 		observepkg.RecordSuccess(
 			completedLogParams,
 			respBody,
-			observeStreamTokenUsage(spec.serviceProtocol, session.providerProtocol, respBody),
+			observeStreamTokenUsage(spec.serviceProtocol, session.providerProtocol, respBody, session.rawBody, session.model),
 			spec.streamAssembler(session.providerProtocol),
 			recordTokens,
 			verdicts,

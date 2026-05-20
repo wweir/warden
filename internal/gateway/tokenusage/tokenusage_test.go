@@ -1,6 +1,11 @@
 package tokenusage
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/tiktoken-go/tokenizer"
+)
 
 func TestFromJSONOpenAIUsage(t *testing.T) {
 	t.Parallel()
@@ -122,5 +127,124 @@ func TestFromAnthropicStreamPartial(t *testing.T) {
 	}
 	if obs.PromptTokens != 10 || obs.CompletionTokens != 0 {
 		t.Fatalf("unexpected observation: %+v", obs)
+	}
+}
+
+func TestEstimateTokenUsageCountsResponsesInputArray(t *testing.T) {
+	t.Parallel()
+
+	obs := EstimateTokenUsage(
+		[]byte(`{"model":"gpt-4o","input":[{"type":"message","role":"developer","content":"be precise"},{"type":"message","role":"user","content":[{"type":"input_text","text":"hello world"}]},{"type":"function_call_output","call_id":"call_1","output":{"ok":true}}]}`),
+		"gpt-4o",
+		"done",
+	)
+	if obs.CompletenessLabel() != CompletenessPartial {
+		t.Fatalf("completeness = %q, want %q", obs.CompletenessLabel(), CompletenessPartial)
+	}
+	if obs.PromptTokens == 0 {
+		t.Fatalf("expected prompt tokens from responses input array, got %+v", obs)
+	}
+	if obs.CompletionTokens == 0 {
+		t.Fatalf("expected completion tokens from output, got %+v", obs)
+	}
+}
+
+func TestEstimateTokenUsageCountsResponsesInstructions(t *testing.T) {
+	t.Parallel()
+
+	obs := EstimateTokenUsage(
+		[]byte(`{"model":"gpt-4o","instructions":"be precise","input":"hello"}`),
+		"gpt-4o",
+		"done",
+	)
+	if obs.PromptTokens == 0 {
+		t.Fatalf("expected prompt tokens from instructions, got %+v", obs)
+	}
+}
+
+func TestEstimateTokenUsageCountsToolCallFields(t *testing.T) {
+	t.Parallel()
+
+	obs := EstimateTokenUsage(
+		[]byte(`{"model":"gpt-4o","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup_weather","arguments":"{\"city\":\"Hangzhou\"}"}}]}]}`),
+		"gpt-4o",
+		"",
+	)
+	if obs.PromptTokens == 0 {
+		t.Fatalf("expected prompt tokens from tool call fields, got %+v", obs)
+	}
+	if obs.CompletenessLabel() != CompletenessPartial {
+		t.Fatalf("completeness = %q, want %q", obs.CompletenessLabel(), CompletenessPartial)
+	}
+}
+
+func TestEstimateTokenUsageDoesNotCountResponsesImageURLAsText(t *testing.T) {
+	t.Parallel()
+
+	obs := EstimateTokenUsage(
+		[]byte(`{"model":"gpt-4o","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://example.test/image.png"}]}]}`),
+		"gpt-4o",
+		"done",
+	)
+	if obs.PromptTokens != 0 {
+		t.Fatalf("prompt tokens = %d, want 0 for image-only text estimate", obs.PromptTokens)
+	}
+	if obs.CompletionTokens == 0 {
+		t.Fatalf("expected completion tokens from output, got %+v", obs)
+	}
+}
+
+func TestExtractOutputTextSupportsResponsesSSE(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte("event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n" +
+		"event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+
+	if got := ExtractOutputText(raw); got != "hello" {
+		t.Fatalf("ExtractOutputText = %q, want %q", got, "hello")
+	}
+}
+
+type fakeCodec struct {
+	name string
+}
+
+func (c fakeCodec) GetName() string { return c.name }
+func (c fakeCodec) Count(string) (int, error) {
+	return 0, nil
+}
+func (c fakeCodec) Encode(string) ([]uint, []string, error) {
+	return nil, nil, nil
+}
+func (c fakeCodec) Decode([]uint) (string, error) {
+	return "", nil
+}
+
+func TestCodecForModelPrefersExactTokenizerLookup(t *testing.T) {
+	t.Parallel()
+
+	codecCache.once.Do(initCodecCache)
+	got := codecForModelWithLookup("qwen3.5:9b", func(model tokenizer.Model) (tokenizer.Codec, error) {
+		if model == "qwen3.5:9b" {
+			return fakeCodec{name: "exact-model"}, nil
+		}
+		return nil, errors.New("unexpected model")
+	})
+	if got == nil || got.GetName() != "exact-model" {
+		t.Fatalf("codecForModelWithLookup() = %v, want exact-model", got)
+	}
+}
+
+func TestCodecForModelFallsBackToFamilyRules(t *testing.T) {
+	t.Parallel()
+
+	codecCache.once.Do(initCodecCache)
+	got := codecForModelWithLookup("gpt-5.4", func(tokenizer.Model) (tokenizer.Codec, error) {
+		return nil, tokenizer.ErrModelNotSupported
+	})
+	if got == nil || got.GetName() != "o200k_base" {
+		t.Fatalf("codecForModelWithLookup(gpt-5.4) = %v, want o200k_base", got)
 	}
 }

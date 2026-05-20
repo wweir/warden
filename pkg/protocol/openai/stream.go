@@ -347,11 +347,12 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 	events := protocol.ParseEvents(rawSSE)
 
 	var (
-		base         map[string]any                 // last parsed chunk as base
-		contentParts []string                       // accumulated delta.content
-		toolCalls    = make(map[int]map[string]any) // index -> merged tool_call
-		role         string
-		finishReason string
+		base            map[string]any                 // last parsed chunk as base
+		contentParts    []string                       // accumulated delta.content
+		reasoningParts  []string                       // accumulated delta.reasoning_content
+		toolCalls       = make(map[int]map[string]any) // index -> merged tool_call
+		role            string
+		finishReason    string
 	)
 
 	for _, evt := range events {
@@ -388,6 +389,9 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 		}
 		if c, ok := delta["content"].(string); ok && c != "" {
 			contentParts = append(contentParts, c)
+		}
+		if rc, ok := delta["reasoning_content"].(string); ok && rc != "" {
+			reasoningParts = append(reasoningParts, rc)
 		}
 
 		// merge streamed tool_calls by index
@@ -434,6 +438,9 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 	msg := make(map[string]any)
 	if role != "" {
 		msg["role"] = role
+	}
+	if len(reasoningParts) > 0 {
+		msg["reasoning_content"] = strings.Join(reasoningParts, "")
 	}
 	if len(contentParts) > 0 {
 		msg["content"] = strings.Join(contentParts, "")

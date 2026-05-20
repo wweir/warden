@@ -259,7 +259,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		observation := tokenusagepkg.Missing(tokenusagepkg.SourceReportedJSON)
 		hasTokenUsage := resp.StatusCode == http.StatusOK && inspectableBody
 		if hasTokenUsage {
-			observation = observeProxyTokenUsage(stream, serviceProtocol, providerProtocol, decodedRespBody, logResp)
+			observation = observeProxyTokenUsage(stream, serviceProtocol, providerProtocol, decodedRespBody, logResp, reqBody, model)
 			if h.deps.RecordTokenMetrics != nil {
 				h.deps.RecordTokenMetrics(metricLabels, observation, durationMs)
 			}
@@ -361,14 +361,23 @@ func readBody(r *http.Request) ([]byte, error) {
 // observeProxyTokenUsage decides how to derive token usage from a successful
 // proxy response. The caller must already have verified that the response is
 // 200 and inspectableBody (decodeErr == nil).
-func observeProxyTokenUsage(stream bool, serviceProtocol, providerProtocol string, decodedBody, logResp []byte) tokenusagepkg.Observation {
+func observeProxyTokenUsage(stream bool, serviceProtocol, providerProtocol string, decodedBody, logResp []byte, reqBody []byte, model string) tokenusagepkg.Observation {
+	var obs tokenusagepkg.Observation
 	if stream {
-		return tokenusagepkg.FromStream(serviceProtocol, providerProtocol, decodedBody)
+		obs = tokenusagepkg.FromStream(serviceProtocol, providerProtocol, decodedBody)
+	} else if serviceProtocol == config.ServiceProtocolEmbeddings {
+		obs = tokenusagepkg.FromEmbeddingsJSON(logResp)
+	} else {
+		obs = tokenusagepkg.FromJSON(logResp)
 	}
-	if serviceProtocol == config.ServiceProtocolEmbeddings {
-		return tokenusagepkg.FromEmbeddingsJSON(logResp)
+
+	// If no usage found and this is a streaming request, estimate from request/response
+	if !obs.HasUsage() && stream && len(reqBody) > 0 && model != "" {
+		accumulatedOutput := tokenusagepkg.ExtractOutputText(logResp)
+		obs = tokenusagepkg.EstimateTokenUsage(reqBody, model, accumulatedOutput)
 	}
-	return tokenusagepkg.FromJSON(logResp)
+
+	return obs
 }
 
 // proxyRecordInput aggregates the per-request inputs to buildProxyRecord so

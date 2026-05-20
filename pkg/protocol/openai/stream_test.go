@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -116,5 +118,52 @@ func TestChatStreamParserSupportsMultipleChoices(t *testing.T) {
 	}
 	if infos[1].ID != "call_2" || infos[1].Name != "delete_file" || infos[1].Arguments != "{\"path\":\"/\"}" {
 		t.Fatalf("infos[1] = %+v", infos[1])
+	}
+}
+
+func TestAssembleChatStreamWithReasoningContent(t *testing.T) {
+	// Simulate a stream with reasoning_content
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":" step by step.","content":"Final answer."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	assembled, err := AssembleChatStream([]byte(input))
+	if err != nil {
+		t.Fatalf("AssembleChatStream error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(assembled, &result); err != nil {
+		t.Fatalf("unmarshal assembled response: %v", err)
+	}
+
+	choices, ok := result["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatal("expected choices array")
+	}
+
+	choice := choices[0].(map[string]any)
+	msg := choice["message"].(map[string]any)
+
+	// Check reasoning_content
+	rc, ok := msg["reasoning_content"].(string)
+	if !ok || rc == "" {
+		t.Fatalf("expected reasoning_content, got: %v", msg)
+	}
+	if !strings.Contains(rc, "Let me think") || !strings.Contains(rc, "step by step") {
+		t.Fatalf("expected reasoning to contain both parts, got: %s", rc)
+	}
+
+	// Check content
+	content, ok := msg["content"].(string)
+	if !ok || content != "Final answer." {
+		t.Fatalf("expected content 'Final answer.', got: %s", content)
 	}
 }
