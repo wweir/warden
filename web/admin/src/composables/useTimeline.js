@@ -94,9 +94,28 @@ function extractMessageText(msg) {
 	return extractTextParts(msg.text);
 }
 
+// Extract reasoning/thinking content from message
+function extractReasoningContent(msg) {
+	if (msg == null) return "";
+	// Handle reasoning_content field (OpenAI format)
+	if (typeof msg.reasoning_content === "string") {
+		return msg.reasoning_content;
+	}
+	// Handle thinking block in content array (some providers)
+	if (Array.isArray(msg.content)) {
+		const thinkingBlocks = msg.content.filter((b) => b?.type === "thinking");
+		if (thinkingBlocks.length > 0) {
+			return thinkingBlocks.map((b) => b.text || b.content || "").filter(Boolean).join("\n");
+		}
+	}
+	return "";
+}
+
 function extractPreview(msg) {
 	const text = extractMessageText(msg);
+	const reasoning = extractReasoningContent(msg);
 	if (text) return truncate(text.replace(/\s+/g, " "), 120);
+	if (reasoning) return truncate("[reasoning] " + reasoning.replace(/\s+/g, " "), 120);
 	if (Array.isArray(msg?.content)) {
 		const types = [...new Set(msg.content.map((p) => p?.type).filter(Boolean))];
 		if (types.length) return "[" + types.join(", ") + "]";
@@ -332,12 +351,21 @@ function extractAssembledText(log) {
 		const msg = resp.choices[0].message || resp.choices[0].delta;
 		if (msg) {
 			const content = msg.content;
-			if (typeof content === "string") return content;
+			if (typeof content === "string") {
+				if (msg.reasoning_content) {
+					return "[reasoning] " + msg.reasoning_content + "\n" + content;
+				}
+				return content;
+			}
 			if (Array.isArray(content)) {
-				return content
+				const textContent = content
 					.filter((p) => p.type === "text")
 					.map((p) => p.text)
 					.join("");
+				if (msg.reasoning_content) {
+					return "[reasoning] " + msg.reasoning_content + "\n" + textContent;
+				}
+				return textContent;
 			}
 		}
 	}
@@ -350,6 +378,15 @@ function extractAssembledText(log) {
 		for (const item of resp.output) {
 			if (typeof item === "string") {
 				parts.push(item);
+				continue;
+			}
+			// Handle reasoning item in Responses API
+			if (item.type === "reasoning") {
+				const summary = item.summary;
+				if (Array.isArray(summary)) {
+					const text = summary.map((s) => s.text || "").join("\n");
+					if (text) parts.push("[reasoning] " + text);
+				}
 				continue;
 			}
 			if (item.type === "message" && Array.isArray(item.content)) {

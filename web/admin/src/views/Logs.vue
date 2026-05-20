@@ -88,6 +88,10 @@
 								<span v-if="selectedDetailLog.provider" class="detail-inline-meta-item">provider {{ selectedDetailLog.provider }}</span>
 								<span v-if="selectedDetailLog.duration_ms != null" class="detail-inline-meta-item">duration {{ formatDuration(selectedDetailLog.duration_ms) }}</span>
 								<span v-if="selectedDetailLog.ttft_ms != null" class="detail-inline-meta-item">ttft {{ formatDuration(selectedDetailLog.ttft_ms) }}</span>
+								<span v-if="selectedDetailLog.token_usage?.prompt_tokens != null || selectedDetailLog.token_usage?.completion_tokens != null" class="detail-inline-meta-item">
+									tokens {{ selectedDetailLog.token_usage?.prompt_tokens ?? "?" }} / {{ selectedDetailLog.token_usage?.completion_tokens ?? "?" }}
+									<span v-if="selectedDetailLog.token_usage?.total_tokens">({{ selectedDetailLog.token_usage.total_tokens }})</span>
+								</span>
 							</div>
 						</div>
 						<div class="detail-inline-actions">
