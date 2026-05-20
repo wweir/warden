@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tidwall/gjson"
+	"github.com/wweir/warden/pkg/protocol/openai"
 )
 
 // UpstreamError represents an HTTP error from the upstream LLM API.
@@ -163,6 +164,12 @@ func IsRetryableError(err error) bool {
 
 	// Network and timeout errors are retryable
 	if isNetworkError(err) {
+		return true
+	}
+
+	// Bridge unsupported errors are retryable: another provider may support
+	// the request natively without the bridge.
+	if errors.Is(err, openai.ErrBridgeUnsupported) {
 		return true
 	}
 
