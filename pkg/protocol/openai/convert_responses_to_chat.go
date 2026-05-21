@@ -243,7 +243,31 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			messages = append(messages, Message{Role: "tool", ToolCallID: out.CallID, Content: content})
 
 		case "custom_tool_call":
-			return nil, fmt.Errorf("%w: custom_tool_call is not supported in responses_to_chat mode; use a native responses provider", ErrBridgeUnsupported)
+			var call struct {
+				CallID string `json:"call_id"`
+				Name   string `json:"name"`
+				Input  string `json:"input"`
+			}
+			if err := json.Unmarshal(raw, &call); err != nil {
+				return nil, fmt.Errorf("unmarshal custom_tool_call: %w", err)
+			}
+			messages = append(messages, Message{
+				Role:    "assistant",
+				Content: fmt.Sprintf("[custom_tool_call name=%s call_id=%s]\n%s", call.Name, call.CallID, call.Input),
+			})
+
+		case "custom_tool_call_output":
+			var out struct {
+				CallID string `json:"call_id"`
+				Output string `json:"output"`
+			}
+			if err := json.Unmarshal(raw, &out); err != nil {
+				return nil, fmt.Errorf("unmarshal custom_tool_call_output: %w", err)
+			}
+			messages = append(messages, Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[custom_tool_call_output call_id=%s]\n%s", out.CallID, out.Output),
+			})
 
 		case "reasoning":
 			var reasoningItem map[string]any
@@ -483,7 +507,10 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, bool, error) {
 		return Tool{}, false, fmt.Errorf("unmarshal tool type: %w", err)
 	}
 	if typeCheck.Type == "custom" {
-		return Tool{}, false, fmt.Errorf("%w: custom tools are not supported in responses_to_chat mode; use a native responses provider", ErrBridgeUnsupported)
+		// Custom tools use free-form grammar input instead of JSON Schema
+		// parameters, so they cannot be mapped to Chat Completions function
+		// tools. Silently drop them.
+		return Tool{}, false, nil
 	}
 	if typeCheck.Type != "function" {
 		return Tool{}, false, nil

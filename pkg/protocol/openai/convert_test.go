@@ -164,14 +164,23 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "reject custom tools",
+			name: "skip custom tools",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
-				Tools: []json.RawMessage{json.RawMessage(`{"type":"custom","name":"shell"}`)},
+				Tools: []json.RawMessage{
+					json.RawMessage(`{"type":"custom","name":"shell"}`),
+					json.RawMessage(`{"type":"function","name":"exec","parameters":{"type":"object"}}`),
+				},
 			},
-			wantErr:   true,
-			errSubstr: `custom tools are not supported in responses_to_chat mode`,
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Tools) != 1 {
+					t.Fatalf("expected 1 tool after dropping custom, got %d", len(chatReq.Tools))
+				}
+				if chatReq.Tools[0].Function.Name != "exec" {
+					t.Fatalf("expected exec tool, got %s", chatReq.Tools[0].Function.Name)
+				}
+			},
 		},
 		{
 			name: "reject conflicting max_output_tokens and max_completion_tokens",
@@ -471,21 +480,36 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 	}
 }
 
-func TestResponsesRequestToChatRequestRejectCustomToolCall(t *testing.T) {
+func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
 	respReq := ResponsesRequest{
 		Model: "gpt-4o",
 		Input: json.RawMessage(`[
 			{"type":"message","role":"user","content":"Hello"},
-			{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"}
+			{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"},
+			{"type":"custom_tool_call_output","call_id":"call_1","output":"/home/user"}
 		]`),
 	}
 
-	_, err := ResponsesRequestToChatRequest(respReq)
-	if err == nil {
-		t.Fatal("expected error for custom tool call")
-	}
-	if !strings.Contains(err.Error(), `custom_tool_call is not supported in responses_to_chat mode`) {
+	chatReq, err := ResponsesRequestToChatRequest(respReq)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chatReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+	}
+	if chatReq.Messages[1].Role != "assistant" {
+		t.Fatalf("expected assistant role for custom_tool_call, got %s", chatReq.Messages[1].Role)
+	}
+	if chatReq.Messages[2].Role != "user" {
+		t.Fatalf("expected user role for custom_tool_call_output, got %s", chatReq.Messages[2].Role)
+	}
+	content1, _ := chatReq.Messages[1].Content.(string)
+	if !strings.Contains(content1, "[custom_tool_call name=shell call_id=call_1]") {
+		t.Fatalf("unexpected custom_tool_call text: %s", content1)
+	}
+	content2, _ := chatReq.Messages[2].Content.(string)
+	if !strings.Contains(content2, "[custom_tool_call_output call_id=call_1]") {
+		t.Fatalf("unexpected custom_tool_call_output text: %s", content2)
 	}
 }
 
