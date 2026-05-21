@@ -481,35 +481,71 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 }
 
 func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
-	respReq := ResponsesRequest{
-		Model: "gpt-4o",
-		Input: json.RawMessage(`[
-			{"type":"message","role":"user","content":"Hello"},
-			{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"},
-			{"type":"custom_tool_call_output","call_id":"call_1","output":"/home/user"}
-		]`),
+	tests := []struct {
+		name  string
+		input string
+		want  []Message
+	}{
+		{
+			name: "string input and output",
+			input: `[
+				{"type":"message","role":"user","content":"Hello"},
+				{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"},
+				{"type":"custom_tool_call_output","call_id":"call_1","output":"/home/user"}
+			]`,
+			want: []Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "[custom_tool_call name=shell call_id=call_1]\npwd"},
+				{Role: "user", Content: "[custom_tool_call_output call_id=call_1]\n/home/user"},
+			},
+		},
+		{
+			name: "json object input and output",
+			input: `[
+				{"type":"custom_tool_call","call_id":"call_2","name":"edit","input":{"path":"/tmp/file","content":"hello"}},
+				{"type":"custom_tool_call_output","call_id":"call_2","output":{"success":true}}
+			]`,
+			want: []Message{
+				{Role: "assistant", Content: "[custom_tool_call name=edit call_id=call_2]\n{\"path\":\"/tmp/file\",\"content\":\"hello\"}"},
+				{Role: "user", Content: "[custom_tool_call_output call_id=call_2]\n{\"success\":true}"},
+			},
+		},
+		{
+			name: "empty input and output",
+			input: `[
+				{"type":"custom_tool_call","call_id":"call_3","name":"noop","input":""},
+				{"type":"custom_tool_call_output","call_id":"call_3","output":""}
+			]`,
+			want: []Message{
+				{Role: "assistant", Content: "[custom_tool_call name=noop call_id=call_3]\n"},
+				{Role: "user", Content: "[custom_tool_call_output call_id=call_3]\n"},
+			},
+		},
 	}
-
-	chatReq, err := ResponsesRequestToChatRequest(respReq)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(chatReq.Messages) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
-	}
-	if chatReq.Messages[1].Role != "assistant" {
-		t.Fatalf("expected assistant role for custom_tool_call, got %s", chatReq.Messages[1].Role)
-	}
-	if chatReq.Messages[2].Role != "user" {
-		t.Fatalf("expected user role for custom_tool_call_output, got %s", chatReq.Messages[2].Role)
-	}
-	content1, _ := chatReq.Messages[1].Content.(string)
-	if !strings.Contains(content1, "[custom_tool_call name=shell call_id=call_1]") {
-		t.Fatalf("unexpected custom_tool_call text: %s", content1)
-	}
-	content2, _ := chatReq.Messages[2].Content.(string)
-	if !strings.Contains(content2, "[custom_tool_call_output call_id=call_1]") {
-		t.Fatalf("unexpected custom_tool_call_output text: %s", content2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			respReq := ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(tt.input),
+			}
+			chatReq, err := ResponsesRequestToChatRequest(respReq)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(chatReq.Messages) != len(tt.want) {
+				t.Fatalf("expected %d messages, got %d", len(tt.want), len(chatReq.Messages))
+			}
+			for i, want := range tt.want {
+				if chatReq.Messages[i].Role != want.Role {
+					t.Fatalf("msg[%d]: expected role %s, got %s", i, want.Role, chatReq.Messages[i].Role)
+				}
+				got, _ := chatReq.Messages[i].Content.(string)
+				wantStr, _ := want.Content.(string)
+				if got != wantStr {
+					t.Fatalf("msg[%d]: expected content %q, got %q", i, wantStr, got)
+				}
+			}
+		})
 	}
 }
 

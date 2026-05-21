@@ -244,29 +244,37 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 
 		case "custom_tool_call":
 			var call struct {
-				CallID string `json:"call_id"`
-				Name   string `json:"name"`
-				Input  string `json:"input"`
+				CallID string          `json:"call_id"`
+				Name   string          `json:"name"`
+				Input  json.RawMessage `json:"input"`
 			}
 			if err := json.Unmarshal(raw, &call); err != nil {
 				return nil, fmt.Errorf("unmarshal custom_tool_call: %w", err)
 			}
+			input, err := normalizeFunctionCallOutputContent(call.Input)
+			if err != nil {
+				return nil, fmt.Errorf("normalize custom_tool_call.input: %w", err)
+			}
 			messages = append(messages, Message{
 				Role:    "assistant",
-				Content: fmt.Sprintf("[custom_tool_call name=%s call_id=%s]\n%s", call.Name, call.CallID, call.Input),
+				Content: fmt.Sprintf("[custom_tool_call name=%s call_id=%s]\n%v", call.Name, call.CallID, input),
 			})
 
 		case "custom_tool_call_output":
 			var out struct {
-				CallID string `json:"call_id"`
-				Output string `json:"output"`
+				CallID string          `json:"call_id"`
+				Output json.RawMessage `json:"output"`
 			}
 			if err := json.Unmarshal(raw, &out); err != nil {
 				return nil, fmt.Errorf("unmarshal custom_tool_call_output: %w", err)
 			}
+			output, err := normalizeFunctionCallOutputContent(out.Output)
+			if err != nil {
+				return nil, fmt.Errorf("normalize custom_tool_call_output.output: %w", err)
+			}
 			messages = append(messages, Message{
 				Role:    "user",
-				Content: fmt.Sprintf("[custom_tool_call_output call_id=%s]\n%s", out.CallID, out.Output),
+				Content: fmt.Sprintf("[custom_tool_call_output call_id=%s]\n%v", out.CallID, output),
 			})
 
 		case "reasoning":
