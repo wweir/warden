@@ -2,6 +2,7 @@ package selector
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -35,7 +36,8 @@ func (s *Selector) RecordOutcomeWithSource(name string, accessMode string, err e
 		}
 		return
 	}
-	if ue, ok := err.(*UpstreamError); ok && !ue.IsRetryable() {
+	var ue *UpstreamError
+	if errors.As(err, &ue) && !ue.IsRetryable() {
 		return
 	}
 
@@ -80,7 +82,7 @@ func (s *Selector) RecordOutcomeWithSource(name string, accessMode string, err e
 	if accessMode != "" {
 		attrs = append(attrs, "mode_consecutive_failures", st.modeConsecutiveFailures[accessMode])
 	}
-	if ue, ok := err.(*UpstreamError); ok {
+	if errors.As(err, &ue) {
 		body := ue.Body
 		if len(body) > 200 {
 			body = body[:200] + "..."
@@ -94,7 +96,8 @@ func (s *Selector) RecordOutcomeWithSource(name string, accessMode string, err e
 
 func (s *providerState) addSuppressReason(err error) {
 	reason := err.Error()
-	if ue, ok := err.(*UpstreamError); ok {
+	var ue *UpstreamError
+	if errors.As(err, &ue) {
 		body := ue.Body
 		if len(body) > 200 {
 			body = body[:200]
