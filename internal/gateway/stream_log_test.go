@@ -39,9 +39,9 @@ func TestGatewayLogsResponsesStreamAsFinalResponseObject(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -118,9 +118,9 @@ func TestGatewayPublishesPendingStreamLogBeforeUpstreamCompletes(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -211,9 +211,9 @@ func TestGatewayRelaysChatStreamBeforeUpstreamCompletes(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -305,9 +305,9 @@ func TestGatewayRecordsIncompleteChatStreamAsInStreamError(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -367,9 +367,9 @@ func TestGatewayFallsBackWhenStreamRequestReturnsJSON(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{

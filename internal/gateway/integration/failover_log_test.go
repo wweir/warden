@@ -138,18 +138,18 @@ func TestGatewayFailoverLogsTrailAcrossProtocols(t *testing.T) {
 			defer fallback.Close()
 
 			primaryProv := &config.ProviderConfig{
-				URL:      tt.primaryURL(primary.URL),
+				URL:    tt.primaryURL(primary.URL),
 				Format: tt.primaryProto,
-				APIKey:   config.SecretString("primary-token"),
+				APIKey: config.SecretString("primary-token"),
 			}
 			if tt.mutatePrimary != nil {
 				tt.mutatePrimary(primaryProv)
 			}
 
 			fallbackProv := &config.ProviderConfig{
-				URL:      tt.fallbackURL(fallback.URL),
+				URL:    tt.fallbackURL(fallback.URL),
 				Format: tt.fallbackProto,
-				APIKey:   config.SecretString("fallback-token"),
+				APIKey: config.SecretString("fallback-token"),
 			}
 			if tt.mutateFallback != nil {
 				tt.mutateFallback(fallbackProv)
@@ -256,14 +256,14 @@ func TestGatewayStatefulResponsesDoNotFailover(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"primary": {
-				URL:      primary.URL,
+				URL:    primary.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("primary-token"),
+				APIKey: config.SecretString("primary-token"),
 			},
 			"fallback": {
-				URL:      fallback.URL,
+				URL:    fallback.URL,
 				Format: "openai",
-				APIKey:   config.SecretString("fallback-token"),
+				APIKey: config.SecretString("fallback-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{

@@ -12,21 +12,21 @@ import (
 )
 
 type inferenceSession struct {
-	gateway         *Gateway
-	writer          http.ResponseWriter
-	request         *http.Request
-	route           *config.RouteConfig
-	serviceProtocol string
-	endpoint        string
-	startTime       time.Time
-	requestID       string
-	model           string
-	stream          bool
-	rawBody         []byte
-	manager         *inferencepkg.Manager
-	metricLabels    telemetrypkg.Labels
-	provider        *config.ProviderConfig
-	target          *sel.RouteTarget
+	gateway          *Gateway
+	writer           http.ResponseWriter
+	request          *http.Request
+	route            *config.RouteConfig
+	serviceProtocol  string
+	endpoint         string
+	startTime        time.Time
+	requestID        string
+	model            string
+	stream           bool
+	rawBody          []byte
+	manager          *inferencepkg.Manager
+	metricLabels     telemetrypkg.Labels
+	provider         *config.ProviderConfig
+	target           *sel.RouteTarget
 	providerProtocol string // effective protocol derived from target.Format or provider.Protocol
 }
 

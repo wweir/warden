@@ -317,10 +317,10 @@ func sendResponsesProbe(ctx context.Context, provCfg *config.ProviderConfig, mod
 	}
 	if hasOpenAI {
 		payload := map[string]any{
-			"model":            model,
-			"input":            "ping",
+			"model":             model,
+			"input":             "ping",
 			"max_output_tokens": 1,
-			"store":            false,
+			"store":             false,
 		}
 		body, _ := json.Marshal(payload)
 		ctx, cancel := probeContext(ctx)
@@ -540,7 +540,7 @@ func probeAnthropicAccess(ctx context.Context, baseURL, apiKey string, headers m
 		if err != nil {
 			continue
 		}
-			if err := providerauth.SetHeaders(ctx, req.Header, provCfg, u); err != nil {
+		if err := providerauth.SetHeaders(ctx, req.Header, provCfg, u); err != nil {
 			continue
 		}
 

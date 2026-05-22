@@ -162,7 +162,7 @@ func (h *Handler) HandleProviderDetail(w http.ResponseWriter, r *http.Request, _
 		"models":                models,
 		"model_protocol_probes": h.selector.ModelProtocolProbes(name),
 		"status":                status,
-		"formats":          buildFormatsResponse(provCfg),
+		"formats":               buildFormatsResponse(provCfg),
 	})
 }
 

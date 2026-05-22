@@ -83,7 +83,7 @@ func TestGatewayAnthropicToChatStreamRelaysFirstFrameWithoutBuffering(t *testing
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Format:        "openai",
+				Format:          "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -186,9 +186,9 @@ func TestGatewayAnthropicNativeStreamRelaysFirstFrameWithoutBuffering(t *testing
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "anthropic",
-				APIKey:   config.SecretString("token"),
+				APIKey: config.SecretString("token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -282,7 +282,7 @@ func TestGatewayResponsesToChatStreamIncludesDoneSnapshotsAndIncompleteDetails(t
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Format:        "openai",
+				Format:          "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -366,7 +366,7 @@ func TestGatewayResponsesToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		Provider: map[string]*config.ProviderConfig{
 			"ali-coding": {
 				URL:             upstream.URL,
-				Format:        "openai",
+				Format:          "openai",
 				APIKey:          config.SecretString("token"),
 				ResponsesToChat: true,
 			},
@@ -432,7 +432,7 @@ func TestGatewayAnthropicToChatCountsTruncatedUpstreamAsInStreamFailure(t *testi
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
 				URL:             upstream.URL,
-				Format:        "openai",
+				Format:          "openai",
 				APIKey:          config.SecretString("token"),
 				AnthropicToChat: true,
 			},
@@ -523,7 +523,7 @@ func TestGatewayAnthropicToResponsesStreamConvertsToResponsesSSE(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"anthropic": {
 				URL:                  upstream.URL,
-				Format:             "anthropic",
+				Format:               "anthropic",
 				APIKey:               config.SecretString("token"),
 				AnthropicToResponses: true,
 			},

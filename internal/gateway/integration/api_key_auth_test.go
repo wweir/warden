@@ -47,9 +47,9 @@ func TestGatewayConfiguredAPIKeyValidatesAndForwardsProviderAuth(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      upstream.URL,
+				URL:    upstream.URL,
 				Format: "openai",
-				APIKey:   config.SecretString(providerKey),
+				APIKey: config.SecretString(providerKey),
 			},
 		},
 		Route: map[string]*config.RouteConfig{
@@ -141,9 +141,9 @@ func TestGatewayConfiguredAPIKeyRejectsUnauthorizedRequest(t *testing.T) {
 	cfg := &config.ConfigStruct{
 		Provider: map[string]*config.ProviderConfig{
 			"openai": {
-				URL:      "http://127.0.0.1:1",
+				URL:    "http://127.0.0.1:1",
 				Format: "openai",
-				APIKey:   config.SecretString("provider-token"),
+				APIKey: config.SecretString("provider-token"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{

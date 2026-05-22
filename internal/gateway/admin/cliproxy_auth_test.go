@@ -677,7 +677,7 @@ func TestHandleCLIProxyAuthFileVerifySendsBackendProbe(t *testing.T) {
 			Provider: map[string]*config.ProviderConfig{
 				"cliproxy-codex": {
 					URL:             upstream.URL,
-					Format:        config.ProviderFormatOpenAI,
+					Format:          config.ProviderFormatOpenAI,
 					Backend:         config.ProviderBackendCLIProxy,
 					BackendProvider: "codex",
 				},

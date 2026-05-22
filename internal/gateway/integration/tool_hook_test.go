@@ -119,9 +119,9 @@ func buildGatewayWithHooks(t *testing.T, routePrefix, routeProtocol, upstreamURL
 		Webhook: webhooks,
 		Provider: map[string]*config.ProviderConfig{
 			"upstream": {
-				URL:      upstreamURL,
+				URL:    upstreamURL,
 				Format: provProtocol,
-				APIKey:   config.SecretString("test-key"),
+				APIKey: config.SecretString("test-key"),
 			},
 		},
 		Route: map[string]*config.RouteConfig{

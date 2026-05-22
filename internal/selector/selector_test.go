@@ -262,7 +262,7 @@ func TestRefreshModelsPublishesAPIKeyCommandFailures(t *testing.T) {
 		Provider: map[string]*config.ProviderConfig{
 			"broken": {
 				URL:           "https://api.example.com/v1",
-				Format:      "openai",
+				Format:        "openai",
 				APIKeyCommand: "exit 1",
 			},
 		},
@@ -370,7 +370,7 @@ func TestFetchModels_SanitizesInternalHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
-		URL:      srv.URL,
+		URL:    srv.URL,
 		Format: "openai",
 	})
 	if err == nil {
@@ -413,7 +413,7 @@ func TestFetchModels_RejectsNonAdvancingPagination(t *testing.T) {
 			defer srv.Close()
 
 			_, _, err := FetchModels(context.Background(), &config.ProviderConfig{
-				URL:      srv.URL,
+				URL:    srv.URL,
 				Format: "openai",
 			})
 			if err == nil {
@@ -441,7 +441,7 @@ func TestFetchModels_RespectsCanceledContext(t *testing.T) {
 	defer srv.Close()
 
 	_, _, err := FetchModels(ctx, &config.ProviderConfig{
-		URL:      srv.URL,
+		URL:    srv.URL,
 		Format: "openai",
 	})
 	if err == nil {
