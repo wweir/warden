@@ -107,6 +107,7 @@ func (g *Gateway) handleChatBridge(
 			rawChat, clientBody, streamErr := spec.streamRelay(streamReader, w, model)
 			errMsg := ""
 			if streamErr != nil {
+				streamErr = fmt.Errorf("provider %s: %w", session.provider.Name, streamErr)
 				errMsg = streamErr.Error()
 				if shouldRecordUpstreamStreamError(r, streamErr) {
 					g.selector.RecordOutcomeWithSource(session.provider.Name, session.providerProtocol, streamErr, latency, "in_stream")
@@ -164,6 +165,7 @@ func (g *Gateway) handleChatBridge(
 		respBody, convErr := spec.convertNonStreamResponse(chatResp, model)
 		if convErr != nil {
 			g.selector.RecordOutcome(session.provider.Name, session.providerProtocol, nil, latency)
+			convErr = fmt.Errorf("provider %s: %w", session.provider.Name, convErr)
 			observepkg.RecordError(logParams, rawRespBody, convErr.Error(), nil, g.recordAndBroadcast)
 			spec.writeConvertResponseError(w, convErr)
 			return nil
