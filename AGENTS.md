@@ -5,9 +5,11 @@ Use Simplified Chinese to answer my questions.
 
 ## Documentation Rules
 
-1. 根目录维护 `ARCHITECTURE.md`，描述整体架构、系统边界、分层职责、关键数据流、设计决策、文档链接
-2. 设计调整前先更新 `ARCHITECTURE.md` 和相关包的 `README.md` 等文档。
-3. 大型方案设计、决策过程及实施进度在 `docs/` 目录下维护文档，有关键进展需更新文档
+1. 根目录维护 `ARCHITECTURE.md`，描述整体架构、系统边界、分层职责、关键数据流、设计决策、文档链接。
+2. `docs/` 根目录只放长期有效的主设计文档（产品、架构、协议、安全、部署、数据模型、测试策略等）。
+3. 设计调整须文档先行；未定稿的方案和维护中的实施进度归入 `docs/plans/`，审查记录、问题清单和阶段复盘归入 `docs/reviews/`；定稿后回写到 `docs/` 根目录下的对应主设计文档。
+4. `docs/plans/` 和 `docs/reviews/` 不是权威来源；若沉淀出长期规则，须回写主设计文档并在根目录索引文件中更新引用。
+5. 跨文档引用一律指向主设计文档，禁止从 plans/reviews 引用协议、字段、安全或部署规则。
 
 ## Coding Agent Rules
 
