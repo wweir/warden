@@ -84,7 +84,7 @@
 							<div class="detail-inline-meta">
 								<span v-if="selectedDetailLog.fingerprint" class="detail-inline-meta-item">fp {{ selectedDetailLog.fingerprint.slice(0, 16) }}</span>
 								<span class="detail-inline-meta-item">req {{ selectedDetailLog.request_id }}</span>
-								<span v-if="selectedDetailLog.model" class="detail-inline-meta-item">model {{ selectedDetailLog.model }}</span>
+								<span v-if="displayModel(selectedDetailLog)" class="detail-inline-meta-item">model {{ displayModel(selectedDetailLog) }}</span>
 								<span v-if="selectedDetailLog.provider" class="detail-inline-meta-item">provider {{ selectedDetailLog.provider }}</span>
 								<span v-if="selectedDetailLog.duration_ms != null" class="detail-inline-meta-item">duration {{ formatDuration(selectedDetailLog.duration_ms) }}</span>
 								<span v-if="selectedDetailLog.ttft_ms != null" class="detail-inline-meta-item">ttft {{ formatDuration(selectedDetailLog.ttft_ms) }}</span>
@@ -157,7 +157,7 @@
 										<span v-if="showRouteChip" class="row-route-chip">{{ routeName(log.route) }}</span>
 										<span class="cell-prompt-text">{{ lastUserPreview(log) }}</span>
 									</td>
-									<td>{{ log.model || '\u2014' }}</td>
+									<td>{{ displayModel(log) || '\u2014' }}</td>
 									<td>{{ log.provider || '\u2014' }}</td>
 									<td class="cell-num">{{ formatDuration(log.duration_ms) }}</td>
 									<td>
@@ -194,7 +194,7 @@
 								<dl class="mobile-log-meta">
 									<div>
 										<dt>{{ $t('logs.model') }}</dt>
-										<dd>{{ log.model || '\u2014' }}</dd>
+										<dd>{{ displayModel(log) || '\u2014' }}</dd>
 									</div>
 									<div>
 										<dt>{{ $t('logs.provider') }}</dt>
@@ -285,6 +285,11 @@ watch(
 );
 
 const FINGERPRINT_WIDTH = 6;
+
+function displayModel(log) {
+	if (!log || typeof log !== "object") return "";
+	return log.upstream_model || log.model || "";
+}
 
 function routeName(route) {
 	if (typeof route === "string" && route.trim()) return route;
@@ -380,7 +385,7 @@ const filteredLogs = computed(() => {
 		const status = log.error || t("common.ok");
 		return (
 			colMatch(f.prompt, prompt) &&
-			colMatch(f.model, log.model) &&
+			colMatch(f.model, displayModel(log)) &&
 			colMatch(f.provider, log.provider) &&
 			colMatch(f.status, status)
 		);
