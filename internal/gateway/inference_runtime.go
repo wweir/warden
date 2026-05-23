@@ -105,6 +105,10 @@ func (s *inferenceSession) logAttempt(model string) {
 }
 
 func (s *inferenceSession) logParams() observepkg.InferenceLogParams {
+	upstreamModel := ""
+	if s.target != nil {
+		upstreamModel = s.target.UpstreamModel
+	}
 	return observepkg.NewInferenceLogParams(
 		s.request,
 		s.startTime,
@@ -112,6 +116,7 @@ func (s *inferenceSession) logParams() observepkg.InferenceLogParams {
 		s.route.Prefix,
 		s.endpoint,
 		s.model,
+		upstreamModel,
 		s.stream,
 		s.rawBody,
 		s.manager.Failovers(),

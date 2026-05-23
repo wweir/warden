@@ -108,6 +108,7 @@ func recordTestInferenceLogWithTTFT(stream bool) reqlog.Record {
 		"/openai",
 		"chat/completions",
 		"gpt-4o",
+		"gpt-4o",
 		stream,
 		[]byte(`{"model":"gpt-4o"}`),
 		nil,

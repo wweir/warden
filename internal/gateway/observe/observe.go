@@ -25,37 +25,39 @@ import (
 type StreamLogAssembler func(respBody []byte) (assembled []byte, fallback []byte, err error)
 
 type InferenceLogParams struct {
-	StartTime  time.Time
-	DurationMs int64 // < 0 means unset and should be computed from StartTime
-	TTFTMs     *int64
-	RequestID  string
-	Route      string
-	Endpoint   string
-	Model      string
-	APIKey     string
-	Stream     bool
-	Provider   string
-	UserAgent  string
-	Request    []byte
-	Failovers  []reqlog.Failover
-	MetricTags telemetrypkg.Labels
+	StartTime     time.Time
+	DurationMs    int64 // < 0 means unset and should be computed from StartTime
+	TTFTMs        *int64
+	RequestID     string
+	Route         string
+	Endpoint      string
+	Model         string
+	UpstreamModel string
+	APIKey        string
+	Stream        bool
+	Provider      string
+	UserAgent     string
+	Request       []byte
+	Failovers     []reqlog.Failover
+	MetricTags    telemetrypkg.Labels
 }
 
-func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, route, endpoint, model string, stream bool, requestBody []byte, failovers []reqlog.Failover, labels telemetrypkg.Labels, provider string) InferenceLogParams {
+func NewInferenceLogParams(r *http.Request, startTime time.Time, requestID, route, endpoint, model string, upstreamModel string, stream bool, requestBody []byte, failovers []reqlog.Failover, labels telemetrypkg.Labels, provider string) InferenceLogParams {
 	return InferenceLogParams{
-		StartTime:  startTime,
-		DurationMs: -1,
-		RequestID:  requestID,
-		Route:      route,
-		Endpoint:   endpoint,
-		Model:      model,
-		APIKey:     requestctxpkg.APIKeyNameFromContext(r.Context()),
-		Stream:     stream,
-		Provider:   provider,
-		UserAgent:  r.UserAgent(),
-		Request:    requestBody,
-		Failovers:  failovers,
-		MetricTags: labels,
+		StartTime:     startTime,
+		DurationMs:    -1,
+		RequestID:     requestID,
+		Route:         route,
+		Endpoint:      endpoint,
+		Model:         model,
+		UpstreamModel: upstreamModel,
+		APIKey:        requestctxpkg.APIKeyNameFromContext(r.Context()),
+		Stream:        stream,
+		Provider:      provider,
+		UserAgent:     r.UserAgent(),
+		Request:       requestBody,
+		Failovers:     failovers,
+		MetricTags:    labels,
 	}
 }
 
@@ -104,23 +106,24 @@ func recordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 	}
 
 	rec := reqlog.Record{
-		Timestamp:    params.StartTime,
-		RequestID:    params.RequestID,
-		Route:        params.Route,
-		Endpoint:     params.Endpoint,
-		Model:        params.Model,
-		APIKey:       params.APIKey,
-		Stream:       params.Stream,
-		Provider:     params.Provider,
-		UserAgent:    params.UserAgent,
-		DurationMs:   durationMs,
-		TTFTMs:       params.TTFTMs,
-		Error:        errMsg,
-		Fingerprint:  fingerprintpkg.BuildFingerprint(params.Request),
-		Request:      params.Request,
-		Response:     respBody,
-		Failovers:    params.Failovers,
-		ToolVerdicts: verdicts,
+		Timestamp:     params.StartTime,
+		RequestID:     params.RequestID,
+		Route:         params.Route,
+		Endpoint:      params.Endpoint,
+		Model:         params.Model,
+		UpstreamModel: params.UpstreamModel,
+		APIKey:        params.APIKey,
+		Stream:        params.Stream,
+		Provider:      params.Provider,
+		UserAgent:     params.UserAgent,
+		DurationMs:    durationMs,
+		TTFTMs:        params.TTFTMs,
+		Error:         errMsg,
+		Fingerprint:   fingerprintpkg.BuildFingerprint(params.Request),
+		Request:       params.Request,
+		Response:      respBody,
+		Failovers:     params.Failovers,
+		ToolVerdicts:  verdicts,
 	}
 
 	if len(respBody) > 0 && errMsg == "" {
@@ -155,19 +158,20 @@ func recordInferenceLog(params InferenceLogParams, respBody []byte, errMsg strin
 
 func PublishPendingInferenceLog(params InferenceLogParams, publish func(reqlog.Record)) {
 	publish(reqlog.Record{
-		Timestamp:   params.StartTime,
-		RequestID:   params.RequestID,
-		Route:       params.Route,
-		Endpoint:    params.Endpoint,
-		Model:       params.Model,
-		APIKey:      params.APIKey,
-		Stream:      params.Stream,
-		Pending:     true,
-		Provider:    params.Provider,
-		UserAgent:   params.UserAgent,
-		Fingerprint: fingerprintpkg.BuildFingerprint(params.Request),
-		Request:     params.Request,
-		Failovers:   params.Failovers,
+		Timestamp:     params.StartTime,
+		RequestID:     params.RequestID,
+		Route:         params.Route,
+		Endpoint:      params.Endpoint,
+		Model:         params.Model,
+		UpstreamModel: params.UpstreamModel,
+		APIKey:        params.APIKey,
+		Stream:        params.Stream,
+		Pending:       true,
+		Provider:      params.Provider,
+		UserAgent:     params.UserAgent,
+		Fingerprint:   fingerprintpkg.BuildFingerprint(params.Request),
+		Request:       params.Request,
+		Failovers:     params.Failovers,
 	})
 }
 

@@ -11,26 +11,27 @@ import (
 
 // Record holds structured data for one request/response round-trip.
 type Record struct {
-	Timestamp    time.Time              `json:"timestamp"`
-	RequestID    string                 `json:"request_id"`
-	Route        string                 `json:"route"`
-	Endpoint     string                 `json:"endpoint"`
-	Model        string                 `json:"model"`
-	APIKey       string                 `json:"api_key,omitempty"`
-	Stream       bool                   `json:"stream"`
-	Pending      bool                   `json:"pending,omitempty"`
-	Provider     string                 `json:"provider"`
-	UserAgent    string                 `json:"user_agent,omitempty"`
-	DurationMs   int64                  `json:"duration_ms"`
-	TTFTMs       *int64                 `json:"ttft_ms,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Fingerprint  string                 `json:"fingerprint,omitempty"`
-	Request      json.RawMessage        `json:"request"`
-	Response     json.RawMessage        `json:"response,omitempty"`
-	TokenUsage   *TokenUsage            `json:"token_usage,omitempty"`
-	Failovers    []Failover             `json:"failovers,omitempty"`
-	Steps        []Step                 `json:"steps,omitempty"`
-	ToolVerdicts []toolhook.HookVerdict `json:"tool_verdicts,omitempty"`
+	Timestamp     time.Time              `json:"timestamp"`
+	RequestID     string                 `json:"request_id"`
+	Route         string                 `json:"route"`
+	Endpoint      string                 `json:"endpoint"`
+	Model         string                 `json:"model"`
+	UpstreamModel string                 `json:"upstream_model,omitempty"`
+	APIKey        string                 `json:"api_key,omitempty"`
+	Stream        bool                   `json:"stream"`
+	Pending       bool                   `json:"pending,omitempty"`
+	Provider      string                 `json:"provider"`
+	UserAgent     string                 `json:"user_agent,omitempty"`
+	DurationMs    int64                  `json:"duration_ms"`
+	TTFTMs        *int64                 `json:"ttft_ms,omitempty"`
+	Error         string                 `json:"error,omitempty"`
+	Fingerprint   string                 `json:"fingerprint,omitempty"`
+	Request       json.RawMessage        `json:"request"`
+	Response      json.RawMessage        `json:"response,omitempty"`
+	TokenUsage    *TokenUsage            `json:"token_usage,omitempty"`
+	Failovers     []Failover             `json:"failovers,omitempty"`
+	Steps         []Step                 `json:"steps,omitempty"`
+	ToolVerdicts  []toolhook.HookVerdict `json:"tool_verdicts,omitempty"`
 }
 
 type TokenUsage struct {

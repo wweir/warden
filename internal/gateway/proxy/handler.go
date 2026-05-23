@@ -266,12 +266,17 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, route *config.R
 		}
 
 		if h.deps.RecordAndBroadcast != nil {
+			proxyUpstreamModel := ""
+			if target != nil {
+				proxyUpstreamModel = target.UpstreamModel
+			}
 			h.deps.RecordAndBroadcast(buildProxyRecord(proxyRecordInput{
 				startTime:     startTime,
 				requestID:     reqID,
 				route:         route,
 				request:       r,
 				model:         model,
+				upstreamModel: proxyUpstreamModel,
 				provider:      provCfg.Name,
 				reqBody:       reqBody,
 				logResp:       logResp,
@@ -388,6 +393,7 @@ type proxyRecordInput struct {
 	route         *config.RouteConfig
 	request       *http.Request
 	model         string
+	upstreamModel string
 	provider      string
 	reqBody       []byte
 	logResp       []byte
@@ -402,19 +408,20 @@ type proxyRecordInput struct {
 
 func buildProxyRecord(in proxyRecordInput) reqlog.Record {
 	rec := reqlog.Record{
-		Timestamp:   in.startTime,
-		RequestID:   in.requestID,
-		Route:       in.route.Prefix,
-		Endpoint:    in.request.URL.Path,
-		Model:       in.model,
-		APIKey:      requestctxpkg.APIKeyNameFromContext(in.request.Context()),
-		Provider:    in.provider,
-		UserAgent:   in.request.UserAgent(),
-		DurationMs:  in.durationMs,
-		Fingerprint: fingerprintpkg.BuildFingerprint(in.reqBody),
-		Request:     in.reqBody,
-		Response:    in.logResp,
-		Failovers:   in.failovers,
+		Timestamp:     in.startTime,
+		RequestID:     in.requestID,
+		Route:         in.route.Prefix,
+		Endpoint:      in.request.URL.Path,
+		Model:         in.model,
+		UpstreamModel: in.upstreamModel,
+		APIKey:        requestctxpkg.APIKeyNameFromContext(in.request.Context()),
+		Provider:      in.provider,
+		UserAgent:     in.request.UserAgent(),
+		DurationMs:    in.durationMs,
+		Fingerprint:   fingerprintpkg.BuildFingerprint(in.reqBody),
+		Request:       in.reqBody,
+		Response:      in.logResp,
+		Failovers:     in.failovers,
 	}
 	if in.stream && in.upErr == nil {
 		ttft := in.latency.Milliseconds()
