@@ -56,7 +56,7 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				Summary:                 "OpenAI-compatible upstream for OpenAI official, custom vendors, and self-hosted gateways.",
 				Family:                  config.ProviderFormatOpenAI,
 				AuthMode:                "api_key",
-				ServiceProtocolTemplate: "chat_responses_embeddings",
+				ServiceProtocolTemplate: "chat_native_responses_embeddings",
 			},
 			{
 				ID:                      "anthropic-official",
@@ -137,9 +137,17 @@ func buildProviderFormMeta(cfg *config.ConfigStruct) providerFormMetaResponse {
 				ServiceProtocols: []string{config.RouteProtocolChat, config.ServiceProtocolEmbeddings},
 			},
 			{
-				ID:               "chat_responses_embeddings",
+				ID:               "chat_native_responses_embeddings",
 				Title:            "Chat + Responses + Embeddings",
-				Summary:          "Expose chat, Responses, and embeddings.",
+				Summary:          "Expose chat, native Responses, and embeddings.",
+				Families:         []string{config.ProviderFormatOpenAI},
+				Backends:         []string{""},
+				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings},
+			},
+			{
+				ID:               "chat_responses_bridge",
+				Title:            "Chat + Responses (Bridge)",
+				Summary:          "Expose Responses through chat bridge for upstreams that do not natively support /responses.",
 				Families:         []string{config.ProviderFormatOpenAI},
 				Backends:         []string{""},
 				ServiceProtocols: []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings},

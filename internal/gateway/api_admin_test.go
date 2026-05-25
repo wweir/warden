@@ -1032,6 +1032,7 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 		ServiceProtocolTemplates []struct {
 			ID               string   `json:"id"`
 			ServiceProtocols []string `json:"service_protocols"`
+			ResponsesToChat  bool     `json:"responses_to_chat"`
 			AnthropicToChat  bool     `json:"anthropic_to_chat"`
 		} `json:"service_protocol_templates"`
 	}
@@ -1132,13 +1133,25 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 		t.Fatal("anthropic_bridge template not found")
 	}
 	foundOpenAI := false
+	foundResponsesBridge := false
 	foundAnthropicMessages := false
 	for _, tpl := range payload.ServiceProtocolTemplates {
 		switch tpl.ID {
-		case "chat_responses_embeddings":
+		case "chat_native_responses_embeddings":
 			foundOpenAI = true
 			if !sameStrings(tpl.ServiceProtocols, []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings}) {
-				t.Fatalf("chat_responses_embeddings service_protocols = %v, want [chat responses embeddings]", tpl.ServiceProtocols)
+				t.Fatalf("chat_native_responses_embeddings service_protocols = %v, want [chat responses embeddings]", tpl.ServiceProtocols)
+			}
+			if tpl.ResponsesToChat {
+				t.Fatal("chat_native_responses_embeddings responses_to_chat = true, want false")
+			}
+		case "chat_responses_bridge":
+			foundResponsesBridge = true
+			if !sameStrings(tpl.ServiceProtocols, []string{config.RouteProtocolChat, config.RouteProtocolResponses, config.ServiceProtocolEmbeddings}) {
+				t.Fatalf("chat_responses_bridge service_protocols = %v, want [chat responses embeddings]", tpl.ServiceProtocols)
+			}
+			if !tpl.ResponsesToChat {
+				t.Fatal("chat_responses_bridge responses_to_chat = false, want true")
 			}
 		case "anthropic_messages":
 			foundAnthropicMessages = true
@@ -1148,7 +1161,10 @@ func TestHandleProviderFormMetaIncludesCLIProxyDefaultsAndTemplates(t *testing.T
 		}
 	}
 	if !foundOpenAI {
-		t.Fatal("chat_responses_embeddings template not found")
+		t.Fatal("chat_native_responses_embeddings template not found")
+	}
+	if !foundResponsesBridge {
+		t.Fatal("chat_responses_bridge template not found")
 	}
 	if !foundAnthropicMessages {
 		t.Fatal("anthropic_messages template not found")
