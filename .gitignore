@@ -58,5 +58,6 @@ web/admin/dist/
 !*.example.y?ml
 !buf.*yaml
 !*docker-compose.yml
+!deploy/*
 **/test/
 /warden

@@ -1,0 +1,12 @@
+# Minimal Docker configuration
+# You must mount or provide valid provider configurations via environment variables
+addr = ":9832"
+
+# Disable admin UI by default (enable via environment or mounted config)
+# admin_password = ""
+
+# Example provider using environment variable (uncomment and configure)
+# [provider.openai]
+# url = "https://api.openai.com/v1"
+# api_key = "${OPENAI_API_KEY}"
+# timeout = "120s"

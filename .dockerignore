@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Frontend node_modules (rebuild in Docker if needed)
+web/admin/node_modules/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# Docker artifacts
+deploy/Dockerfile
+
+# Any other root-level config that should not be baked into image
+*.y?ml
+!*docker-compose.yml
