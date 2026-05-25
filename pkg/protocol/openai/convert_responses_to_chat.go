@@ -277,6 +277,32 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 				Content: fmt.Sprintf("[custom_tool_call_output call_id=%s]\n%v", out.CallID, output),
 			})
 
+		case "web_search_call", "file_search_call", "computer_call", "code_interpreter_call":
+			var call struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &call); err != nil {
+				return nil, fmt.Errorf("unmarshal %s: %w", itemType.Type, err)
+			}
+			messages = append(messages, Message{
+				Role:    "assistant",
+				Content: fmt.Sprintf("[%s id=%s]", itemType.Type, call.ID),
+			})
+
+		case "web_search_call.output", "file_search_call.output", "computer_call.output", "code_interpreter_call.output":
+			var out map[string]any
+			if err := json.Unmarshal(raw, &out); err != nil {
+				return nil, fmt.Errorf("unmarshal %s: %w", itemType.Type, err)
+			}
+			callID, _ := out["call_id"].(string)
+			delete(out, "type")
+			delete(out, "call_id")
+			outputJSON, _ := json.Marshal(out)
+			messages = append(messages, Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[%s call_id=%s]\n%s", itemType.Type, callID, string(outputJSON)),
+			})
+
 		case "reasoning":
 			var reasoningItem map[string]any
 			if err := json.Unmarshal(raw, &reasoningItem); err != nil {

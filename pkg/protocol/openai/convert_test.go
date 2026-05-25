@@ -549,6 +549,86 @@ func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
 	}
 }
 
+func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []Message
+	}{
+		{
+			name: "web_search_call and output",
+			input: `[
+				{"type":"message","role":"user","content":"Hello"},
+				{"type":"web_search_call","id":"ws_1"},
+				{"type":"web_search_call.output","call_id":"ws_1","output":{"results":[{"title":"Example","url":"https://example.com"}]}}
+			]`,
+			want: []Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "[web_search_call id=ws_1]"},
+				{Role: "user", Content: "[web_search_call.output call_id=ws_1]\n{\"output\":{\"results\":[{\"title\":\"Example\",\"url\":\"https://example.com\"}]}}"},
+			},
+		},
+		{
+			name: "file_search_call and output",
+			input: `[
+				{"type":"file_search_call","id":"fs_1"},
+				{"type":"file_search_call.output","call_id":"fs_1","output":[{"file_id":"file-123","filename":"doc.pdf"}]}
+			]`,
+			want: []Message{
+				{Role: "assistant", Content: "[file_search_call id=fs_1]"},
+				{Role: "user", Content: "[file_search_call.output call_id=fs_1]\n{\"output\":[{\"file_id\":\"file-123\",\"filename\":\"doc.pdf\"}]}"},
+			},
+		},
+		{
+			name: "computer_call and output",
+			input: `[
+				{"type":"computer_call","id":"comp_1","action":{"type":"click"}},
+				{"type":"computer_call.output","call_id":"comp_1","output":{"screenshot":"base64..."}}
+			]`,
+			want: []Message{
+				{Role: "assistant", Content: "[computer_call id=comp_1]"},
+				{Role: "user", Content: "[computer_call.output call_id=comp_1]\n{\"output\":{\"screenshot\":\"base64...\"}}"},
+			},
+		},
+		{
+			name: "code_interpreter_call and output",
+			input: `[
+				{"type":"code_interpreter_call","id":"ci_1"},
+				{"type":"code_interpreter_call.output","call_id":"ci_1","outputs":[{"type":"logs","logs":"hello"}]}
+			]`,
+			want: []Message{
+				{Role: "assistant", Content: "[code_interpreter_call id=ci_1]"},
+				{Role: "user", Content: "[code_interpreter_call.output call_id=ci_1]\n{\"outputs\":[{\"logs\":\"hello\",\"type\":\"logs\"}]}"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			respReq := ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(tt.input),
+			}
+			chatReq, err := ResponsesRequestToChatRequest(respReq)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(chatReq.Messages) != len(tt.want) {
+				t.Fatalf("expected %d messages, got %d", len(tt.want), len(chatReq.Messages))
+			}
+			for i, want := range tt.want {
+				if chatReq.Messages[i].Role != want.Role {
+					t.Fatalf("msg[%d]: expected role %s, got %s", i, want.Role, chatReq.Messages[i].Role)
+				}
+				got, _ := chatReq.Messages[i].Content.(string)
+				wantStr, _ := want.Content.(string)
+				if got != wantStr {
+					t.Fatalf("msg[%d]: expected content %q, got %q", i, wantStr, got)
+				}
+			}
+		})
+	}
+}
+
 func TestChatResponseToResponsesResponseWithReasoningContent(t *testing.T) {
 	chatResp := ChatCompletionResponse{
 		ID:     "chatcmpl_123",
