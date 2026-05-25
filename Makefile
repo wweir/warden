@@ -84,3 +84,35 @@ install: build
 
 clean:
 	rm -rf bin dist
+
+.PHONY: docker-build
+
+DOCKER_REGISTRY ?= ghcr.io/wweir
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/warden
+
+docker-build:
+	docker build -f deploy/Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		-t $(DOCKER_IMAGE):$(VERSION) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+
+.PHONY: kustomize-build
+
+kustomize-build:
+	@kustomize build deploy/kustomize/overlays/staging
+	@echo "---"
+	@kustomize build deploy/kustomize/overlays/production
+
+kustomize-apply-staging:
+	kustomize build deploy/kustomize/overlays/staging | kubectl apply -f -
+
+kustomize-apply-production:
+	kustomize build deploy/kustomize/overlays/production | kubectl apply -f -
+
+kustomize-apply:
+	kubectl apply -k deploy/kustomize/
+
+kustomize-delete:
+	kubectl delete -k deploy/kustomize/ --ignore-not-found=true
