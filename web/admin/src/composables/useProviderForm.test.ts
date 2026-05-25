@@ -208,7 +208,7 @@ describe("useProviderForm", () => {
       presets: [],
       service_protocol_templates: [
         {
-          id: "chat_responses_embeddings",
+          id: "chat_native_responses_embeddings",
           families: ["openai"],
           service_protocols: ["chat", "responses", "embeddings"],
         },
@@ -222,7 +222,7 @@ describe("useProviderForm", () => {
       service_protocols: ["responses", "embeddings", "chat"],
     });
 
-    expect(form.selectedServiceTemplateId.value).toBe("chat_responses_embeddings");
+    expect(form.selectedServiceTemplateId.value).toBe("chat_native_responses_embeddings");
   });
 
   test("clears selected interface template when it is no longer visible for the current provider", async () => {
@@ -230,7 +230,7 @@ describe("useProviderForm", () => {
       presets: [],
       service_protocol_templates: [
         {
-          id: "chat_responses_embeddings",
+          id: "chat_native_responses_embeddings",
           families: ["openai"],
           service_protocols: ["chat", "responses", "embeddings"],
         },
@@ -243,7 +243,7 @@ describe("useProviderForm", () => {
       url: "https://example.invalid/v1",
       service_protocols: ["chat", "responses", "embeddings"],
     });
-    expect(form.selectedServiceTemplateId.value).toBe("chat_responses_embeddings");
+    expect(form.selectedServiceTemplateId.value).toBe("chat_native_responses_embeddings");
 
     form.providerConfig.value.family = "anthropic";
     await nextTick();
@@ -258,12 +258,12 @@ describe("useProviderForm", () => {
         {
           id: "openai-compatible",
           family: "openai",
-          service_protocol_template: "chat_responses_embeddings",
+          service_protocol_template: "chat_native_responses_embeddings",
         },
       ],
       service_protocol_templates: [
         {
-          id: "chat_responses_embeddings",
+          id: "chat_native_responses_embeddings",
           families: ["openai"],
           service_protocols: ["chat", "responses", "embeddings"],
         },
@@ -277,7 +277,7 @@ describe("useProviderForm", () => {
     });
 
     expect(form.selectedPresetId.value).toBe("openai-compatible");
-    expect(form.selectedServiceTemplateId.value).toBe("chat_responses_embeddings");
+    expect(form.selectedServiceTemplateId.value).toBe("chat_native_responses_embeddings");
     expect(form.providerConfig.value.service_protocols).toEqual(["chat", "responses", "embeddings"]);
   });
 
@@ -316,12 +316,12 @@ describe("useProviderForm", () => {
         {
           id: "openai-compatible",
           family: "openai",
-          service_protocol_template: "chat_responses_embeddings",
+          service_protocol_template: "chat_native_responses_embeddings",
         },
       ],
       service_protocol_templates: [
         {
-          id: "chat_responses_embeddings",
+          id: "chat_native_responses_embeddings",
           families: ["openai"],
           service_protocols: ["chat", "responses", "embeddings"],
         },

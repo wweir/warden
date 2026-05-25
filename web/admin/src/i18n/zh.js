@@ -337,6 +337,8 @@ export default {
 		routes: "路由",
 		routeFilter: "路由筛选",
 		allRequests: "全部请求",
+		showSessions: "显示会话",
+		hideSessions: "隐藏会话",
 		allRoutes: "全部路由",
 		currentScope: "当前范围",
 		selectedSession: "已选会话",
@@ -528,9 +530,12 @@ export default {
 			"只允许聊天接口。推荐给 Ollama、cliproxy 或尚未验证其它接口的上游。",
 		interfaceTemplate_chat_embeddings: "聊天 + 向量",
 		interfaceTemplate_chat_embeddings_desc: "允许聊天和 embeddings，不开放 Responses。",
-		interfaceTemplate_chat_responses_embeddings: "聊天 + Responses + 向量",
-		interfaceTemplate_chat_responses_embeddings_desc:
-			"允许聊天、Responses 和 embeddings。",
+		interfaceTemplate_chat_native_responses_embeddings: "聊天 + Responses + 向量",
+		interfaceTemplate_chat_native_responses_embeddings_desc:
+			"允许聊天、原生 Responses 和 embeddings。",
+		interfaceTemplate_chat_responses_bridge: "聊天 + Responses（桥接）",
+		interfaceTemplate_chat_responses_bridge_desc:
+			"通过 chat 桥接暴露 Responses，适用于原生不支持 /responses 的上游。",
 		interfaceTemplate_anthropic_messages: "聊天 + Anthropic Messages",
 		interfaceTemplate_anthropic_messages_desc:
 			"允许 Anthropic-compatible 上游提供 Chat 和 Anthropic /messages。",

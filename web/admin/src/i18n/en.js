@@ -354,6 +354,8 @@ export default {
 		routes: "Routes",
 		routeFilter: "Route filter",
 		allRequests: "All requests",
+		showSessions: "Show sessions",
+		hideSessions: "Hide sessions",
 		allRoutes: "All routes",
 		currentScope: "Current scope",
 		selectedSession: "Selected session",
@@ -547,9 +549,12 @@ export default {
 			"Allow chat only. Recommended for Ollama, cliproxy, or upstreams where other interfaces are not verified.",
 		interfaceTemplate_chat_embeddings: "Chat + Embeddings",
 		interfaceTemplate_chat_embeddings_desc: "Allow chat and embeddings, without Responses.",
-		interfaceTemplate_chat_responses_embeddings: "Chat + Responses + Embeddings",
-		interfaceTemplate_chat_responses_embeddings_desc:
-			"Allow chat, Responses, and embeddings.",
+		interfaceTemplate_chat_native_responses_embeddings: "Chat + Responses + Embeddings",
+		interfaceTemplate_chat_native_responses_embeddings_desc:
+			"Allow chat, native Responses, and embeddings.",
+		interfaceTemplate_chat_responses_bridge: "Chat + Responses (Bridge)",
+		interfaceTemplate_chat_responses_bridge_desc:
+			"Expose Responses through chat bridge for upstreams that do not natively support /responses.",
 		interfaceTemplate_anthropic_messages: "Chat + Anthropic Messages",
 		interfaceTemplate_anthropic_messages_desc:
 			"Allow Anthropic-compatible upstreams to expose chat and Anthropic /messages.",

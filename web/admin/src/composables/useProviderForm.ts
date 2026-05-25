@@ -90,6 +90,7 @@ export function useProviderForm(providerFormMeta: any) {
   function inferServiceTemplateID(provider: any) {
     for (const template of visibleServiceProtocolTemplates.value) {
       if (!serviceProtocolsEqual(provider.service_protocols, template.service_protocols)) continue;
+      if (!!provider.responses_to_chat !== !!template.responses_to_chat) continue;
       if (!!provider.anthropic_to_chat !== !!template.anthropic_to_chat) continue;
       if (!!provider.anthropic_to_responses !== !!template.anthropic_to_responses) continue;
       return template.id;
