@@ -7,7 +7,7 @@
         </span>
         <span class="brand-text">Warden</span>
       </router-link>
-      <button class="menu-toggle" @click="menuOpen = !menuOpen" aria-label="Toggle menu">
+      <button type="button" class="menu-toggle" @click="menuOpen = !menuOpen" aria-label="Toggle menu">
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
@@ -21,7 +21,7 @@
         <router-link to="/logs" @click="menuOpen = false">{{ $t('nav.logs') }}</router-link>
       </div>
       <div class="nav-right">
-        <button class="lang-switch" @click="toggleLocale">{{ locale === 'en' ? '中' : 'EN' }}</button>
+        <button type="button" class="lang-switch" @click="toggleLocale">{{ locale === 'en' ? '中' : 'EN' }}</button>
         <router-link to="/config" @click="menuOpen = false">{{ $t('nav.config') }}</router-link>
       </div>
     </div>

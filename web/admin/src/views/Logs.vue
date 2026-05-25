@@ -6,10 +6,10 @@
 				<p class="page-subtitle">{{ $t('logs.pageSubtitle') }}</p>
 			</div>
 			<div class="header-actions">
-				<button @click="togglePause" class="btn btn-secondary btn-sm">
+				<button type="button" @click="togglePause" class="btn btn-secondary btn-sm">
 					{{ paused ? $t('logs.resume') : $t('logs.pause') }}
 				</button>
-				<button @click="handleClear" class="btn btn-secondary btn-sm">{{ $t('logs.clear') }}</button>
+				<button type="button" @click="handleClear" class="btn btn-secondary btn-sm">{{ $t('logs.clear') }}</button>
 			</div>
 		</div>
 
@@ -19,9 +19,17 @@
 			class="logs-workspace"
 			:class="{
 				'logs-workspace-no-tree': !sessionTree.length,
+				'logs-workspace-tree-collapsed': !mobileTreeOpen,
 			}"
 		>
+			<div class="mobile-tree-bar">
+				<button type="button" class="btn btn-secondary btn-sm" @click="mobileTreeOpen = !mobileTreeOpen">
+					{{ mobileTreeOpen ? $t("logs.hideSessions") : $t("logs.showSessions") }}
+				</button>
+			</div>
 			<SessionTreePanel
+				class="session-tree-panel"
+				:class="{ 'session-tree-panel-mobile-open': mobileTreeOpen }"
 				:tree="sessionTree"
 				:activeRoute="scope.route"
 				:activeSession="scope.leaf"
@@ -78,7 +86,7 @@
 						<div class="detail-inline-main">
 							<div class="detail-inline-title-row">
 								<span class="detail-inline-label">{{ $t('logs.requestDetail') }}</span>
-								<span class="status-pill" :class="statusClass(selectedDetailLog)">{{ statusText(selectedDetailLog) }}</span>
+								<span class="status-pill" :class="statusClass(selectedDetailLog)" :title="statusText(selectedDetailLog)">{{ statusText(selectedDetailLog) }}</span>
 								<span v-if="selectedDetailLog.route" class="detail-inline-route">{{ selectedDetailLog.route }}</span>
 							</div>
 							<div class="detail-inline-meta">
@@ -161,7 +169,7 @@
 									<td>{{ log.provider || '\u2014' }}</td>
 									<td class="cell-num">{{ formatDuration(log.duration_ms) }}</td>
 									<td>
-										<span class="status-pill" :class="statusClass(log)">{{ statusText(log) }}</span>
+										<span class="status-pill" :class="statusClass(log)" :title="statusText(log)">{{ statusText(log) }}</span>
 									</td>
 								</tr>
 								<tr v-if="!filteredLogs.length">
@@ -207,7 +215,7 @@
 									<div>
 										<dt>{{ $t('logs.status') }}</dt>
 										<dd>
-											<span class="status-pill" :class="statusClass(log)">{{ statusText(log) }}</span>
+											<span class="status-pill" :class="statusClass(log)" :title="statusText(log)">{{ statusText(log) }}</span>
 										</dd>
 									</div>
 								</dl>
@@ -234,6 +242,8 @@ import LogDetailPanel from "../components/LogDetailPanel.vue";
 
 const { t, locale } = useI18n();
 const { logs, paused, error, togglePause, clearLogs, setAutoScroll } = useLogStream();
+
+const mobileTreeOpen = ref(false);
 
 const filters = ref({ prompt: "", model: "", provider: "", status: "" });
 const scope = ref({ route: "", prefix: "", leaf: "" });
@@ -643,7 +653,7 @@ function statusText(log) {
 	display: grid;
 	grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
 	gap: 20px;
-	align-items: start;
+	min-height: calc(100vh - 180px);
 }
 
 .logs-workspace-no-tree {
@@ -655,6 +665,7 @@ function statusText(log) {
 	flex-direction: column;
 	gap: 12px;
 	min-width: 0;
+	min-height: 0;
 }
 
 .logs-stats {
@@ -701,8 +712,8 @@ function statusText(log) {
 
 .detail-inline {
 	padding: 0;
-	height: calc(100vh - 254px);
-	min-height: 460px;
+	flex: 1 1 auto;
+	min-height: 400px;
 	overflow-y: auto;
 }
 
@@ -881,7 +892,7 @@ function statusText(log) {
 .data-table th:nth-child(4) { width: 120px; }
 .data-table th:nth-child(5) { width: 96px; }
 .data-table th:nth-child(6) { width: 86px; }
-.data-table th:nth-child(7) { width: 150px; }
+.data-table th:nth-child(7) { width: 180px; }
 
 .th-actions {
 	width: 56px;
@@ -1037,6 +1048,10 @@ function statusText(log) {
 	overflow-wrap: anywhere;
 }
 
+.mobile-tree-bar {
+	display: none;
+}
+
 @media (max-width: 1024px) {
 	.logs-workspace {
 		grid-template-columns: 260px minmax(0, 1fr);
@@ -1047,6 +1062,21 @@ function statusText(log) {
 @media (max-width: 768px) {
 	.logs-workspace {
 		grid-template-columns: 1fr;
+		min-height: auto;
+	}
+
+	.mobile-tree-bar {
+		display: flex;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+
+	.logs-workspace-tree-collapsed :deep(.session-tree-panel) {
+		display: none !important;
+	}
+
+	:deep(.session-tree-panel-mobile-open) {
+		display: flex !important;
 	}
 
 	.desktop-log-table {
