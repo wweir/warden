@@ -530,18 +530,32 @@ function toggleDetail(log) {
 	attachDetailLog(log);
 }
 
+function getScrollableElement(el) {
+	if (!el) return null;
+	if (el.scrollHeight > el.clientHeight) return el;
+	for (const sel of [".code-block-json", ".json-viewer", ".streaming-text"]) {
+		const inner = el.querySelector(sel);
+		if (inner && inner.scrollHeight > inner.clientHeight) {
+			return inner;
+		}
+	}
+	return null;
+}
+
 function isDetailNearBottom() {
-	const el = detailPanel.value;
+	const el = getScrollableElement(detailPanel.value);
 	if (!el) return false;
 	return el.scrollHeight - (el.scrollTop + el.clientHeight) < 48;
 }
 
 function scrollDetailToStart(behavior = "smooth") {
-	detailPanel.value?.scrollTo({ top: 0, behavior });
+	const el = getScrollableElement(detailPanel.value);
+	if (!el) return;
+	el.scrollTo({ top: 0, behavior });
 }
 
 function scrollDetailToLatest(behavior = "smooth") {
-	const el = detailPanel.value;
+	const el = getScrollableElement(detailPanel.value);
 	if (!el) return;
 	el.scrollTo({ top: el.scrollHeight, behavior });
 }
