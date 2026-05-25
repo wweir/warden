@@ -21,6 +21,7 @@ import (
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/sower-proxy/feconf"
 	_ "github.com/sower-proxy/feconf/decoder/toml"
+	_ "github.com/sower-proxy/feconf/decoder/yaml"
 	_ "github.com/sower-proxy/feconf/reader/file"
 	_ "github.com/sower-proxy/feconf/reader/http"
 	"github.com/wweir/warden/config"
@@ -37,6 +38,8 @@ const managedRestartExitCode = 75
 var pidFile = pidFilePath()
 
 var configCandidates = []string{
+	"warden.yaml",
+	"config/warden.yaml",
 	"warden.toml",
 	"config/warden.toml",
 	config.DefaultConfigPath,
