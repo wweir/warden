@@ -699,6 +699,33 @@ data: [DONE]
 	}
 }
 
+func TestChatSSEToResponsesSSEWithReasoningAlias(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning":"alias reasoning"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"thinking":" and thinking alias"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Final answer."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	output, err := ChatSSEToResponsesSSE([]byte(input), "gpt-4o")
+	if err != nil {
+		t.Fatalf("ChatSSEToResponsesSSE error: %v", err)
+	}
+	outputStr := string(output)
+	if !strings.Contains(outputStr, `"type":"reasoning"`) {
+		t.Fatal("expected reasoning type in output")
+	}
+	if !strings.Contains(outputStr, `"text":"alias reasoning and thinking alias"`) {
+		t.Fatalf("expected reasoning alias text in output, got: %s", outputStr)
+	}
+}
+
 func TestChatSSEToResponsesSSEReasoningAddedSummaryIncludesFirstDelta(t *testing.T) {
 	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
 

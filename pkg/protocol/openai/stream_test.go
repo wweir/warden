@@ -167,3 +167,31 @@ data: [DONE]
 		t.Fatalf("expected content 'Final answer.', got: %s", content)
 	}
 }
+
+func TestAssembleChatStreamWithReasoningAlias(t *testing.T) {
+	input := `data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning":"alias reasoning"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"thinking":" and thinking alias","content":"Final answer."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+
+	assembled, err := AssembleChatStream([]byte(input))
+	if err != nil {
+		t.Fatalf("AssembleChatStream error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(assembled, &result); err != nil {
+		t.Fatalf("unmarshal assembled response: %v", err)
+	}
+	choices := result["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if got := msg["reasoning_content"]; got != "alias reasoning and thinking alias" {
+		t.Fatalf("reasoning_content = %q", got)
+	}
+}

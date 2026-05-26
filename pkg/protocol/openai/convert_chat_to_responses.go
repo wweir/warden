@@ -451,7 +451,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 
 	var responseChunks []string
 	responseChunks = append(responseChunks, s.ensureLifecycleEvents()...)
-	if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
+	if reasoningContent := chatDeltaReasoningContent(delta); reasoningContent != "" {
 		s.reasoningContent += reasoningContent
 		if !s.reasoningAdded {
 			s.reasoningItemID = s.makeReasoningItemID()

@@ -347,12 +347,12 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 	events := protocol.ParseEvents(rawSSE)
 
 	var (
-		base            map[string]any                 // last parsed chunk as base
-		contentParts    []string                       // accumulated delta.content
-		reasoningParts  []string                       // accumulated delta.reasoning_content
-		toolCalls       = make(map[int]map[string]any) // index -> merged tool_call
-		role            string
-		finishReason    string
+		base           map[string]any                 // last parsed chunk as base
+		contentParts   []string                       // accumulated delta.content
+		reasoningParts []string                       // accumulated delta.reasoning_content
+		toolCalls      = make(map[int]map[string]any) // index -> merged tool_call
+		role           string
+		finishReason   string
 	)
 
 	for _, evt := range events {
@@ -390,7 +390,7 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 		if c, ok := delta["content"].(string); ok && c != "" {
 			contentParts = append(contentParts, c)
 		}
-		if rc, ok := delta["reasoning_content"].(string); ok && rc != "" {
+		if rc := chatDeltaReasoningContent(delta); rc != "" {
 			reasoningParts = append(reasoningParts, rc)
 		}
 
@@ -476,6 +476,15 @@ func AssembleChatStream(rawSSE []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(base)
+}
+
+func chatDeltaReasoningContent(delta map[string]any) string {
+	for _, key := range []string{"reasoning_content", "reasoningContent", "reasoning", "thinking"} {
+		if value, ok := delta[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func asArray(v any) ([]any, bool) {
