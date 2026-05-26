@@ -38,11 +38,12 @@ const managedRestartExitCode = 75
 var pidFile = pidFilePath()
 
 var configCandidates = []string{
-	"warden.yaml",
-	"config/warden.yaml",
 	"warden.toml",
 	"config/warden.toml",
 	config.DefaultConfigPath,
+	"warden.yaml",
+	"config/warden.yaml",
+	config.DefaultConfigDir + "/warden.yaml",
 }
 
 type processExitError struct {

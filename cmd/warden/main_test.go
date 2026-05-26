@@ -63,8 +63,15 @@ func TestExampleConfigTOMLParses(t *testing.T) {
 	}
 }
 
-func TestConfigCandidatesPreferManagedTOML(t *testing.T) {
-	want := []string{"warden.toml", "config/warden.toml", "/etc/warden/warden.toml"}
+func TestConfigCandidatesPreferTOMLThenYAML(t *testing.T) {
+	want := []string{
+		"warden.toml",
+		"config/warden.toml",
+		"/etc/warden/warden.toml",
+		"warden.yaml",
+		"config/warden.yaml",
+		"/etc/warden/warden.yaml",
+	}
 	if len(configCandidates) != len(want) {
 		t.Fatalf("configCandidates len = %d, want %d: %v", len(configCandidates), len(want), configCandidates)
 	}
@@ -72,6 +79,52 @@ func TestConfigCandidatesPreferManagedTOML(t *testing.T) {
 		if configCandidates[i] != wantCandidate {
 			t.Fatalf("configCandidates[%d] = %q, want %q", i, configCandidates[i], wantCandidate)
 		}
+	}
+}
+
+func TestYAMLConfigParses(t *testing.T) {
+	const yamlConfig = `addr: ":8080"
+provider:
+  openai:
+    url: https://api.openai.com/v1
+    format: anthropic
+route:
+  /codex:
+    protocol: chat
+    exact_models:
+      gpt-5.3-codex:
+        prompt_enabled: false
+        upstreams:
+          - provider: openai
+            model: gpt-5.3-codex
+`
+	path := writeTempConfigWithExt(t, yamlConfig, "*.yaml")
+
+	oldArgs := os.Args
+	os.Args = []string{"test"}
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	oldCommandLine := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+	})
+
+	conf := feconf.New[config.ConfigStruct]("c", path)
+	conf.ParserConf = buildConfigParserConfig()
+
+	cfg, err := safeParseConfig(conf)
+	if err != nil {
+		t.Fatalf("safeParseConfig() error = %v", err)
+	}
+	if got := cfg.Provider["openai"].Format; got != "anthropic" {
+		t.Fatalf("yaml provider format = %q, want anthropic", got)
+	}
+	model := cfg.Route["/codex"].ExactModels["gpt-5.3-codex"]
+	if model == nil || model.PromptEnabled == nil || *model.PromptEnabled {
+		t.Fatalf("yaml exact model prompt_enabled = %#v, want explicit false", model)
 	}
 }
 

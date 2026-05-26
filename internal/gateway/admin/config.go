@@ -8,11 +8,14 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sower-proxy/deferlog/v2"
 	"github.com/wweir/warden/config"
+	"gopkg.in/yaml.v3"
 )
 
 const configFileMode = 0o600
@@ -76,7 +79,7 @@ func (h *Handler) HandleAdminConfigPut(w http.ResponseWriter, r *http.Request, _
 		NormalizePromptConfigJSON(newMap)
 	}
 
-	configData, err := marshalConfigMap(cfgMap)
+	configData, err := h.marshalConfigMap(cfgMap)
 	if err != nil {
 		http.Error(w, "encode config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -159,37 +162,74 @@ func cloneConfig(cfg *config.ConfigStruct) (*config.ConfigStruct, error) {
 	return &cloned, nil
 }
 
-func marshalConfigMap(cfgMap any) ([]byte, error) {
-	normalizeTOMLNumbers(cfgMap)
-	tomlData, err := toml.Marshal(cfgMap)
+func marshalConfigMap(cfgMap any, format configFileFormat) ([]byte, error) {
+	normalizeConfigNumbers(cfgMap)
+	switch format {
+	case configFileFormatYAML:
+		yamlData, err := yaml.Marshal(cfgMap)
+		if err != nil {
+			return nil, fmt.Errorf("encode yaml config: %w", err)
+		}
+		return yamlData, nil
+	default:
+		tomlData, err := toml.Marshal(cfgMap)
+		if err != nil {
+			return nil, fmt.Errorf("encode toml config: %w", err)
+		}
+		return tomlData, nil
+	}
+}
+
+type configFileFormat string
+
+const (
+	configFileFormatTOML configFileFormat = "toml"
+	configFileFormatYAML configFileFormat = "yaml"
+)
+
+func configFormatForPath(path string) configFileFormat {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return configFileFormatYAML
+	default:
+		return configFileFormatTOML
+	}
+}
+
+func (h *Handler) marshalConfigMap(cfgMap any) ([]byte, error) {
+	return marshalConfigMap(cfgMap, configFormatForPath(h.configPathValue()))
+}
+
+func marshalConfigMapAsTOML(cfgMap any) ([]byte, error) {
+	tomlData, err := marshalConfigMap(cfgMap, configFileFormatTOML)
 	if err != nil {
-		return nil, fmt.Errorf("encode toml config: %w", err)
+		return nil, err
 	}
 	return tomlData, nil
 }
 
-func normalizeTOMLNumbers(value any) {
+func normalizeConfigNumbers(value any) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			if normalized, ok := normalizeTOMLNumberValue(child); ok {
+			if normalized, ok := normalizeConfigNumberValue(child); ok {
 				typed[key] = normalized
 				continue
 			}
-			normalizeTOMLNumbers(child)
+			normalizeConfigNumbers(child)
 		}
 	case []any:
 		for i, child := range typed {
-			if normalized, ok := normalizeTOMLNumberValue(child); ok {
+			if normalized, ok := normalizeConfigNumberValue(child); ok {
 				typed[i] = normalized
 				continue
 			}
-			normalizeTOMLNumbers(child)
+			normalizeConfigNumbers(child)
 		}
 	}
 }
 
-func normalizeTOMLNumberValue(value any) (any, bool) {
+func normalizeConfigNumberValue(value any) (any, bool) {
 	number, ok := value.(float64)
 	if !ok || math.Trunc(number) != number {
 		return nil, false
@@ -197,7 +237,7 @@ func normalizeTOMLNumberValue(value any) (any, bool) {
 	return int64(number), true
 }
 
-func marshalConfigFile(cfg *config.ConfigStruct) ([]byte, error) {
+func marshalConfigFile(cfg *config.ConfigStruct, format configFileFormat) ([]byte, error) {
 	currentData, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal runtime config: %w", err)
@@ -213,11 +253,11 @@ func marshalConfigFile(cfg *config.ConfigStruct) ([]byte, error) {
 	NormalizeProviderConfigJSON(cfgMap)
 	NormalizePromptConfigJSON(cfgMap)
 
-	return marshalConfigMap(cfgMap)
+	return marshalConfigMap(cfgMap, format)
 }
 
 func (h *Handler) marshalConfigFile(cfg *config.ConfigStruct) ([]byte, error) {
-	return marshalConfigFile(cfg)
+	return marshalConfigFile(cfg, configFormatForPath(h.configPathValue()))
 }
 
 func (h *Handler) marshalRuntimeConfigFile() ([]byte, error) {

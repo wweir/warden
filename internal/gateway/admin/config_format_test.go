@@ -10,6 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/wweir/warden/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestMarshalConfigFileUsesTOML(t *testing.T) {
@@ -43,7 +44,7 @@ func TestMarshalConfigFileUsesTOML(t *testing.T) {
 		},
 	}
 
-	data, err := marshalConfigFile(cfg)
+	data, err := marshalConfigFile(cfg, configFileFormatTOML)
 	if err != nil {
 		t.Fatalf("marshalConfigFile() error = %v", err)
 	}
@@ -70,6 +71,82 @@ func TestMarshalConfigFileUsesTOML(t *testing.T) {
 	var decoded config.ConfigStruct
 	if _, err := toml.Decode(text, &decoded); err != nil {
 		t.Fatalf("TOML output does not decode back into config struct: %v\n%s", err, text)
+	}
+}
+
+func TestMarshalConfigFileUsesYAML(t *testing.T) {
+	cfg := &config.ConfigStruct{
+		Addr: ":9832",
+		Provider: map[string]*config.ProviderConfig{
+			"openai": {
+				Format: "openai",
+				URL:    "https://api.openai.com/v1",
+				APIKey: "provider-secret",
+			},
+		},
+		Route: map[string]*config.RouteConfig{
+			"/openai": {
+				Protocol: "chat",
+				ExactModels: map[string]*config.ExactRouteModelConfig{
+					"gpt-4o": {
+						Upstreams: []*config.RouteUpstreamConfig{
+							{Provider: "openai", Model: "gpt-4o"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	data, err := marshalConfigFile(cfg, configFileFormatYAML)
+	if err != nil {
+		t.Fatalf("marshalConfigFile() error = %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`addr: :9832`,
+		`provider:`,
+		`openai:`,
+		`api_key: ` + config.EncodeSecret("provider-secret"),
+		`route:`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("YAML output missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `[provider.openai]`) {
+		t.Fatalf("YAML output looks like TOML:\n%s", text)
+	}
+
+	var decoded map[string]any
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("YAML output does not decode back into map: %v\n%s", err, text)
+	}
+	provider := decoded["provider"].(map[string]any)["openai"].(map[string]any)
+	if got := provider["api_key"]; got != config.EncodeSecret("provider-secret") {
+		t.Fatalf("decoded provider api key = %q, want encoded provider secret", got)
+	}
+}
+
+func TestHandlerMarshalConfigFileUsesYAMLPathExtension(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "warden.yaml")
+	handler := NewHandler(Deps{
+		Cfg: &config.ConfigStruct{
+			Addr: ":9832",
+		},
+		ConfigPath: &configPath,
+	})
+
+	data, err := handler.marshalRuntimeConfigFile()
+	if err != nil {
+		t.Fatalf("marshalRuntimeConfigFile() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `addr: :9832`) {
+		t.Fatalf("runtime config did not use YAML format:\n%s", text)
+	}
+	if strings.Contains(text, `addr =`) {
+		t.Fatalf("runtime config used TOML format for yaml path:\n%s", text)
 	}
 }
 
