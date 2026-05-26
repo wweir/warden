@@ -221,7 +221,7 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 				ID:   fc.CallID,
 				Type: "function",
 				Function: FunctionCall{
-					Name:      fc.Name,
+					Name:      normalizeToolName(fc.Name),
 					Arguments: fc.Arguments,
 				},
 			}
@@ -257,7 +257,7 @@ func convertResponsesInputToMessages(input json.RawMessage) ([]Message, error) {
 			}
 			messages = append(messages, Message{
 				Role:    "assistant",
-				Content: fmt.Sprintf("[custom_tool_call name=%s call_id=%s]\n%v", call.Name, call.CallID, input),
+				Content: fmt.Sprintf("[custom_tool_call name=%s call_id=%s]\n%v", normalizeToolName(call.Name), call.CallID, input),
 			})
 
 		case "custom_tool_call_output":
@@ -688,4 +688,24 @@ func decodeTokenLimit(raw json.RawMessage) (tokenLimit, error) {
 		return tokenLimit{}, fmt.Errorf("expected positive integer or \"inf\"")
 	}
 	return tokenLimit{value: value}, nil
+}
+
+// normalizeToolName converts a tool name to a format that complies with
+// the pattern ^[a-zA-Z0-9_-]+$. It replaces invalid characters with underscores.
+// This is needed because some providers (like Unicom Cloud) enforce strict
+// schema validation on tool names in Chat Completions requests.
+func normalizeToolName(name string) string {
+	if name == "" {
+		return name
+	}
+	// Replace any character not in [a-zA-Z0-9_-] with underscore
+	var result []rune
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			result = append(result, r)
+		} else {
+			result = append(result, '_')
+		}
+	}
+	return string(result)
 }

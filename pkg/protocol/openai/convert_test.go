@@ -1334,3 +1334,35 @@ data: [DONE]
 		t.Fatal("expected response.reasoning.delta event")
 	}
 }
+
+func TestNormalizeToolName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string", "", ""},
+		{"valid name", "my_tool", "my_tool"},
+		{"with dots", "bash.mkdir", "bash_mkdir"},
+		{"with slash", "filesystem/read", "filesystem_read"},
+		{"with colon", "docker:build", "docker_build"},
+		{"with at", "user@host", "user_host"},
+		{"with spaces", "my tool", "my_tool"},
+		{"with unicode", "工具", "__"},
+		{"mixed valid and invalid", "bash.mkdir/file", "bash_mkdir_file"},
+		{"already valid", "my-tool_123", "my-tool_123"},
+		{"all invalid chars", "./:", "___"},
+		{"function dot notation", "namespace.function_name", "namespace_function_name"},
+		{"path like", "path/to/file", "path_to_file"},
+		{"package name", "io.utils.helpers", "io_utils_helpers"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeToolName(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeToolName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
