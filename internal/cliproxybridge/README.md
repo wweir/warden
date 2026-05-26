@@ -7,7 +7,7 @@
 - Detects whether the current config contains cliproxy-backed providers.
 - Builds a minimal runtime cliproxy SDK config and defaults omitted `cliproxy.auth_dir` to `/etc/warden`.
 - Applies the explicit `cliproxy.proxy` outbound proxy, or derives it from the shared `provider.*.proxy` value when all cliproxy-backed providers use the same proxy.
-- Warden user config is TOML-only; the temporary runtime config written here is YAML only because the CLIProxyAPI SDK watcher reads its own YAML schema.
+- Warden user config supports TOML and YAML; the temporary runtime config written here is YAML because the CLIProxyAPI SDK watcher reads its own YAML schema.
 - Applies Warden's embedded feature-hiding defaults for Codex/Claude header profiles and disables CLIProxyAPI response header passthrough.
 - Starts, health-checks, and shuts down the embedded service.
 - Removes temporary runtime config on close.

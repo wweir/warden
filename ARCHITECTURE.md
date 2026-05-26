@@ -93,7 +93,7 @@ Warden 的运行时核心是跨平台的 HTTP 网关进程，但进程托管不�
 - 在 `Validate()` 中做静态校验和规范化
 - 将 route 配置编译为可直接匹配的运行时结构
 
-Warden 主配置是 TOML-only。启动配置搜索顺序只包含 `warden.toml`、`config/warden.toml` 和平台默认 TOML 路径；管理台写回也只生成 TOML，不保留 YAML 主配置读取、兼容写回或示例文件。
+Warden 主配置支持 TOML 和 YAML 两种文件格式。托管安装、示例文件和默认配置路径仍使用 TOML；启动配置搜索顺序优先 `warden.toml`、`config/warden.toml` 和平台默认 TOML 路径，再兼容搜索同位置的 `warden.yaml`。显式 `-c` 可以指定 `.toml`、`.yaml` 或 `.yml` 文件。管理台写回配置时按当前配置文件后缀保留格式：TOML 路径写 TOML，YAML 路径写 YAML。
 
 这里刻意不把启动期网络探测引入配置真相层。provider 协议如果省略，只允许按本地静态信号推断；probe 仍然只属于展示层。
 

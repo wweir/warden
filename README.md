@@ -136,6 +136,8 @@ model = "gpt-4o"
 
 ```bash
 ./bin/warden -c /path/to/warden.toml
+# or
+./bin/warden -c /path/to/warden.yaml
 ```
 
 配置搜索顺序：
@@ -143,6 +145,9 @@ model = "gpt-4o"
 - `warden.toml`
 - `config/warden.toml`
 - `/etc/warden/warden.toml`
+- `warden.yaml`
+- `config/warden.yaml`
+- `/etc/warden/warden.yaml`
 
 #### 4. 打开后台
 
@@ -401,6 +406,8 @@ You can also specify the config file explicitly:
 
 ```bash
 ./bin/warden -c /path/to/warden.toml
+# or
+./bin/warden -c /path/to/warden.yaml
 ```
 
 Config search order:
@@ -408,6 +415,9 @@ Config search order:
 - `warden.toml`
 - `config/warden.toml`
 - `/etc/warden/warden.toml`
+- `warden.yaml`
+- `config/warden.yaml`
+- `/etc/warden/warden.yaml`
 
 #### 4. Open Admin UI
 

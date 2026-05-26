@@ -55,7 +55,7 @@ The embedded service endpoint is derived from the first `backend: cliproxy` prov
 
 For `backend: cliproxy`, `provider.*.proxy` does not proxy Warden's local HTTP call to this loopback endpoint. It is only used as the embedded service's outbound proxy to the real upstream when `cliproxy.proxy` is empty. Set `cliproxy.proxy` to override this derived value.
 
-Warden main config is TOML-only. The embedded cliproxy bridge still generates a temporary YAML runtime file for CLIProxyAPI's SDK watcher because the SDK reads its own YAML schema. That file is internal process state, not a Warden user config, and must not be edited as `/etc/warden/warden.toml`.
+Warden main config supports TOML and YAML. The managed install path and examples still default to TOML, while explicit `-c` and the startup search path can load YAML. The embedded cliproxy bridge also generates a temporary YAML runtime file for CLIProxyAPI's SDK watcher because the SDK reads its own YAML schema. That temporary file is internal process state, not the Warden user config, and must not be edited as `/etc/warden/warden.toml`.
 
 Embedded cliproxy is started with Warden-owned feature-hiding defaults:
 

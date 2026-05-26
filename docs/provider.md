@@ -484,7 +484,7 @@ Admin 新建 provider 的体验是在配置真相层之上增加一层面向人�
 - 不提供"自定义底层字段"入口，用户只能在 Warden 支持的 format 与能力模板中选择
 - 不暴露旧 `family` / `protocol` / provider 级 `service_protocols` 的编辑入口
 - 旧配置无法匹配任何 preset 时，页面显示迁移提示
-- 不保留 YAML 配置读写路径；配置真相只写回 TOML
+- 主配置支持 TOML 和 YAML；管理台保存时按当前配置文件后缀保留写回格式
 
 ---
 
