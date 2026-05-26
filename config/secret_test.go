@@ -4,8 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 
-	"github.com/BurntSushi/toml"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestSecretString_MarshalUnmarshal(t *testing.T) {

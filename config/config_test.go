@@ -572,9 +572,9 @@ func TestValidateProviderRejectsUnsupportedProxyScheme(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {
-				URL:      "https://api.openai.com/v1",
+				URL:    "https://api.openai.com/v1",
 				Format: "openai",
-				Proxy:    "ftp://proxy.example.com:8080",
+				Proxy:  "ftp://proxy.example.com:8080",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -873,9 +873,9 @@ func TestValidateProviderExplicitServiceProtocolsOverrideDefaults(t *testing.T) 
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Format:           ProviderFormatOpenAI,
-				URL:              "https://api.openai.com/v1",
-				APIKey:           "test-key",
+				Format:    ProviderFormatOpenAI,
+				URL:       "https://api.openai.com/v1",
+				APIKey:    "test-key",
 				Protocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
 			},
 		},
@@ -903,8 +903,8 @@ func TestValidateOpenAIChatOnlyProviderSupportsFormerOllamaShape(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"local": {
-				Format:           ProviderFormatOpenAI,
-				URL:              "http://localhost:11434/v1",
+				Format:    ProviderFormatOpenAI,
+				URL:       "http://localhost:11434/v1",
 				Protocols: []string{RouteProtocolChat},
 			},
 		},
@@ -932,11 +932,11 @@ func TestValidateCLIProxyBackendMetadata(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          "CLIProxy",
-				BackendProvider:  "Codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         "CLIProxy",
+				BackendProvider: "Codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -965,11 +965,11 @@ func TestValidateCLIProxyBackendRequiresOpenAIProvider(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatAnthropic,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatAnthropic,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1041,11 +1041,11 @@ func TestValidateEmbeddedCLIProxyConfig(t *testing.T) {
 		},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1071,11 +1071,11 @@ func TestValidateEmbeddedCLIProxyRejectsUnsafeEndpoint(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://192.168.1.10:18741/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://192.168.1.10:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1102,18 +1102,18 @@ func TestValidateEmbeddedCLIProxyRejectsMismatchedProviders(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "gemini",
-				URL:              "http://127.0.0.1:18742/v1",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "gemini",
+				URL:             "http://127.0.0.1:18742/v1",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1140,20 +1140,20 @@ func TestValidateEmbeddedCLIProxyAcceptsSharedProviderProxy(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8080",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8080",
+				Protocols:       []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "gemini",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8080",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "gemini",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8080",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1176,20 +1176,20 @@ func TestValidateEmbeddedCLIProxyRejectsConflictingProviderProxy(t *testing.T) {
 		CLIProxy: &CLIProxyConfig{Enabled: true},
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8080",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8080",
+				Protocols:       []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "gemini",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8081",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "gemini",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8081",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1215,20 +1215,20 @@ func TestValidateEmbeddedCLIProxyAllowsProviderProxyConflictWithExplicitCLIProxy
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"codex": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8080",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8080",
+				Protocols:       []string{RouteProtocolChat},
 			},
 			"gemini": {
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "gemini",
-				URL:              "http://127.0.0.1:18741/v1",
-				Proxy:            "http://127.0.0.1:8081",
-				Protocols: []string{RouteProtocolChat},
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "gemini",
+				URL:             "http://127.0.0.1:18741/v1",
+				Proxy:           "http://127.0.0.1:8081",
+				Protocols:       []string{RouteProtocolChat},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1250,9 +1250,9 @@ func TestValidateRouteDisablesEmbeddingsWhenNoUpstreamSupportsIt(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"anthropic": {
-				Format:   ProviderFormatAnthropic,
-				URL:      "https://anthropic.example.com",
-				APIKey:   "test-key",
+				Format: ProviderFormatAnthropic,
+				URL:    "https://anthropic.example.com",
+				APIKey: "test-key",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1279,9 +1279,9 @@ func TestValidateRouteAcceptsExplicitServiceProtocols(t *testing.T) {
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {
-				Format:   ProviderFormatOpenAI,
-				URL:      "https://api.openai.com/v1",
-				APIKey:   "test-key",
+				Format: ProviderFormatOpenAI,
+				URL:    "https://api.openai.com/v1",
+				APIKey: "test-key",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1309,9 +1309,9 @@ func TestValidateRouteRejectsServiceProtocolsWithoutPrimaryProtocol(t *testing.T
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"openai": {
-				Format:   ProviderFormatOpenAI,
-				URL:      "https://api.openai.com/v1",
-				APIKey:   "test-key",
+				Format: ProviderFormatOpenAI,
+				URL:    "https://api.openai.com/v1",
+				APIKey: "test-key",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1338,8 +1338,8 @@ func TestValidateRouteRejectsExplicitServiceProtocolWithoutProviderSupport(t *te
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"copilot": {
-				Format:   ProviderFormatCopilot,
-				APIKey:   "test-key",
+				Format: ProviderFormatCopilot,
+				APIKey: "test-key",
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1366,9 +1366,9 @@ func TestValidateRouteRejectsEmbeddingsOnlyProviderWithoutPrimaryProtocol(t *tes
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"embeddings": {
-				Format:           ProviderFormatOpenAI,
-				URL:              "https://api.openai.com/v1",
-				APIKey:           "test-key",
+				Format:    ProviderFormatOpenAI,
+				URL:       "https://api.openai.com/v1",
+				APIKey:    "test-key",
 				Protocols: []string{ServiceProtocolEmbeddings},
 			},
 		},
@@ -1460,7 +1460,7 @@ func TestValidateRouteConfigRejectsInvalidProtocolName(t *testing.T) {
 		},
 		Route: map[string]*RouteConfig{
 			"/test": {
-				Protocol:   "responses_invalid",
+				Protocol: "responses_invalid",
 				ExactModels: map[string]*ExactRouteModelConfig{
 					"gpt-4o": {
 						Upstreams: []*RouteUpstreamConfig{{Provider: "openai", Model: "gpt-4o"}},
@@ -1620,12 +1620,12 @@ func TestValidateProviderAPIKeyCommand(t *testing.T) {
 		{
 			name: "cliproxy rejects command",
 			provider: &ProviderConfig{
-				Format:           ProviderFormatOpenAI,
-				Backend:          ProviderBackendCLIProxy,
-				BackendProvider:  "codex",
-				URL:              "http://127.0.0.1:18741/v1",
-				Protocols: []string{RouteProtocolChat},
-				APIKeyCommand:    "printf token",
+				Format:          ProviderFormatOpenAI,
+				Backend:         ProviderBackendCLIProxy,
+				BackendProvider: "codex",
+				URL:             "http://127.0.0.1:18741/v1",
+				Protocols:       []string{RouteProtocolChat},
+				APIKeyCommand:   "printf token",
 			},
 			wantErr: "api_key_command is not supported",
 		},
@@ -1662,10 +1662,10 @@ func TestValidateProviderAPIKeyCommandDoesNotChangeServiceProtocols(t *testing.T
 	cfg := &ConfigStruct{
 		Provider: map[string]*ProviderConfig{
 			"primary": {
-				Format:           ProviderFormatOpenAI,
-				URL:              "https://api.openai.com/v1",
-				APIKeyCommand:    "printf token",
-				Protocols: []string{RouteProtocolChat, ServiceProtocolEmbeddings},
+				Format:        ProviderFormatOpenAI,
+				URL:           "https://api.openai.com/v1",
+				APIKeyCommand: "printf token",
+				Protocols:     []string{RouteProtocolChat, ServiceProtocolEmbeddings},
 			},
 		},
 		Route: map[string]*RouteConfig{
@@ -1711,9 +1711,7 @@ func TestValidateCopilotAPIKeyCommandSkipsConfigDirCredentialCheck(t *testing.T)
 	}
 }
 
-
 // === Access Mode Validation Tests ===
-
 
 func TestValidateEndpointBasic(t *testing.T) {
 	cfg := &ConfigStruct{
@@ -1956,7 +1954,7 @@ func TestProviderEndpointSelectionByURL(t *testing.T) {
 				Format: "openai",
 				Headers: map[string]string{
 					"Authorization": "Bearer openai-token",
-					"X-Mode":         "openai",
+					"X-Mode":        "openai",
 				},
 			},
 			"anthropic": {

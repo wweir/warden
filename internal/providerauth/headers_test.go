@@ -16,7 +16,7 @@ func TestSetHeadersUsesAPIKeyCommandForOpenAI(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-openai",
-		Format:      config.ProviderFormatOpenAI,
+		Format:        config.ProviderFormatOpenAI,
 		APIKeyCommand: providerAuthHelperCommand("token"),
 	}
 
@@ -32,7 +32,7 @@ func TestSetHeadersUsesAPIKeyCommandForAnthropic(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-anthropic",
-		Format:      config.ProviderFormatAnthropic,
+		Format:        config.ProviderFormatAnthropic,
 		APIKeyCommand: providerAuthHelperCommand("token"),
 	}
 
@@ -54,7 +54,7 @@ func TestSetHeadersReturnsAPIKeyCommandError(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
 		Name:          "cmd-fail",
-		Format:      config.ProviderFormatOpenAI,
+		Format:        config.ProviderFormatOpenAI,
 		APIKeyCommand: providerAuthHelperCommand("fail"),
 	}
 
@@ -70,8 +70,8 @@ func TestSetHeadersReturnsAPIKeyCommandError(t *testing.T) {
 func TestSetHeadersUsesEndpointHeadersForMatchingURL(t *testing.T) {
 	header := http.Header{}
 	prov := &config.ProviderConfig{
-		Name:  "multi",
-		URL:   "https://gateway.example.com",
+		Name:   "multi",
+		URL:    "https://gateway.example.com",
 		Format: config.ProviderFormatOpenAI,
 		APIKey: config.SecretString("shared-token"),
 		Headers: map[string]string{
