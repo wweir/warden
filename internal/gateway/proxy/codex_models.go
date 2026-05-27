@@ -1,10 +1,42 @@
 package proxy
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
+
+// nonChatModelPatterns matches model IDs that are clearly not usable with
+// chat/responses endpoints (image generation, audio, realtime, TTS, etc.).
+var nonChatModelPatterns = []string{
+	"image",      // DALL-E, gpt-image, etc.
+	"audio",      // audio preview models
+	"realtime",   // realtime models
+	"tts",        // text-to-speech
+	"whisper",    // speech-to-text
+	"embedding",  // embedding models
+	"moderation", // moderation models
+}
+
+// isNonChatModel returns true for model IDs that are known to not support
+// chat/completions or responses endpoints.
+func isNonChatModel(id string) bool {
+	lower := strings.ToLower(id)
+	if strings.HasPrefix(lower, "dall-e") || strings.HasPrefix(lower, "omni-moderation") {
+		return true
+	}
+	for _, p := range nonChatModelPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // codexCompatibleModels augments OpenAI-style model entries with the extra
 // metadata fields that the Codex CLI catalog expects. Entries that are not
 // JSON objects or lack an id/slug are passed through unchanged.
+// Models that are known to not support chat/responses (e.g. image generation,
+// audio, realtime) are hidden from the Codex model picker.
 func codexCompatibleModels(models []json.RawMessage) []json.RawMessage {
 	out := make([]json.RawMessage, 0, len(models))
 	for _, model := range models {
@@ -22,14 +54,22 @@ func codexCompatibleModels(models []json.RawMessage) []json.RawMessage {
 			continue
 		}
 
+		// Hide models that are known to not support chat/responses.
+		hide := isNonChatModel(id)
+
 		setStringDefault(entry, "slug", id)
 		setStringDefault(entry, "display_name", id)
 		setStringDefault(entry, "description", "")
 		setStringDefault(entry, "default_reasoning_level", "medium")
 		setRawDefault(entry, "supported_reasoning_levels", codexReasoningLevels)
 		setStringDefault(entry, "shell_type", "shell_command")
-		setStringDefault(entry, "visibility", "list")
-		setRawDefault(entry, "supported_in_api", json.RawMessage("true"))
+		if hide {
+			setStringDefault(entry, "visibility", "hide")
+			setRawDefault(entry, "supported_in_api", json.RawMessage("false"))
+		} else {
+			setStringDefault(entry, "visibility", "list")
+			setRawDefault(entry, "supported_in_api", json.RawMessage("true"))
+		}
 		setRawDefault(entry, "priority", json.RawMessage("0"))
 		setRawDefault(entry, "additional_speed_tiers", json.RawMessage("[]"))
 		setRawDefault(entry, "availability_nux", json.RawMessage("null"))
