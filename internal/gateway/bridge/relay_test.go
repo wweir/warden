@@ -221,26 +221,109 @@ func TestStreamAnthropicAsResponses(t *testing.T) {
 	}
 }
 
-func TestStreamAnthropicAsResponsesExceedsLimit(t *testing.T) {
-	// Temporarily lower the limit so we don't need to allocate 64 MiB.
-	oldLimit := maxBufferedStreamBody
-	maxBufferedStreamBody = 1024
-	defer func() { maxBufferedStreamBody = oldLimit }()
-
+func TestStreamAnthropicAsResponsesWithThinking(t *testing.T) {
 	t.Parallel()
 
-	prefix := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\""
-	suffix := "\"}}\n\n"
-	pad := strings.Repeat("x", int(maxBufferedStreamBody)-len(prefix)-len(suffix)+1)
-	stream := strings.NewReader(prefix + pad + suffix)
-
+	anthropicSSE := strings.NewReader(
+		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me think\"}}\n\n" +
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"The answer is 4.\"}}\n\n" +
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+	)
 	rec := httptest.NewRecorder()
 
-	_, _, err := StreamAnthropicAsResponses(stream, rec, "test")
-	if err == nil {
-		t.Fatal("expected error for stream exceeding limit")
+	_, rawResp, err := StreamAnthropicAsResponses(anthropicSSE, rec, "claude-model")
+	if err != nil {
+		t.Fatalf("StreamAnthropicAsResponses() error = %v", err)
+	}
+
+	body := string(rawResp)
+	if !strings.Contains(body, "response.created") {
+		t.Fatal("missing response.created event")
+	}
+	if !strings.Contains(body, `"type":"reasoning"`) {
+		t.Fatal("missing reasoning item")
+	}
+	if !strings.Contains(body, "response.reasoning.delta") {
+		t.Fatal("missing response.reasoning.delta event")
+	}
+	if !strings.Contains(body, "response.output_text.delta") {
+		t.Fatal("missing response.output_text.delta event")
+	}
+	if !strings.Contains(body, "response.completed") {
+		t.Fatal("missing response.completed event")
 	}
 }
+
+func TestStreamAnthropicAsResponsesTruncatedStream(t *testing.T) {
+	t.Parallel()
+
+	// Stream without message_stop: simulates upstream truncation.
+	anthropicSSE := strings.NewReader(
+		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+	)
+	rec := httptest.NewRecorder()
+
+	_, rawResp, err := StreamAnthropicAsResponses(anthropicSSE, rec, "claude-model")
+	if err == nil {
+		t.Fatal("expected error for truncated stream")
+	}
+	if !strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("expected EOF error, got: %v", err)
+	}
+
+	body := string(rawResp)
+	if !strings.Contains(body, "response.completed") {
+		t.Fatal("truncated stream should still emit response.completed")
+	}
+	if !strings.Contains(body, `"status":"incomplete"`) {
+		t.Fatal("truncated stream should have incomplete status")
+	}
+}
+
+func TestStreamAnthropicAsResponsesWithToolUse(t *testing.T) {
+	t.Parallel()
+
+	anthropicSSE := strings.NewReader(
+		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}\n\n" +
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+	)
+	rec := httptest.NewRecorder()
+
+	_, rawResp, err := StreamAnthropicAsResponses(anthropicSSE, rec, "claude-model")
+	if err != nil {
+		t.Fatalf("StreamAnthropicAsResponses() error = %v", err)
+	}
+
+	body := string(rawResp)
+	if !strings.Contains(body, "response.created") {
+		t.Fatal("missing response.created event")
+	}
+	if !strings.Contains(body, `"type":"function_call"`) {
+		t.Fatal("missing function_call item")
+	}
+	if !strings.Contains(body, "response.function_call_arguments.delta") {
+		t.Fatal("missing response.function_call_arguments.delta event")
+	}
+	if !strings.Contains(body, "response.function_call_arguments.done") {
+		t.Fatal("missing response.function_call_arguments.done event")
+	}
+	if !strings.Contains(body, "response.completed") {
+		t.Fatal("missing response.completed event")
+	}
+}
+
 
 func TestReadSSEFrameMultiLineData(t *testing.T) {
 	t.Parallel()

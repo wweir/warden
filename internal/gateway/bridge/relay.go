@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 
@@ -13,10 +12,6 @@ import (
 	anthproto "github.com/wweir/warden/pkg/protocol/anthropic"
 	"github.com/wweir/warden/pkg/protocol/openai"
 )
-
-// maxBufferedStreamBody is the upper bound for fully buffering an upstream
-// SSE response before conversion by StreamAnthropicAsResponses.
-var maxBufferedStreamBody = int64(64 << 20) // 64 MiB
 
 type ErrorSource string
 
@@ -228,25 +223,105 @@ func StreamChatAsResponses(src io.Reader, dst http.ResponseWriter, model string)
 }
 
 // StreamAnthropicAsResponses converts an upstream Anthropic Messages SSE
-// stream into Responses SSE. Anthropic does not expose a stateful streaming
-// converter to Chat, so the upstream body is buffered first and then routed
-// through StreamChatAsResponses. The first return value is the raw upstream
-// SSE (Anthropic format) for token-usage and tool-call observation.
+// stream into Responses SSE incrementally. It uses AnthropicToChatStreamState
+// to map each Anthropic event to Chat completion chunks, then feeds those
+// chunks through ChatResponsesStreamState to produce Responses SSE. The first
+// return value is the raw upstream SSE (Anthropic format) for token-usage and
+// tool-call observation.
 func StreamAnthropicAsResponses(src io.Reader, dst http.ResponseWriter, model string) ([]byte, []byte, error) {
-	rawAnthropic, readErr := io.ReadAll(io.LimitReader(src, maxBufferedStreamBody+1))
-	if int64(len(rawAnthropic)) > maxBufferedStreamBody {
-		return rawAnthropic[:maxBufferedStreamBody], nil, &relayError{
-			source: SourceUpstream,
-			err:    fmt.Errorf("anthropic stream body exceeds %d MiB limit", maxBufferedStreamBody>>20),
+	reader := bufio.NewReader(src)
+	anthState := NewAnthropicToChatStreamState()
+	chatState := openai.NewChatResponsesStreamState()
+	var rawAnthropic bytes.Buffer
+	var rawChat bytes.Buffer
+	var rawResp bytes.Buffer
+	streamComplete := false
+	messageStopped := false
+
+	for {
+		frame, err := ReadSSEFrame(reader)
+		if len(frame) > 0 {
+			rawAnthropic.Write(frame)
+			events := protocol.ParseEvents(frame)
+			for _, evt := range events {
+				if evt.EventType == "message_stop" || isMessageStopData(evt.Data) {
+					messageStopped = true
+					continue
+				}
+				chatBytes, convErr := anthState.ConvertEvent(evt)
+				if convErr != nil {
+					return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: convErr}
+				}
+				if len(chatBytes) == 0 {
+					continue
+				}
+				rawChat.Write(chatBytes)
+				chatEvents := protocol.ParseEvents(chatBytes)
+				for _, chatEvt := range chatEvents {
+					if chatEvt.Data == "[DONE]" {
+						streamComplete = true
+						continue
+					}
+					converted, stateErr := chatState.ConvertEvent(chatEvt)
+					if stateErr != nil {
+						return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: stateErr}
+					}
+					if len(converted) == 0 {
+						continue
+					}
+					rawResp.Write(converted)
+					if _, writeErr := dst.Write(converted); writeErr != nil {
+						return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
+					}
+					safeFlush(dst)
+				}
+			}
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			// Upstream error mid-stream: emit incomplete completed event before returning.
+			completed := openai.BuildChatResponsesCompletedEvent(rawChat.Bytes(), model, false)
+			rawResp.Write(completed)
+			if _, writeErr := dst.Write(completed); writeErr != nil {
+				return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
+			}
+			safeFlush(dst)
+			return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: err}
 		}
 	}
-	if readErr != nil {
-		return rawAnthropic, nil, &relayError{source: SourceUpstream, err: readErr}
-	}
 
-	chatSSE := anthproto.ConvertStreamToOpenAI(rawAnthropic)
-	_, rawResp, err := StreamChatAsResponses(bytes.NewReader(chatSSE), dst, model)
-	return rawAnthropic, rawResp, err
+	// Emit [DONE] to the Chat state so it can finalize, then build completed event.
+	doneBytes := anthState.Finalize()
+	rawChat.Write(doneBytes)
+	streamComplete = messageStopped
+
+	completed := openai.BuildChatResponsesCompletedEvent(rawChat.Bytes(), model, streamComplete)
+	rawResp.Write(completed)
+	if _, writeErr := dst.Write(completed); writeErr != nil {
+		return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceDownstream, err: writeErr}
+	}
+	safeFlush(dst)
+
+	if !messageStopped {
+		return rawAnthropic.Bytes(), rawResp.Bytes(), &relayError{source: SourceUpstream, err: io.ErrUnexpectedEOF}
+	}
+	return rawAnthropic.Bytes(), rawResp.Bytes(), nil
+}
+
+func isMessageStopData(data string) bool {
+	if data == "" {
+		return false
+	}
+	var payload struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return false
+	}
+	return payload.Type == "message_stop"
 }
 
 func safeFlush(dst http.ResponseWriter) {
