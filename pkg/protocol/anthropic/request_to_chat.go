@@ -252,9 +252,17 @@ func convertAnthropicAssistantMessage(idx int, raw json.RawMessage) ([]openai.Me
 			}
 			textParts = append(textParts, text)
 		case "thinking":
-			// Anthropic thinking blocks in assistant history are dropped
-			// because Chat Completions does not have a native equivalent.
-			// The reasoning has already been consumed by the model.
+			var thinkingBlock struct {
+				Thinking string `json:"thinking"`
+			}
+			if err := json.Unmarshal(rawBlock, &thinkingBlock); err != nil {
+				return nil, fmt.Errorf("messages[%d].content[%d]: %w", idx, blockIdx, err)
+			}
+			if msg.ReasoningContent != "" {
+				msg.ReasoningContent += "\n\n" + thinkingBlock.Thinking
+			} else {
+				msg.ReasoningContent = thinkingBlock.Thinking
+			}
 		case "tool_use":
 			toolCall, err := toolUseToChatToolCall(rawBlock)
 			if err != nil {

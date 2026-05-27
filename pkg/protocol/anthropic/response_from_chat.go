@@ -38,6 +38,27 @@ func ChatResponseToMessagesResponse(resp openai.ChatCompletionResponse) ([]byte,
 
 func chatMessageToAnthropicContent(msg openai.Message) ([]map[string]any, error) {
 	var content []map[string]any
+
+	// Prepend thinking block if reasoning content is present.
+	reasoning := msg.ReasoningContent
+	if reasoning == "" {
+		for _, key := range []string{"reasoningContent", "reasoning", "thinking"} {
+			if raw, ok := msg.Extra[key]; ok {
+				var s string
+				if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+					reasoning = s
+					break
+				}
+			}
+		}
+	}
+	if reasoning != "" {
+		content = append(content, map[string]any{
+			"type":     "thinking",
+			"thinking": reasoning,
+		})
+	}
+
 	if msg.Content != nil {
 		text, err := chatContentToText(msg.Content)
 		if err != nil {
@@ -113,9 +134,12 @@ type chatStreamChunk struct {
 	} `json:"usage,omitempty"`
 	Choices []struct {
 		Delta struct {
-			Role      string `json:"role,omitempty"`
-			Content   string `json:"content,omitempty"`
-			ToolCalls []struct {
+			Role             string `json:"role,omitempty"`
+			Content          string `json:"content,omitempty"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Reasoning        string `json:"reasoning,omitempty"`
+			Thinking         string `json:"thinking,omitempty"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id,omitempty"`
 				Type     string `json:"type,omitempty"`
@@ -135,6 +159,7 @@ type ChatToMessagesStreamState struct {
 	model            string
 	promptTokens     int64
 	completionTokens int64
+	reasoningStarted bool
 	textStarted      bool
 	toolStarted      map[int]bool
 	toolOffset       int
@@ -146,6 +171,13 @@ func NewChatToMessagesStreamState() *ChatToMessagesStreamState {
 		toolStarted: make(map[int]bool),
 		toolOffset:  -1,
 	}
+}
+
+func (s *ChatToMessagesStreamState) textIndex() int {
+	if s.reasoningStarted {
+		return 1
+	}
+	return 0
 }
 
 func (s *ChatToMessagesStreamState) ConvertEvent(evt protocol.Event) ([]byte, error) {
@@ -214,11 +246,63 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) ([]proto
 	choice := chunk.Choices[0]
 	var out []protocol.Event
 
+	reasoning := choice.Delta.ReasoningContent
+	if reasoning == "" {
+		reasoning = choice.Delta.Reasoning
+	}
+	if reasoning == "" {
+		reasoning = choice.Delta.Thinking
+	}
+
+	if reasoning != "" {
+		if s.textStarted {
+			return nil, fmt.Errorf("reasoning content appeared after text: unsupported streaming order")
+		}
+		if !s.reasoningStarted {
+			s.reasoningStarted = true
+			if s.toolOffset < 0 {
+				if s.textStarted {
+					s.toolOffset = 2
+				} else {
+					s.toolOffset = 1
+				}
+			}
+			out = append(out, protocol.Event{
+				EventType: "content_block_start",
+				Data: mustJSON(map[string]any{
+					"type":  "content_block_start",
+					"index": 0,
+					"content_block": map[string]any{
+						"type":     "thinking",
+						"thinking": "",
+					},
+				}),
+				HasData: true,
+			})
+		}
+		out = append(out, protocol.Event{
+			EventType: "content_block_delta",
+			Data: mustJSON(map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": reasoning,
+				},
+			}),
+			HasData: true,
+		})
+	}
+
 	if choice.Delta.Content != "" {
 		if !s.textStarted {
 			s.textStarted = true
 			if s.toolOffset < 0 {
-				s.toolOffset = 1
+				if s.reasoningStarted {
+					s.toolOffset = 2
+				} else {
+					s.toolOffset = 1
+				}
 			} else if s.toolOffset == 0 {
 				// tool calls already appeared before text content,
 				// which violates the expected OpenAI streaming order.
@@ -228,7 +312,7 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) ([]proto
 				EventType: "content_block_start",
 				Data: mustJSON(map[string]any{
 					"type":  "content_block_start",
-					"index": 0,
+					"index": s.textIndex(),
 					"content_block": map[string]any{
 						"type": "text",
 						"text": "",
@@ -241,7 +325,7 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) ([]proto
 			EventType: "content_block_delta",
 			Data: mustJSON(map[string]any{
 				"type":  "content_block_delta",
-				"index": 0,
+				"index": s.textIndex(),
 				"delta": map[string]any{
 					"type": "text_delta",
 					"text": choice.Delta.Content,
@@ -252,7 +336,13 @@ func (s *ChatToMessagesStreamState) convertChunk(chunk chatStreamChunk) ([]proto
 	}
 
 	if len(choice.Delta.ToolCalls) > 0 && s.toolOffset < 0 {
-		s.toolOffset = 0
+		if s.reasoningStarted && s.textStarted {
+			s.toolOffset = 2
+		} else if s.reasoningStarted || s.textStarted {
+			s.toolOffset = 1
+		} else {
+			s.toolOffset = 0
+		}
 	}
 	for _, toolCall := range choice.Delta.ToolCalls {
 		index := toolCall.Index + s.toolOffset
@@ -298,12 +388,22 @@ func (s *ChatToMessagesStreamState) Finalize() ([]byte, error) {
 	}
 
 	var out []protocol.Event
-	if s.textStarted {
+	if s.reasoningStarted {
 		out = append(out, protocol.Event{
 			EventType: "content_block_stop",
 			Data: mustJSON(map[string]any{
 				"type":  "content_block_stop",
 				"index": 0,
+			}),
+			HasData: true,
+		})
+	}
+	if s.textStarted {
+		out = append(out, protocol.Event{
+			EventType: "content_block_stop",
+			Data: mustJSON(map[string]any{
+				"type":  "content_block_stop",
+				"index": s.textIndex(),
 			}),
 			HasData: true,
 		})

@@ -155,6 +155,88 @@ func TestChatResponseToMessagesResponse(t *testing.T) {
 	}
 }
 
+func TestChatResponseToMessagesResponseWithReasoningContent(t *testing.T) {
+	chatResp := openai.ChatCompletionResponse{
+		ID:     "chatcmpl_1",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []openai.Choice{{
+			Index: 0,
+			Message: openai.Message{
+				Role:             "assistant",
+				ReasoningContent: "Let me think step by step.",
+				Content:          "The answer is 4.",
+			},
+			FinishReason: "stop",
+		}},
+		Usage: openai.Usage{
+			PromptTokens:     3,
+			CompletionTokens: 5,
+			TotalTokens:      8,
+		},
+	}
+
+	body, err := ChatResponseToMessagesResponse(chatResp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("unmarshal anthropic response: %v", err)
+	}
+	content := result["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("content len = %d, want 2", len(content))
+	}
+	firstBlock, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first block is not a map")
+	}
+	if firstBlock["type"] != "thinking" {
+		t.Fatalf("first block type = %v, want thinking", firstBlock["type"])
+	}
+	if firstBlock["thinking"] != "Let me think step by step." {
+		t.Fatalf("first block thinking = %v, want 'Let me think step by step.'", firstBlock["thinking"])
+	}
+	secondBlock, ok := content[1].(map[string]any)
+	if !ok {
+		t.Fatalf("second block is not a map")
+	}
+	if secondBlock["type"] != "text" {
+		t.Fatalf("second block type = %v, want text", secondBlock["type"])
+	}
+}
+
+func TestMessagesRequestToChatRequestPreservesAssistantThinking(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-compatible",
+		"messages":[
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"Let me think step by step."},
+				{"type":"text","text":"The answer is 4."}
+			]}
+		]
+	}`)
+
+	chatReq, err := MessagesRequestToChatRequest(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chatReq.Messages) != 1 {
+		t.Fatalf("messages len = %d, want 1", len(chatReq.Messages))
+	}
+	if chatReq.Messages[0].Role != "assistant" {
+		t.Fatalf("role = %q, want assistant", chatReq.Messages[0].Role)
+	}
+	if chatReq.Messages[0].ReasoningContent != "Let me think step by step." {
+		t.Fatalf("reasoning_content = %q, want 'Let me think step by step.'", chatReq.Messages[0].ReasoningContent)
+	}
+	if chatReq.Messages[0].Content != "The answer is 4." {
+		t.Fatalf("content = %q, want 'The answer is 4.'", chatReq.Messages[0].Content)
+	}
+}
+
 func TestConvertChatStreamToAnthropic(t *testing.T) {
 	raw := []byte("" +
 		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n" +
@@ -181,6 +263,49 @@ func TestConvertChatStreamToAnthropic(t *testing.T) {
 	}
 	if !strings.Contains(text, `"stop_reason":"tool_use"`) {
 		t.Fatalf("stream = %q, want tool_use stop reason", text)
+	}
+}
+
+func TestConvertChatStreamToAnthropicWithReasoningDelta(t *testing.T) {
+	raw := []byte("" +
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Let me think\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\" step by step.\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"The answer is 4.\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n" +
+		"data: [DONE]\n\n")
+
+	anthSSE, err := ConvertChatStreamToAnthropic(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := string(anthSSE)
+	if !strings.Contains(text, `"type":"thinking_delta"`) {
+		t.Fatalf("stream = %q, want thinking_delta", text)
+	}
+	if !strings.Contains(text, `"thinking":"Let me think"`) {
+		t.Fatalf("stream = %q, want first reasoning delta", text)
+	}
+	if !strings.Contains(text, `"thinking":" step by step."`) {
+		t.Fatalf("stream = %q, want second reasoning delta", text)
+	}
+	if !strings.Contains(text, `"type":"text_delta"`) {
+		t.Fatalf("stream = %q, want text_delta", text)
+	}
+	if !strings.Contains(text, `"text":"The answer is 4."`) {
+		t.Fatalf("stream = %q, want text content", text)
+	}
+	if !strings.Contains(text, `"stop_reason":"end_turn"`) {
+		t.Fatalf("stream = %q, want end_turn stop reason", text)
+	}
+
+	// Verify content block indexes: thinking=0, text=1
+	if !strings.Contains(text, `"index":0`) {
+		t.Fatalf("stream = %q, want index 0 for thinking", text)
+	}
+	if !strings.Contains(text, `"index":1`) {
+		t.Fatalf("stream = %q, want index 1 for text", text)
 	}
 }
 
