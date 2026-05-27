@@ -18,23 +18,9 @@ Warden 是一个 route-centric 的 AI Gateway。
 
 这不是表面删字段，而是收缩边界：Warden 现在只负责网关、协议、路由、hook、日志和观测，不再负责外部工具进程生命周期管理。
 
-相关文档入口：
-
-- 根使用说明：[README.md](./README.md)
-- 专题文档索引：[docs/README.md](./docs/README.md)
-- 配置说明：[config/README.md](./config/README.md)
-- Provider 专题：[docs/provider.md](./docs/provider.md)
-
-文档分工：
-
-- `README.md` 负责项目入口、运行方式和最小使用示例
-- `ARCHITECTURE.md` 负责系统边界、运行时分层和关键设计决策
-- `docs/README.md` 负责仍需单独维护的专题文档索引
-- `config/README.md` 负责配置模型和校验规则
-
 ## Directory Layout
 
-```text
+```
 cmd/warden/          # 进程入口、信号处理、配置加载、版本注入
 config/              # 配置模型、校验、路由运行时编译、示例配置
 internal/
@@ -45,7 +31,7 @@ internal/
     httpmw/          # Recovery/CORS/API key 鉴权中间件
     inference/       # route-model 匹配、service protocol 分类、auth retry、failover trail
     observe/         # 推理日志拼装、SSE 日志归一化、tool call 观测与 hook 分发
-    proxy/           # 透明代理 surface、proxy provider 选择和请求日志拼装
+    proxy/           # 透明代理 surface、proxy provider 选择和 proxy 请求日志拼装
     requestctx/      # 请求级上下文元数据（client request/hooks/api key）
     telemetry/       # Prometheus collector、dashboard 时序存储、metrics helper
     tokenusage/      # JSON/SSE token usage 解析与完整性归一化
@@ -61,28 +47,6 @@ pkg/
 web/admin/           # Vue 3 管理端源码与构建产物
 ```
 
-## Deployment Boundary
-
-Warden 的运行时核心是跨平台的 HTTP 网关进程，但进程托管不是跨平台同构问题。
-
-当前边界：
-
-- 前台运行：Linux / macOS / Windows 都是同一套二进制心智
-- 内置托管安装：Linux=`systemd`，macOS=`launchd`，Windows=Task Scheduler
-- Windows 终端用户入口是单独的 self-extracting `setup.exe`；运行时 `warden.exe` 保持纯运行时语义
-- 托管安装总是把二进制落到平台约定的标准路径；Linux 默认主配置放在 `/etc/warden/warden.toml`，macOS/Windows 使用平台对应的 TOML 路径；若目标配置已存在，安装前先校验该配置
-- 托管安装只在配置不存在时生成可启动的 bootstrap 配置；安装时会显式询问是否对外提供服务。交互安装在需要创建配置时必须输入并确认 admin 密码，并把该密码写入 bootstrap 配置。默认只监听 `127.0.0.1:9832`，后台入口为 `http://localhost:9832/_admin/`；若用户选择对外提供服务，则监听 `:9832`，并使用安装时输入的强密码启用管理后台。`make install` 走 `warden -i -y`，跳过交互确认并启动或重启托管服务，但不隐式开启外部监听。bootstrap 配置不包含 provider / route，避免首次启动隐式依赖外部服务或本地 OAuth 凭证
-- 管理台触发的重启由进程自身按平台完成；Unix 走原地重启，Windows 前台进程拉起新实例后退出，Task Scheduler 托管进程用受控退出码请求包装脚本立即重拉
-- `warden -r` 的 CLI 入口仍依赖 Unix 信号模型；Windows 不提供等价信号重载
-
-设计原则：
-
-- 网关进程负责配置校验、HTTP 服务、优雅关闭和管理面
-- OS 级启动、拉起、重启、崩溃恢复交给平台 supervisor
-- 不为了表面统一而把不同平台的进程模型硬压成同一个错误抽象
-
-跨平台部署细节见：[docs/cross-platform-deployment.md](./docs/cross-platform-deployment.md)
-
 ## Runtime Components
 
 ### 1. Config Layer
@@ -93,140 +57,45 @@ Warden 的运行时核心是跨平台的 HTTP 网关进程，但进程托管不�
 - 在 `Validate()` 中做静态校验和规范化
 - 将 route 配置编译为可直接匹配的运行时结构
 
-Warden 主配置支持 TOML 和 YAML 两种文件格式。托管安装、示例文件和默认配置路径仍使用 TOML；启动配置搜索顺序优先 `warden.toml`、`config/warden.toml` 和平台默认 TOML 路径，再兼容搜索同位置的 `warden.yaml`。显式 `-c` 可以指定 `.toml`、`.yaml` 或 `.yml` 文件。管理台写回配置时按当前配置文件后缀保留格式：TOML 路径写 TOML，YAML 路径写 YAML。
-
-这里刻意不把启动期网络探测引入配置真相层。provider 协议如果省略，只允许按本地静态信号推断；probe 仍然只属于展示层。
-
-主要配置块：
-
-- `addr`
-- `admin_password`
-- `log`
-- `webhook`
-- `cliproxy`
-- `provider`
-- `route`
-
-约束：
-
-- `provider.*.url` 与 `webhook.*.url` 必须为绝对 `http/https` URL
-- `provider.*.proxy` 只允许 `http` / `https` / `socks5` / `socks5h`
-- `provider.*.family` / `provider.*.protocol` 已废弃，仅作为旧配置兼容读取；新配置使用 `provider.*.format`（`openai` / `anthropic` / `copilot`，默认 `openai`）+ `provider.*.protocols`（能力声明）
-- `provider.*.backend` 是可选上游实现标记；当前只接受 `cliproxy`，且必须配合 `backend_provider` 和显式 `service_protocols`
-- `cliproxy.enabled` 启用时，Warden 会在主网关监听前启动一个嵌入式 CLIProxyAPI/cliproxy 服务；其监听地址来自 `backend: cliproxy` provider 的 `http://loopback:port/v1` URL，所有 cliproxy backend provider 必须共享同一个 endpoint；该 URL 是 Warden 到内嵌/本地 cliproxy 的内部 HTTP 边界，不代表还需要额外部署外部模型服务。`backend: cliproxy` provider 的 `provider.*.proxy` 不用于这段本机 HTTP 调用，只用于在 `cliproxy.proxy` 未配置时派生嵌入式服务访问真实上游的出站代理。`cliproxy.proxy` 是嵌入式服务出站代理的显式全局配置；未配置时，所有 `backend: cliproxy` provider 可以通过相同的 `provider.*.proxy` 派生该出站代理，若多个 cliproxy provider 配置不同 proxy 则配置无效。
-- `cliproxy.auth_dir` 留空默认使用 `/etc/warden`，与 Linux 托管主配置 `/etc/warden/warden.toml` 共享目录；CLIProxyAPI 运行时配置仍由 Warden 单独生成，不直接复用 Warden 主配置文件。该临时运行时文件因 CLIProxyAPI SDK watcher 自身 schema 仍为 YAML，但它不是 Warden 用户配置格式。Warden 嵌入式 cliproxy 固定使用本地 `auth_dir` 模式，不启用 CLIProxyAPI v7 Home control plane；CLIProxyAPI 自动刷新认证后会先更新内存中的 auth manager 并调度立即生效，再通过文件 token store 写回对应 auth JSON。若底层文件写入失败，当前 CLIProxyAPI SDK 会记录/忽略持久化错误并保留内存态，Warden 不把这种情况伪装成已持久化成功。provider 详情页里的 cliproxy 认证导入只会把完整 CLIProxyAPI auth JSON 写入 `cliproxy.auth_dir`，不会把认证内容落进 provider 配置。导入和列表展示只做离线结构校验，例如 JSON 对象、`type`、常见凭证字段、禁用和本地过期时间提示；不会默认向上游发起 token 刷新、账号探测或模型请求。管理端会通过后端异步读取每个 auth 文件中可公开展示的用量状态，并短时间缓存；缓存命中必须同时满足 TTL 未过期且 auth 文件 mtime/size 未变化，因此 refresh token 写回文件后页面下一次查询会立即读取新文件。当 auth JSON 缺少用量 metadata 时，会合并 selector 最近记录的同类型 cliproxy provider 运行态错误响应，且新的认证不可用错误会覆盖旧的 quota 数据。响应优先摘要计划、认证状态、5 小时限额、周限额、重置时间、quota cooldown、model state 和白名单用量字段，不返回 token、cookie、API key 或原始 auth metadata。管理端提供手动在线验证按钮，触发后由后端通过当前 cliproxy provider 的正常 OpenAI-compatible Responses 探测链路发出 `model`、`input` 和 `store=false` 最小请求；由于 CLIProxyAPI HTTP 表面不暴露按 auth 文件强制选中凭证的普通请求参数，该验证证明当前 provider 认证池在线可用，不承诺某个单独文件必然被选中
-- `backend: cliproxy` 请求进入本地/内嵌 cliproxy 前会移除客户端 CLI/SDK 指纹头、Codex turn metadata 和 Warden 生成的 forwarding 头；嵌入式 cliproxy 同时写入 Codex/Claude 的默认头、关闭 CLIProxyAPI response header passthrough，并启用 Claude device-profile stabilization，用 CLIProxyAPI 负责最终上游执行特征
-- admin 新建 provider 页面使用 intent-first 交互：先填连接信息（名称、URL、认证），再选择原生格式（默认 `openai`）和协议能力模板；保存时写回 `provider.*.format` + `provider.*.protocols` + 桥接开关，不再写 `family` / `protocol` / provider 级 `service_protocols`
-- 顶层 `api_keys` 已废弃；客户端 API Key 必须配置在 `route.<prefix>.api_keys`
-- `admin_password` / `route.<prefix>.api_keys` / `provider.*.api_key` 读取时兼容明文和 base64，写回配置时统一存为 base64；该兼容模式默认依赖当前支持的 secret 格式不会与规范化 base64 明文冲突
-- `provider.*.api_key_command` 是 provider 鉴权来源，不是新的 provider family/protocol。运行时按 `sh -c`（Windows 为 `cmd /C`）执行该命令，并把 stdout 的单行输出作为 API Key；默认超时 `5s` 且必须大于 0；默认缓存 TTL `5m`，`0s` 表示不缓存。`api_key_command` 与 `api_key` 互斥，配置校验只校验字段和 duration，不执行命令。
-- `api_key_command` 等同 RCE 级配置，只能由受信任 operator 配置；命令以 Warden 服务用户身份执行，stdout/stderr 不写入普通错误输出。`backend: cliproxy` 不支持 `api_key_command`，cliproxy 仍由 CLIProxyAPI auth_dir 管理认证。
-- `copilot` 若未显式设置 `api_key` 或 `api_key_command`，则从本地 `config_dir` 读取 OAuth 凭证；配置阶段的可读性校验带显式短超时，避免未来慢 I/O 把 startup/reload 卡成无界阻塞
-- `route.protocol` 是必填的主协议声明；`route.service_protocols` 可选，用于让同一路由显式暴露多个服务接口，且必须包含主协议；显式声明的每个接口都必须至少有一个 route upstream/provider 支持
-- `route.exact_models.<name>` 直接声明 `upstreams`；`route.wildcard_models.<pattern>` 直接声明 `providers`
-- `route.wildcard_models.<pattern>` 只把 `*` 作为通配符，并匹配完整模型 ID，包括 OpenAI-compatible 上游常见的 `vendor/model` 斜杠格式
-- `responses` 协议的 route 在请求体含 `previous_response_id` 时直接走透明转发链路,禁用 failover 且不解析 tool calls;无 `previous_response_id` 的无状态请求走 inference handler,支持 failover、tool hook、`responses_to_chat` 桥接
-- 启用 `responses_to_chat` 的 provider 仍可参与 `responses` route,但只对无状态请求生效;带 `previous_response_id` 的请求会绕过桥接走透明转发
-- `anthropic_to_chat` 只允许配置在 `access.openai` 上，并只影响 `route.protocol=anthropic` 的 `/messages` 入口
-- 不再接受 legacy `route.models` / `route.providers` / `route.system_prompts`
-- `route` 的运行时派生字段只有在 `Validate()` 后可依赖
+主要配置块：`addr`, `admin_password`, `log`, `webhook`, `cliproxy`, `provider`, `route`
 
 ### 2. Gateway Layer
 
 `internal/gateway` 是系统核心：
 
 - 注册业务路由与管理端路由
-- 在命中 route 且 `route.api_keys` 非空时校验客户端 API Key，并在转发前剥离客户端鉴权头
+- 在命中 route 且 `route.api_keys` 非空时校验客户端 API Key
 - 根据 route/model 选择 upstream provider
 - 处理 OpenAI `chat/completions`、`responses`、Anthropic `/messages` 与透明代理请求
 - 在响应中提取工具调用并触发 route hook
 - 记录日志、Prometheus 指标、按 API Key 的用量指标和 Dashboard 时序数据
-- chat / responses / messages 的请求日志拼装走共享 helper，保证流式响应在日志中尽量落为最终对象而不是原始 SSE 文本
-- OpenAI-compatible `chat`、原生 `responses` 以及 `responses_to_chat` / `anthropic_to_chat` 的流式路径采用逐帧 relay，不允许先完整缓冲上游 body 再回放；若 OpenAI-compatible 上游忽略 `stream=true` 并返回普通 JSON，则按非流式响应回退写回
-- 流式请求按三阶段记账：`pre_stream` 表示建流前失败，可 auth retry / failover；`in_stream` 表示开始向客户端 relay 后上游中断，只记 provider 失败；只有完整结束才记 success
-- `provider.*.timeout` 是从向上游发出请求到读到首个响应 body/token 的 TTFT 超时，不是总请求时长，也不是仅等待 HTTP 响应头；首 token 到达后，流式 body 读取不再受该字段限制
-- 流式请求日志会把 TTFT 作为 `ttft_ms` 写进 `reqlog.Record`，管理端日志详情直接展示该字段；非流式请求不生成该字段
 
-当前内部进一步分成两个实现层：
-
-- `gateway` 根包保留 HTTP surface、middleware 装配，以及少量必须从运行时状态读取的 admin callback 组装
-- 根包启动期会先把 `route` 编译成按前缀长度降序的绑定表，HTTP 路由注册和透明代理 fallback 共用同一份有序视图，避免重叠前缀依赖 Go map 遍历顺序
-- `internal/gateway/admin` 子包承载管理面路由、嵌入式前端分发，以及 provider 协议探测和 tool-hook suggestion 聚合等 admin-only 逻辑；只对 selector/broadcaster 和少量运行时快照回调做依赖注入，避免反向依赖根包
-- provider 新建页使用 admin 只读元数据接口暴露 provider presets / capability templates / cliproxy 默认 endpoint；这类 UI 辅助元数据不进入 `config` 持久化模型
-- admin provider health/probe 请求继承当前 HTTP request context，并在其上叠加显式超时，避免用户关闭页面后检测任务仍在后台跑满固定 timeout
-- `internal/gateway/admin` 包内再按 `router/auth`、`config`、`status+logs+metrics`、`providers`、`routes`、`apikeys` 分文件组织；cliproxy auth 再拆成 handler、store、payload、usage、runtime、probe 多个文件，HTTP 边界、文件持久化、JSON 规范化、用量摘要和在线探测互不混放
-- `internal/gateway/httpmw` 子包承载 Recovery/CORS/API key 鉴权等通用 HTTP 中间件，避免根包继续混放基础 HTTP 基建
-- `internal/gateway/observe` 子包承载推理请求日志参数组装、SSE 响应日志归一化、tool call 解析与 hook 分发，避免根包继续混放响应观测逻辑
-- `internal/gateway/proxy` 子包承载透明代理 handler、proxy provider 选择和 proxy 请求日志拼装，避免 fallback path 继续把 provider 选择、auth retry 塞回根包
-- `internal/gateway/requestctx` 子包承载请求级 context 元数据读写，避免 API key、原始请求句柄和 route hooks 的上下文键继续散落在根包
-- `internal/gateway/telemetry` 子包承载 Prometheus collector、dashboard 时序存储、metrics helper，以及 admin-facing metrics/API-key 运行时快照组装
-- `internal/gateway/bridge` 子包承载 SSE relay 和 Chat/Responses/Messages 之间的流式桥接，避免协议流转换细节继续堆在根包 handler 中
-- `internal/gateway/inference` 子包承载 route-model 匹配、request path/body 到 service protocol 的分类、auth retry、failover trail 与当前 upstream target 状态，避免在 chat / responses / messages handler 内重复维护生命周期控制流
-- 当某个 route model 只剩 1 个未被手动抑制的候选 provider 时，请求级重试会绕过自动抑制窗口，不再把该 provider 排除出本次请求，避免单 provider 路由被自动抑制直接打死
-- `gateway` 根包内部再通过共享 inference session helper 统一 metric label 刷新、pending log 发布和 failover 后当前 target 切换，减少各协议入口重复脚手架代码
-- `gateway` 根包直接持有请求日志后端构建和 request attempt 日志辅助；这部分只被根运行时使用，继续拆成子包会增加目录噪声而不会形成可替换边界
-- 请求级重试路径会先检查下游 request context；客户端断开、取消或超时后，不再把包装过的 `context.Canceled` / `context.DeadlineExceeded` 误判为可重试网络错误，避免单请求在 provider retry/failover 分支里热循环
-- 上游 plain `400` 请求校验错误不会触发 failover；只有明确的容量、鉴权、支付/配额、模型不存在、非 JSON 网关错误和 5xx 等可恢复信号才会重试，其中上游 `402 Payment Required` 视为 provider 账号或配额状态错误并触发 failover。单请求内同一 provider 的兜底重试最多一次，避免唯一 provider 把确定性错误循环成客户端超时
-- route tool `post` hook 仍保留 route-scoped context value，但会脱离下游 request cancellation；否则异步审计 hook 会在 handler 返回后立即失效，行为退化成依赖 goroutine 调度时机
-- `gateway` 根包内部对 `responses_to_chat` / `anthropic_to_chat` / `anthropic_to_responses` 再复用共享 bridge helper，统一流式桥接重试、stream phase 记账和最终日志拼装；桥接开关读取自 provider 级配置
-- `gateway` 根包内部对 `chat` / 原生 `responses` 再复用共享 inference helper：非流式请求走一次性上游请求，流式请求优先走 live SSE relay，必要时回退到普通 JSON 响应，并统一准备、重试和日志写入
-- 上述 buffered / relay helper 在 failover 后不会把请求锁死在旧执行分支；provider 切换到 bridge-capable 实现时，会重新走对应 bridge handler
-- `internal/gateway/tokenusage` 子包承载 JSON / SSE token usage 解析与完整性归一化，避免 `telemetry` 再承担协议解析职责
-- `internal/gateway/telemetry` 子包承载 Prometheus collector、label helper、dashboard rolling store、最近请求 output rate tracker 和 admin-facing snapshot 组装
-- `internal/gateway/upstream` 子包承载协议 endpoint 映射、上游 HTTP 请求执行、请求/响应编解码、Accept-Encoding 协商和转发头清洗；根包不再直接持有 JSON/SSE upstream transport 细节
-- `internal/providerauth` 子包承载 provider 出站鉴权来源解析、协议鉴权头和静态 header 注入，避免 `selector` 同时承担 provider 选择和 HTTP credential 处理。鉴权来源解析顺序是静态 `api_key`、动态 `api_key_command`、再到 provider token layer（当前用于 Copilot OAuth）。解析失败会返回错误并进入请求级 auth retry/failover 边界。
-- `internal/reqlog/fingerprint` 子包承载请求体 fingerprint 提取与哈希构建，`internal/reqlog` 只保留日志记录/广播职责
-- admin metrics/API-key 回调直接指向 `internal/gateway/telemetry` 的 snapshot helper，根包删除了只做一层转发的包装方法，减少无意义的运行时胶水代码
-
-`Gateway.Close()` 负责：
-
-- 取消后台 context
-- 停止 Dashboard 采样
-- 关闭请求日志输出
+内部进一步分成多个子包：`admin`, `bridge`, `httpmw`, `inference`, `observe`, `proxy`, `requestctx`, `telemetry`, `tokenusage`, `upstream`
 
 ### 3. Selector Layer
 
 `internal/selector` 负责 provider 选择与状态维护：
 
 - 按 route 模型编译结果选择候选 provider
-- failover 的最小运行单元是单个 route model，不是整个 route
 - 管理 provider 抑制窗口与失败计数
 - 支持 failover
-- 自动抑制只参与多 provider 竞争；若手动抑制导致某个 route model 已无可用 provider，selector 会先解除其它候选 provider 的自动抑制，再按原优先级继续选择
 - 聚合 provider 状态供管理端展示
-- 维护 provider 协议展示检测结果与 `provider + format + model + protocol` 精确探测结果
-- provider 模型发现属于软失败路径；上游返回内部错误时日志做脱敏，不暴露原始 panic 细节，并对 `/models` 分页 cursor 做前进性保护，避免坏上游把后台刷新拖进无界循环
-- provider 模型发现请求继承 gateway 生命周期；reload/shutdown 后未完成的 `/models` 刷新会跟随 context 终止，而不是悬挂到各自网络超时结束
-- 包内按职责拆成 `select`、`state`、`models`、`errors`、`types` 多文件，避免继续把选择策略、状态机和模型发现堆在单文件中
-
-这里的设计原则是：路由决策与协议适配分离，避免在 handler 内部散落 provider 选择逻辑。
 
 ### 4. Protocol Layer
 
 `pkg/protocol/openai` 与 `pkg/protocol/anthropic` 负责：
 
 - 请求/响应结构定义
-- 流式事件解析（含标准 SSE `event` / `data` / `id` / `retry` 与注释帧）
+- 流式事件解析
 - OpenAI Chat / Responses 之间的协议转换
 - Anthropic 请求与事件的兼容处理
-- Chat ↔ Responses、Chat ↔ Messages 的流式桥接状态机，支持逐帧增量转换和流结束校验（如 `[DONE]`、`message_stop`）
-
-协议层只处理协议，不处理路由、探活、日志或 hook 决策。
 
 ### 5. Provider Token Layer
 
-`pkg/provider` 只负责 OAuth token 生命周期，不负责网络转发。
+`pkg/provider` 只负责 OAuth token 生命周期，不负责网络转发。当前支持 `copilot`：
 
-当前支持：
-
-- `copilot`：从本地 `hosts.json` / `apps.json` 读取 GitHub OAuth token，再交换短期 Copilot token
-
-设计决策：
-
-- token 管理与 HTTP 转发解耦
-- 不再支持远程凭证读取
-- 刷新后的凭证只回写本地文件
-- token refresh 网络请求受调用方 context 和显式超时约束，避免过期凭证在请求路径上触发无界阻塞
+- 从本地 `hosts.json` / `apps.json` 读取 GitHub OAuth token
+- 交换短期 Copilot token
 
 ### 6. Tool Hook Layer
 
@@ -236,14 +105,6 @@ Warden 主配置支持 TOML 和 YAML 两种文件格式。托管安装、示例�
 - `ai`：回调网关自身 route/model 做策略判断
 - `http`：调用 `config.webhook` 中定义的 webhook
 
-Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
-
-注意：
-
-- Warden 只观察模型返回的工具调用
-- Warden 不负责外部工具进程注册、发现或调用
-- 工具名仍可能带 `<prefix>__<name>` 命名空间，`MCPName` 只是名字拆分结果，不代表系统内仍有 MCP runtime
-
 ### 7. Logging and Metrics
 
 `internal/reqlog` 负责：
@@ -251,92 +112,34 @@ Hook 是 route-scoped 的，读取来源只有 `route.<prefix>.hooks`。
 - 文件 / HTTP 双后端日志输出
 - SSE 广播
 - 管理端日志流消费
-- 对流式推理请求先广播 `pending` 记录，再在完成时用同一 `request_id` 覆盖为最终记录，避免管理端日志页只能在长流结束后才看到请求
-- **session 级去重**：同一会话的多轮请求（`Route + Fingerprint[:6]` sysHash 相同）在内存广播器和文件日志中只保留最新一条完整记录，旧记录被覆盖；内存广播器再按 route 只保留最近 20 个 session，避免单路由长会话把日志页和 SSE 初始回放撑大
-- 记录请求体，以及可解析时记录解压后的响应体（透明代理的 `gzip/br/zstd` 响应会先解压再落日志）
-- 对同一客户端请求内发生的 failover 记录切换轨迹，保留失败 provider、下一跳 provider 与触发错误
-- 最终请求日志会附带 `token_usage` 观测结果（prompt/completion/cache/source/completeness）；其中 `cache` 记录 provider 返回的 cache 相关 token 明细，便于把请求 token、响应 token、cache token 分开看
-- HTTP 日志后端在 shutdown 时会取消 in-flight 请求并停止消费剩余队列，避免关闭阶段被日志发送重试拖住
-- `reqlog` 包内按 `types`、`record sanitize/id`、`backend`、`broadcast` 分文件组织；请求体 fingerprint 算法独立在 `internal/reqlog/fingerprint`
 
-Prometheus 指标与 Dashboard rolling store 由 `internal/gateway/telemetry` 维护，`internal/gateway` 根包负责把这些数据装配成 admin API 输出。Dashboard 读取两类数据：
+`internal/gateway/telemetry` 负责：
 
-- 即时聚合指标
-- 内存中的滚动时间序列
-
-这样做避免前端直接处理累积 counter 差分。
-
-当前 token 观测策略额外约束：
-
-- `*_tokens_total` 和吞吐指标只累计 `exact` usage 观测
-- `exact|partial|missing` coverage 通过独立 `*_token_observations_total` counter 暴露
-- OpenAI Chat / Responses 与 Anthropic 流式 usage 由协议级解析得到，不再依赖最终日志响应体反推
-- Provider 级别指标增加 `provider_format` label，标识实际使用的 format（例如 `openai`、`anthropic`）
+- Prometheus collector
+- Dashboard rolling store
 
 ### 8. Admin UI
 
-`web/admin` 是嵌入式 Vue 3 控制台，提供：
-
-- Dashboard
-- Providers
-- Routes
-- Tool Hooks
-- Logs
-- Chat
-- Config
-
-其中 `Logs` 页面采用“左侧 route/session 树 + 右侧日志表 + 详情弹层”的排障结构：左侧按 route 分组后，再按 session fingerprint 前缀组织成树状浏览；点击 route 过滤右侧日志，点击 fingerprint 前缀节点进一步缩小到该前缀范围；右侧在日志表前增加 scope 摘要条，显式呈现当前 route / 时间范围 / 请求数；后端只保留每个 route 最近 20 个 session，前端本地流同步执行同样裁剪；由于去重后每条记录自然平铺，不再需要 session 展开/折叠交互；详情弹层拆成摘要、会话过程和响应结果三段，避免把实时列表和请求排查混在同一平面里。详情面板的实时更新只追加到尾部，不能因为新 token 或同一请求最终记录覆盖而重置用户阅读位置；用户停在详情尾部附近时才自动跟随到最新内容。
-
-管理端只消费当前后端暴露的能力；不再展示 MCP / SSH 页面与配置区块。
-
-配置编辑的当前边界：
-
-- `Providers` 页面负责单个 provider 配置编辑
-- provider 配置页采用“连接信息优先 + 能力声明”模型：先填名称、URL、认证来源、proxy、headers，再选择原生格式（默认 `openai`）和协议能力（chat / responses / embeddings / anthropic）。桥接开关在 provider 级展示。`access` 作为可选折叠分组，只在需要多 endpoint 时展开。保存时写回 `provider.*.format` + `provider.*.protocols` + 桥接开关，不再写 `family` / `protocol` / provider 级 `service_protocols` / 旧 `access.*.enabled`。认证来源在静态 API Key、命令、无认证之间显式选择，Copilot 额外支持配置目录。cliproxy 预设固定使用 CLIProxyAPI auth_dir，要求 `format = "openai"`，默认 chat-only。
-- `provider.models` 在管理端中被定义为 provider 可用模型的静态基线与发现失败兜底，并复用运行时已发现模型作为录入建议来源；它不负责声明 route 对外公开模型面
-- `Providers` 页面支持两类协议探测：
-  - provider 级轻量检测，按 `format` 分别探测 endpoint 可达性
-  - `provider + format + model + protocol` 精确探测，用于确认某个模型在特定 format 下是否真实可跑某个协议
-- 管理端 provider 数据把 `configured_protocols` / `supported_protocols` 作为静态配置真相，把 `display_protocols` 作为轻量探测展示值；两者不能混用
-- `Routes` 页面负责 route 配置编辑，包括 `exact_models` / `wildcard_models`
-- `Routes` 页面必须先锁定 `route.protocol`，模型映射不再自带 `protocols` 分支
-- route 编辑器里的 exact upstream model 建议会合并 `provider.models` 静态基线与当前运行时 `/models` 发现结果
-- route 编辑器中的模型卡片采用左右分栏；当前 route 下所有模型都遵守同一个协议约束
-- route 编辑器里的 exact upstream 列表默认按单行紧凑表格式排布，优先保证 provider / model 输入的横向连续性，窄屏再折行
-- route 详情页采用高信息密度工作台布局：顶部概览展示聚合运行态，左侧主列先单列依次展示 exact / wildcard model 摘要再进入编辑区，右侧摘要轨承接 provider 运行状态
-- route 详情页上半区的 exact / wildcard 摘要表直接镜像当前可编辑配置，两个摘要区一排一个避免横向拥挤；exact model 行提供“编辑 / 删除”入口，wildcard model 行展示 selector 已发现或已观测的具体模型名，并用固定高度 chip 区域避免长列表撑高页面
-- provider 运行数据不再单独占据底部大表，而是拆入顶部概览和右侧 provider 摘要卡片，减少监控视线往返
-- 路由管理页里的自定义 combobox / tag suggestion 组件需要保留键盘导航和基础 ARIA 状态，不能只服务鼠标路径
-- route model 的额外 system prompt 由 `prompt_enabled` 显式控制；UI 把开关放在模型主信息旁边，只有启用后才展开输入框；后端只在 `prompt_enabled=true` 且 `system_prompt` 非空时注入
-- `Providers` 页面卡片可以直接发起“基于当前 provider 模型创建 route”；该入口会用 provider 的已配置/已发现模型预填 `exact_models`，并为新 route 预选单个协议
-- route hooks 的主编辑入口是 `Tool Hooks` 页面
-- `Config` 页面承载通用配置、客户端 API 密钥、webhook 与日志目标编辑
-- `Config` 页面不承载 provider / route / hook 编辑
-- `Chat` 页面按 `route.protocol` 选择请求协议：`chat -> /chat/completions`、`responses -> /responses`、`anthropic -> /messages`；管理端发起的 Responses 请求必须显式携带 `store=false`，避免本地 Codex/CLIProxy 后端拒绝缺省存储语义
-- `Chat` 页面在 `responses` route 下会把返回的 `response.id` 保存在本地会话里，并在下一轮请求带上 `previous_response_id`；网关识别到 `previous_response_id` 后会进入透明转发路径,不维护服务端状态
-- `Logs` 页面在整合会话时，优先使用 Responses 请求中的 `previous_response_id -> response.id` 显式关联；没有显式关联时只在同 route 下退回 fingerprint 前缀做保守归并，不再使用旧的 prompt 哈希 + 时间窗启发式，避免把独立请求误并成同一 session
-- `Logs` 页面按 `request_id` upsert SSE 事件，因此流式请求会先显示“进行中”，完成后在同一行补全 duration/response
-- 前端本地存储同样引入 session 级去重（`Route + Fingerprint[:6]`），与后端 broadcaster 行为一致，保证长会话不会撑满前端日志数组
+`web/admin` 是嵌入式 Vue 3 控制台，提供 Dashboard, Providers, Routes, Tool Hooks, Logs, Chat, Config 等页面。
 
 ## Request Flow
 
 ### Chat / Responses Request
 
 1. 命中 route
-2. 若命中 route 且配置了 `route.api_keys`，先校验客户端 API Key
+2. 若配置了 `route.api_keys`，先校验客户端 API Key
 3. 解析请求中的公开模型名
 4. 根据 route 编译结果选择 upstream provider/model
 5. 构造上游请求，并按需做协议桥接或 system prompt 注入
-6. 转发到 upstream；客户端 API Key 头不会透传给 provider
-7. 解析响应中的工具调用
-8. 对命中的 tool call 执行 route hook
-9. 记录日志、更新指标、返回客户端
+6. 转发到 upstream
+7. 解析响应中的工具调用，执行 route hook
+8. 记录日志、更新指标、返回客户端
 
 ### Transparent Proxy Request
 
 1. 按 route 前缀匹配
-2. 若命中 route 且配置了 `route.api_keys`，先校验客户端 API Key
-3. 对已识别的推理端点做 route protocol 约束检查；未识别的非推理子路径保持透明透传
+2. 若配置了 `route.api_keys`，校验客户端 API Key
+3. 对已识别的推理端点做 route protocol 约束检查
 4. 复制请求头并清洗 hop-by-hop / 客户端认证头
 5. 注入 provider 认证头和 `X-Forwarded-*`
 6. 转发到 upstream
@@ -348,96 +151,48 @@ Prometheus 指标与 Dashboard rolling store 由 `internal/gateway/telemetry` �
 
 路由是外部 API 面；provider 只是内部能力来源。
 
-因此：
-
 - 外部暴露什么模型，由 `route.exact_models` 和 `route.wildcard_models` 决定
 - 上游真实模型名，由 `upstreams[].model` 决定
 - 通配符模型只决定 provider 候选集合，不改写请求模型名
-- 对于 wildcard route，运行时一旦把请求模型解析到具体 provider target，就会把该模型记入 route `/models` 可见集合；即使后续上游请求失败，也不会丢失这条已命中的公开模型信息
-- route `/models` 返回体同时保留 OpenAI-compatible `data` 和 Codex CLI catalog 兼容的 `models`，两者来自同一个公开模型集合
-- 一个配置中的单独 public model 可以通过多个 ordered upstream/provider 获得独立 failover，从而提供该模型自己的 HA，而不会把整个 route 绑成一个统一故障域
 
 ### Route Protocol Exposure
 
-route 对外暴露哪些协议面，默认由 `route.protocol` 推导；如果配置了 `route.service_protocols`，则以该字段作为显式服务接口集合，且不对不受支持的显式接口做静默裁剪。
-
 - `chat` 暴露 `/chat/completions`；当 route 至少包含一个支持 embeddings 的 upstream/provider 时，额外暴露 `/embeddings`
-- `responses` 暴露 `/responses`,同时承接无状态请求和带 `previous_response_id` 的有状态请求,后者直接落入透明转发链路;当 route 至少包含一个支持 embeddings 的 upstream/provider 时，额外暴露 `/embeddings`
-- `anthropic` 暴露 `/messages`；当 route 至少包含一个支持 embeddings 的 upstream/provider 时，额外暴露 `/embeddings`
-- 运行时路由只依赖 `route.protocol + route model` 配置，不依赖 provider 卡片上的展示协议
-- provider 协议能力由 `format` + `protocols` + 桥接开关决定：`format = "openai"` 默认支持 `chat + responses + embeddings`，`anthropic_to_chat = true` 时额外支持 `anthropic`；`format = "anthropic"` 默认支持 `chat + anthropic`，`anthropic_to_responses = true` 时额外支持 `responses`；`copilot` 固定支持 `chat`
-- 兼容 OpenAI 报文的第三方上游（例如 Ollama）统一配置为 `access.openai`；如果只支持聊天接口，必须显式收窄为 `service_protocols = ["chat"]`
-- CLIProxyAPI/cliproxy 这类本地 provider 执行器统一作为 `format = "openai"` 的 OpenAI-compatible backend 接入；`backend: cliproxy` / `backend_provider: codex` 只是记录上游实现
-- 如果启用 `cliproxy.enabled`，Warden 只管理嵌入式 cliproxy 服务生命周期；请求仍按普通 OpenAI-compatible provider URL 走 HTTP，避免把 cliproxy executor 直接混入 gateway 选择器
-- cliproxy backend 的默认隐匿边界只处理 HTTP 头和嵌入式 CLIProxyAPI 配置，不在 Warden 内复制 sub2api 的 TLS 指纹模拟、隐私 API 自动调用或响应头 allowlist；这些能力属于 CLIProxyAPI/上游执行器或后续独立安全层
-- `responses_to_chat` 只对无状态 Responses 请求生效；带 `previous_response_id` 的有状态请求会绕过桥接,直接进入透明转发,失败时不做 failover
-- `/embeddings` 是额外 service protocol，不是新的 `route.protocol`；所有 route 上都统一使用 OpenAI-compatible JSON，请求/响应形状不引入 Anthropic 专有版本。网关只校验 `model` 和 `input`，并原样代理 OpenAI 标准字段与 provider 扩展字段，例如字符串、字符串数组、token 数组、token 数组列表、`encoding_format`、`dimensions`、`user`、`input_type`
-- `responses_to_chat` 只接受受控的 stateless Chat 兼容子集；不支持的 Responses 专有字段、非 `function` tools、未知 input item 在入口直接拒绝，不做 mock passthrough；兼容层会显式把 `max_output_tokens` 映射为 `max_completion_tokens`，校验/规范化 `tool_choice`，并允许 `function_call_output.output` 使用非字符串 JSON 值
-- `responses_to_chat` 的 `instructions` 默认映射为首条 `developer` message；如果上游以 `400` 明确拒绝 `developer` role，bridge 会在同一 provider 上自动降级重试为 `system`
-- `responses_to_chat` 的 Chat SSE -> Responses SSE 转换会补齐生命周期事件和关联元数据（如 `response.created` / `response.in_progress` / `response.output_item.done` / `output_index` / `item_id`），并在 done 事件中携带最终 item 快照，以提高对官方 SDK 状态机的兼容性
-- `responses_to_chat` 在 Chat -> Responses 回写阶段会把 Chat `usage` 规范化为 Responses 风格的 `input_tokens` / `output_tokens`（并映射 `*_tokens_details`），同时把 Chat `finish_reason` 映射为 Responses `status` / `incomplete_details`
-- `anthropic_to_chat` 只对 `route.protocol=anthropic` 的 `/messages` 请求生效；网关会把受控 Messages 子集转换为上游 Chat 请求，并把 Chat JSON / SSE 再转回 Anthropic Messages 形状
-- `anthropic_to_chat` 明确不支持非文本 content block、`tool_result` 与普通 user text 混合块、以及未映射的 Anthropic 专有字段；这些请求在入口直接 `400`
+- `responses` 暴露 `/responses`
+- `anthropic` 暴露 `/messages`
 
 ### Hook Boundary Instead of Tool Runtime
 
-旧设计把网关推进到了工具运行时管理层，这导致：
-
-- 责任边界模糊
-- 管理面板与配置复杂度膨胀
-- 对非工具路径没有收益，却引入大量额外故障面
-
-当前设计收缩为“只观察和审计工具调用”。这是更稳的边界。
+旧设计把网关推进到了工具运行时管理层。当前设计收缩为"只观察和审计工具调用"。
 
 ### Local-Only Credential Access
 
-OAuth 凭证读取现在只走本地文件：
-
-- 配置更简单
-- 校验路径更直
-- 失败模式更可预测
-- 避免 SSH 带来的外部依赖和隐式环境耦合
+OAuth 凭证读取现在只走本地文件，简化配置和失败模式。
 
 ## Admin API Surface
 
-当前管理端关键接口：
+关键接口：
 
-- `GET /_admin/api/status`
-- `GET /_admin/api/config/source`
-- `GET /_admin/api/config`
-- `PUT /_admin/api/config`
-- `POST /_admin/api/config/validate`
-- `POST /_admin/api/restart`
-- `GET /_admin/api/providers/detail`（返回 `format` + `protocols` + 可选 `access` 覆盖）
-- `POST /_admin/api/providers/health`
-- `POST /_admin/api/providers/suppress`
-- `POST /_admin/api/providers/probe-access`（按 format 探测）
-- `GET /_admin/api/routes/detail`
-- `GET /_admin/api/tool-hooks/suggestions`
-- `GET /_admin/api/logs/stream`
-- `GET /_admin/api/metrics/stream`
-- `GET|POST|DELETE /_admin/api/apikeys`
+- `GET /_admin/api/status` - 系统状态
+- `GET /_admin/api/config/source` - 配置文件路径
+- `GET /_admin/api/config` - 配置内容
+- `PUT /_admin/api/config` - 更新配置
+- `POST /_admin/api/config/validate` - 校验配置
+- `POST /_admin/api/restart` - 重启服务
+- `GET /_admin/api/providers/detail` - Provider 详情
+- `POST /_admin/api/providers/health` - 健康检查
+- `POST /_admin/api/providers/suppress` - 手动抑制
+- `POST /_admin/api/providers/probe-access` - 协议探测
+- `GET /_admin/api/routes/detail` - Route 详情
+- `GET /_admin/api/tool-hooks/suggestions` - Hook 建议
+- `GET /_admin/api/logs/stream` - 日志流
+- `GET /_admin/api/metrics/stream` - 指标流
 
-`/_admin/api/mcp/*` 已移除。
+## Related Documentation
 
-Admin SSE 接口统一返回 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache, no-transform`，并在日志流建立后立即发送注释帧/空闲心跳，减少反向代理对小包 SSE 的缓冲延迟。
-
-## Document Map
-
-当前专题文档：
-
-- [docs/responses-protocol-support.md](./docs/responses-protocol-support.md)：`responses` 协议的实现边界,包括 inference 与透明转发的分发规则,以及 `responses_to_chat` 桥接
-- [docs/provider.md](./docs/provider.md)：provider 子系统配置模型、接入方式和探测规则
-- [docs/anthropic-messages-to-chat-plan.md](./docs/anthropic-messages-to-chat-plan.md)：`anthropic_to_chat` 的桥接边界
-- [docs/api-key-design.md](./docs/api-key-design.md)：客户端 API Key 与敏感信息编码方案
-
-## Build Notes
-
-- `Makefile` 是统一入口
-- 当前 Go 版本要求为 1.26；该要求来自嵌入式 CLIProxyAPI/cliproxy SDK 依赖
-- `make web` 使用 Bun 安装前端依赖并构建静态资源
-- `make build` 使用 `ldflags` 注入版本与构建日期
-- `make test` 运行 `go vet` 与 `go test`
-- `make package` 交叉编译 release 归档，供 GitHub tag 发布流程上传到 GitHub Release
-- `.github/workflows/ci.yml` 对普通 `push` / `pull_request` 只做编译与测试；tag push 在校验通过后发布 release
-- 启动时配置加载仍走 `feconf`，但会覆盖默认 decode hook，避免上游默认值 hook 将显式 `false` 误判为零值并在 `prompt_enabled: false` 这类 `*bool` 字段上触发解码 panic
+- [README.md](./README.md) - 项目入口、运行方式和最小使用示例
+- [OPERATIONS.md](./OPERATIONS.md) - 部署配置、运维规范、平台差异
+- [docs/README.md](./docs/README.md) - 专题文档索引
+- [config/README.md](./config/README.md) - 配置模型和校验规则
+- [docs/provider.md](./docs/provider.md) - Provider 子系统配置模型
+- [docs/responses-protocol-support.md](./docs/responses-protocol-support.md) - `responses` 协议实现边界
