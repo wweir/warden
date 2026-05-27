@@ -101,11 +101,15 @@ function extractReasoningContent(msg) {
 	if (typeof msg.reasoning_content === "string") {
 		return msg.reasoning_content;
 	}
+	if (typeof msg.reasoningContent === "string") return msg.reasoningContent;
+	if (typeof msg.reasoning === "string") return msg.reasoning;
+	if (typeof msg.thinking === "string") return msg.thinking;
+	if (msg.type === "reasoning") return extractResponsesReasoningText(msg);
 	// Handle thinking block in content array (some providers)
 	if (Array.isArray(msg.content)) {
 		const thinkingBlocks = msg.content.filter((b) => b?.type === "thinking");
 		if (thinkingBlocks.length > 0) {
-			return thinkingBlocks.map((b) => b.text || b.content || "").filter(Boolean).join("\n");
+			return thinkingBlocks.map((b) => b.text || b.thinking || b.content || "").filter(Boolean).join("\n");
 		}
 	}
 	return "";
@@ -350,23 +354,22 @@ function extractAssembledText(log) {
 	if (resp.choices && Array.isArray(resp.choices) && resp.choices.length > 0) {
 		const msg = resp.choices[0].message || resp.choices[0].delta;
 		if (msg) {
+			const reasoning = extractReasoningContent(msg);
 			const content = msg.content;
 			if (typeof content === "string") {
-				if (msg.reasoning_content) {
-					return "[reasoning] " + msg.reasoning_content + "\n" + content;
+				if (reasoning) {
+					return "[reasoning] " + reasoning + "\n" + content;
 				}
 				return content;
 			}
 			if (Array.isArray(content)) {
-				const textContent = content
-					.filter((p) => p.type === "text")
-					.map((p) => p.text)
-					.join("");
-				if (msg.reasoning_content) {
-					return "[reasoning] " + msg.reasoning_content + "\n" + textContent;
+				const textContent = extractTextParts(content);
+				if (reasoning) {
+					return "[reasoning] " + reasoning + "\n" + textContent;
 				}
 				return textContent;
 			}
+			if (reasoning) return "[reasoning] " + reasoning;
 		}
 	}
 	if (resp.content && Array.isArray(resp.content)) {
@@ -382,11 +385,8 @@ function extractAssembledText(log) {
 			}
 			// Handle reasoning item in Responses API
 			if (item.type === "reasoning") {
-				const summary = item.summary;
-				if (Array.isArray(summary)) {
-					const text = summary.map((s) => s.text || "").join("\n");
-					if (text) parts.push("[reasoning] " + text);
-				}
+				const text = extractResponsesReasoningText(item);
+				if (text) parts.push("[reasoning] " + text);
 				continue;
 			}
 			if (item.type === "message" && Array.isArray(item.content)) {
@@ -399,6 +399,27 @@ function extractAssembledText(log) {
 		if (parts.length) return parts.join("\n");
 	}
 	return formatJSON(resp);
+}
+
+function extractResponsesReasoningText(item) {
+	if (typeof item?.content === "string") return item.content;
+	if (Array.isArray(item?.content)) {
+		const text = item.content
+			.map((part) => {
+				if (typeof part === "string") return part;
+				if (!part || typeof part !== "object") return "";
+				if (["reasoning_text", "summary_text", "text"].includes(part.type) && typeof part.text === "string") return part.text;
+				if (typeof part.text === "string") return part.text;
+				return "";
+			})
+			.filter(Boolean)
+			.join("\n");
+		if (text) return text;
+	}
+	if (Array.isArray(item?.summary)) {
+		return item.summary.map((s) => s?.text || "").filter(Boolean).join("\n");
+	}
+	return "";
 }
 
 function parseResponseBody(response) {
