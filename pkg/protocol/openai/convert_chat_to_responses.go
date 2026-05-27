@@ -47,6 +47,9 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 
 	choice := chatResp.Choices[0]
 	msg := choice.Message
+	if msg.ReasoningContent == "" {
+		msg.ReasoningContent = chatMessageReasoningContent(msg)
+	}
 	var dsmlCalls []dsmlToolCall
 	content := extractThinkFromContent(msg.Content, &msg.ReasoningContent)
 
@@ -54,7 +57,7 @@ func ChatResponseToResponsesResponse(chatResp ChatCompletionResponse, model stri
 		item := map[string]any{
 			"type":    "reasoning",
 			"id":      makeReasoningItemID(chatResp.ID),
-			"content": msg.ReasoningContent,
+			"content": makeReasoningContent(msg.ReasoningContent),
 			"summary": makeReasoningSummary(msg.ReasoningContent),
 		}
 		raw, err := json.Marshal(item)
@@ -375,6 +378,39 @@ func makeReasoningSummary(content string) []any {
 	}}
 }
 
+func makeReasoningContent(content string) []any {
+	if content == "" {
+		return []any{}
+	}
+	return []any{map[string]any{
+		"type": "reasoning_text",
+		"text": content,
+	}}
+}
+
+func chatMessageReasoningContent(msg Message) string {
+	if msg.ReasoningContent != "" {
+		return msg.ReasoningContent
+	}
+	for _, key := range []string{"reasoningContent", "reasoning", "thinking"} {
+		if value := stringFromRawMessage(msg.Extra[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringFromRawMessage(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
 func makeReasoningItemID(responseID string) string {
 	if responseID != "" {
 		return responseID + "_rs_0"
@@ -461,7 +497,7 @@ func (s *ChatResponsesStreamState) ConvertEvent(evt protocol.Event) ([]byte, err
 				"item": map[string]any{
 					"id":      s.reasoningItemID,
 					"type":    "reasoning",
-					"content": s.reasoningContent,
+					"content": makeReasoningContent(s.reasoningContent),
 					"summary": makeReasoningSummary(s.reasoningContent),
 				},
 			}))
@@ -602,7 +638,7 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 					"item": map[string]any{
 						"id":      s.reasoningItemID,
 						"type":    "reasoning",
-						"content": s.reasoningContent,
+						"content": makeReasoningContent(s.reasoningContent),
 						"summary": makeReasoningSummary(s.reasoningContent),
 					},
 				}))
@@ -653,7 +689,7 @@ func (s *ChatResponsesStreamState) finalizeOutputEvents() []string {
 			"item": map[string]any{
 				"id":      s.reasoningItemID,
 				"type":    "reasoning",
-				"content": s.reasoningContent,
+				"content": makeReasoningContent(s.reasoningContent),
 				"summary": makeReasoningSummary(s.reasoningContent),
 			},
 		}))
@@ -856,7 +892,7 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 						"item": map[string]any{
 							"id":      s.reasoningItemID,
 							"type":    "reasoning",
-							"content": s.reasoningContent,
+							"content": makeReasoningContent(s.reasoningContent),
 							"summary": makeReasoningSummary(s.reasoningContent),
 						},
 					}))
@@ -881,7 +917,7 @@ func (s *ChatResponsesStreamState) processThinkTags(text string, responseChunks 
 					"item": map[string]any{
 						"id":      s.reasoningItemID,
 						"type":    "reasoning",
-						"content": s.reasoningContent,
+						"content": makeReasoningContent(s.reasoningContent),
 						"summary": makeReasoningSummary(s.reasoningContent),
 					},
 				}))

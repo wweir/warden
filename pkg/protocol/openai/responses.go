@@ -204,6 +204,22 @@ type FunctionCallOutputItem struct {
 	Output json.RawMessage `json:"output"`
 }
 
+// CustomToolCallItem represents a custom tool call item in the Responses API.
+type CustomToolCallItem struct {
+	Type   string `json:"type"` // "custom_tool_call"
+	CallID string `json:"call_id"`
+	Name   string `json:"name"`
+	Input  string `json:"input"`
+}
+
+// CustomToolCallOutputItem represents a custom tool call output item in the Responses API.
+type CustomToolCallOutputItem struct {
+	Type   string          `json:"type"` // "custom_tool_call_output"
+	CallID string          `json:"call_id"`
+	Name   string          `json:"name,omitempty"`
+	Output json.RawMessage `json:"output"`
+}
+
 // ResponsesFunctionTool represents a function tool definition
 // in the Responses API flat format.
 type ResponsesFunctionTool struct {

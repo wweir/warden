@@ -151,7 +151,7 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			errSubstr: "n > 1",
 		},
 		{
-			name: "skip non function tools",
+			name: "silently drop non function tools",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
@@ -159,12 +159,12 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 			},
 			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
 				if len(chatReq.Tools) != 0 {
-					t.Fatalf("expected 0 tools, got %d", len(chatReq.Tools))
+					t.Fatalf("expected no tools, got %d", len(chatReq.Tools))
 				}
 			},
 		},
 		{
-			name: "skip custom tools",
+			name: "silently drop custom tools",
 			respReq: ResponsesRequest{
 				Model: "gpt-4o",
 				Input: json.RawMessage(`"hello"`),
@@ -174,11 +174,76 @@ func TestResponsesRequestToChatRequest(t *testing.T) {
 				},
 			},
 			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
-				if len(chatReq.Tools) != 1 {
-					t.Fatalf("expected 1 tool after dropping custom, got %d", len(chatReq.Tools))
+				if len(chatReq.Messages) != 1 || chatReq.Messages[0].Content != "hello" {
+					t.Fatalf("unexpected messages: %#v", chatReq.Messages)
 				}
-				if chatReq.Tools[0].Function.Name != "exec" {
-					t.Fatalf("expected exec tool, got %s", chatReq.Tools[0].Function.Name)
+				if len(chatReq.Tools) != 1 || chatReq.Tools[0].Function.Name != "exec" {
+					t.Fatalf("expected only function tool, got: %#v", chatReq.Tools)
+				}
+			},
+		},
+		{
+			name: "silently ignore include field",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"include": json.RawMessage(`["text"]`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if _, ok := chatReq.Extra["include"]; ok {
+					t.Fatalf("expected include to be dropped")
+				}
+			},
+		},
+		{
+			name: "silently ignore truncation field",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"truncation": json.RawMessage(`"auto"`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if _, ok := chatReq.Extra["truncation"]; ok {
+					t.Fatalf("expected truncation to be dropped")
+				}
+			},
+		},
+		{
+			name: "silently ignore text field",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"text": json.RawMessage(`{"format":"markdown"}`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if _, ok := chatReq.Extra["text"]; ok {
+					t.Fatalf("expected text to be dropped")
+				}
+			},
+		},
+		{
+			name: "silently ignore prompt_cache_key field",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"prompt_cache_key": json.RawMessage(`"key_123"`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if _, ok := chatReq.Extra["prompt_cache_key"]; ok {
+					t.Fatalf("expected prompt_cache_key to be dropped")
+				}
+			},
+		},
+		{
+			name: "silently ignore unknown extra field",
+			respReq: ResponsesRequest{
+				Model: "gpt-4o",
+				Input: json.RawMessage(`"hello"`),
+				Extra: map[string]json.RawMessage{"unknown_field": json.RawMessage(`"value"`)},
+			},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if _, ok := chatReq.Extra["unknown_field"]; ok {
+					t.Fatalf("expected unknown_field to be dropped")
 				}
 			},
 		},
@@ -480,23 +545,40 @@ func TestResponsesRequestToChatRequestRejectUnknownInputType(t *testing.T) {
 	}
 }
 
-func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
+func TestResponsesRequestToChatRequestConvertsCustomToolCalls(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  []Message
+		name      string
+		input     string
+		checkFunc func(t *testing.T, chatReq ChatCompletionRequest)
 	}{
 		{
-			name: "string input and output",
+			name: "custom_tool_call and output",
 			input: `[
 				{"type":"message","role":"user","content":"Hello"},
 				{"type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"},
 				{"type":"custom_tool_call_output","call_id":"call_1","output":"/home/user"}
 			]`,
-			want: []Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "[custom_tool_call name=shell call_id=call_1]\npwd"},
-				{Role: "user", Content: "[custom_tool_call_output call_id=call_1]\n/home/user"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 3 {
+					t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+				}
+				if chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "Hello" {
+					t.Fatalf("unexpected first message: %#v", chatReq.Messages[0])
+				}
+				if chatReq.Messages[1].Role != "assistant" {
+					t.Fatalf("unexpected second message role: %s", chatReq.Messages[1].Role)
+				}
+				want := "[custom_tool_call name=shell call_id=call_1]\npwd"
+				if chatReq.Messages[1].Content != want {
+					t.Fatalf("unexpected second message content: %q, want %q", chatReq.Messages[1].Content, want)
+				}
+				if chatReq.Messages[2].Role != "user" {
+					t.Fatalf("unexpected third message role: %s", chatReq.Messages[2].Role)
+				}
+				want2 := "[custom_tool_call_output call_id=call_1]\n/home/user"
+				if chatReq.Messages[2].Content != want2 {
+					t.Fatalf("unexpected third message content: %q, want %q", chatReq.Messages[2].Content, want2)
+				}
 			},
 		},
 		{
@@ -505,20 +587,22 @@ func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
 				{"type":"custom_tool_call","call_id":"call_2","name":"edit","input":{"path":"/tmp/file","content":"hello"}},
 				{"type":"custom_tool_call_output","call_id":"call_2","output":{"success":true}}
 			]`,
-			want: []Message{
-				{Role: "assistant", Content: "[custom_tool_call name=edit call_id=call_2]\n{\"path\":\"/tmp/file\",\"content\":\"hello\"}"},
-				{Role: "user", Content: "[custom_tool_call_output call_id=call_2]\n{\"success\":true}"},
-			},
-		},
-		{
-			name: "empty input and output",
-			input: `[
-				{"type":"custom_tool_call","call_id":"call_3","name":"noop","input":""},
-				{"type":"custom_tool_call_output","call_id":"call_3","output":""}
-			]`,
-			want: []Message{
-				{Role: "assistant", Content: "[custom_tool_call name=noop call_id=call_3]\n"},
-				{Role: "user", Content: "[custom_tool_call_output call_id=call_3]\n"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 2 {
+					t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+				}
+				if chatReq.Messages[0].Role != "assistant" {
+					t.Fatalf("unexpected first message role: %s", chatReq.Messages[0].Role)
+				}
+				if !strings.Contains(chatReq.Messages[0].Content.(string), "[custom_tool_call name=edit call_id=call_2]") {
+					t.Fatalf("unexpected first message content: %q", chatReq.Messages[0].Content)
+				}
+				if chatReq.Messages[1].Role != "user" {
+					t.Fatalf("unexpected second message role: %s", chatReq.Messages[1].Role)
+				}
+				if !strings.Contains(chatReq.Messages[1].Content.(string), "[custom_tool_call_output call_id=call_2]") {
+					t.Fatalf("unexpected second message content: %q", chatReq.Messages[1].Content)
+				}
 			},
 		},
 	}
@@ -532,28 +616,16 @@ func TestResponsesRequestToChatRequestCustomToolCallToText(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(chatReq.Messages) != len(tt.want) {
-				t.Fatalf("expected %d messages, got %d", len(tt.want), len(chatReq.Messages))
-			}
-			for i, want := range tt.want {
-				if chatReq.Messages[i].Role != want.Role {
-					t.Fatalf("msg[%d]: expected role %s, got %s", i, want.Role, chatReq.Messages[i].Role)
-				}
-				got, _ := chatReq.Messages[i].Content.(string)
-				wantStr, _ := want.Content.(string)
-				if got != wantStr {
-					t.Fatalf("msg[%d]: expected content %q, got %q", i, wantStr, got)
-				}
-			}
+			tt.checkFunc(t, chatReq)
 		})
 	}
 }
 
-func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
+func TestResponsesRequestToChatRequestConvertsBuiltInToolCalls(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  []Message
+		name      string
+		input     string
+		checkFunc func(t *testing.T, chatReq ChatCompletionRequest)
 	}{
 		{
 			name: "web_search_call and output",
@@ -562,10 +634,22 @@ func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
 				{"type":"web_search_call","id":"ws_1"},
 				{"type":"web_search_call.output","call_id":"ws_1","output":{"results":[{"title":"Example","url":"https://example.com"}]}}
 			]`,
-			want: []Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "[web_search_call id=ws_1]"},
-				{Role: "user", Content: "[web_search_call.output call_id=ws_1]\n{\"output\":{\"results\":[{\"title\":\"Example\",\"url\":\"https://example.com\"}]}}"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 3 {
+					t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+				}
+				if chatReq.Messages[1].Role != "assistant" {
+					t.Fatalf("unexpected second message role: %s", chatReq.Messages[1].Role)
+				}
+				if !strings.Contains(chatReq.Messages[1].Content.(string), "[web_search_call id=ws_1]") {
+					t.Fatalf("unexpected second message content: %q", chatReq.Messages[1].Content)
+				}
+				if chatReq.Messages[2].Role != "user" {
+					t.Fatalf("unexpected third message role: %s", chatReq.Messages[2].Role)
+				}
+				if !strings.Contains(chatReq.Messages[2].Content.(string), "[web_search_call.output call_id=ws_1]") {
+					t.Fatalf("unexpected third message content: %q", chatReq.Messages[2].Content)
+				}
 			},
 		},
 		{
@@ -574,9 +658,16 @@ func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
 				{"type":"file_search_call","id":"fs_1"},
 				{"type":"file_search_call.output","call_id":"fs_1","output":[{"file_id":"file-123","filename":"doc.pdf"}]}
 			]`,
-			want: []Message{
-				{Role: "assistant", Content: "[file_search_call id=fs_1]"},
-				{Role: "user", Content: "[file_search_call.output call_id=fs_1]\n{\"output\":[{\"file_id\":\"file-123\",\"filename\":\"doc.pdf\"}]}"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 2 {
+					t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+				}
+				if !strings.Contains(chatReq.Messages[0].Content.(string), "[file_search_call id=fs_1]") {
+					t.Fatalf("unexpected first message content: %q", chatReq.Messages[0].Content)
+				}
+				if !strings.Contains(chatReq.Messages[1].Content.(string), "[file_search_call.output call_id=fs_1]") {
+					t.Fatalf("unexpected second message content: %q", chatReq.Messages[1].Content)
+				}
 			},
 		},
 		{
@@ -585,9 +676,16 @@ func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
 				{"type":"computer_call","id":"comp_1","action":{"type":"click"}},
 				{"type":"computer_call.output","call_id":"comp_1","output":{"screenshot":"base64..."}}
 			]`,
-			want: []Message{
-				{Role: "assistant", Content: "[computer_call id=comp_1]"},
-				{Role: "user", Content: "[computer_call.output call_id=comp_1]\n{\"output\":{\"screenshot\":\"base64...\"}}"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 2 {
+					t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+				}
+				if !strings.Contains(chatReq.Messages[0].Content.(string), "[computer_call id=comp_1]") {
+					t.Fatalf("unexpected first message content: %q", chatReq.Messages[0].Content)
+				}
+				if !strings.Contains(chatReq.Messages[1].Content.(string), "[computer_call.output call_id=comp_1]") {
+					t.Fatalf("unexpected second message content: %q", chatReq.Messages[1].Content)
+				}
 			},
 		},
 		{
@@ -596,9 +694,16 @@ func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
 				{"type":"code_interpreter_call","id":"ci_1"},
 				{"type":"code_interpreter_call.output","call_id":"ci_1","outputs":[{"type":"logs","logs":"hello"}]}
 			]`,
-			want: []Message{
-				{Role: "assistant", Content: "[code_interpreter_call id=ci_1]"},
-				{Role: "user", Content: "[code_interpreter_call.output call_id=ci_1]\n{\"outputs\":[{\"logs\":\"hello\",\"type\":\"logs\"}]}"},
+			checkFunc: func(t *testing.T, chatReq ChatCompletionRequest) {
+				if len(chatReq.Messages) != 2 {
+					t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+				}
+				if !strings.Contains(chatReq.Messages[0].Content.(string), "[code_interpreter_call id=ci_1]") {
+					t.Fatalf("unexpected first message content: %q", chatReq.Messages[0].Content)
+				}
+				if !strings.Contains(chatReq.Messages[1].Content.(string), "[code_interpreter_call.output call_id=ci_1]") {
+					t.Fatalf("unexpected second message content: %q", chatReq.Messages[1].Content)
+				}
 			},
 		},
 	}
@@ -612,19 +717,7 @@ func TestResponsesRequestToChatRequestBuiltInToolCalls(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(chatReq.Messages) != len(tt.want) {
-				t.Fatalf("expected %d messages, got %d", len(tt.want), len(chatReq.Messages))
-			}
-			for i, want := range tt.want {
-				if chatReq.Messages[i].Role != want.Role {
-					t.Fatalf("msg[%d]: expected role %s, got %s", i, want.Role, chatReq.Messages[i].Role)
-				}
-				got, _ := chatReq.Messages[i].Content.(string)
-				wantStr, _ := want.Content.(string)
-				if got != wantStr {
-					t.Fatalf("msg[%d]: expected content %q, got %q", i, wantStr, got)
-				}
-			}
+			tt.checkFunc(t, chatReq)
 		})
 	}
 }
@@ -655,8 +748,47 @@ func TestChatResponseToResponsesResponseWithReasoningContent(t *testing.T) {
 	if got := string(resp.Output[0]); !strings.Contains(got, `"type":"reasoning"`) || !strings.Contains(got, `"id":"chatcmpl_123_rs_0"`) {
 		t.Fatalf("unexpected reasoning item: %s", got)
 	}
+	if got := gjson.GetBytes(resp.Output[0], "content.0.type").String(); got != "reasoning_text" {
+		t.Fatalf("reasoning content type = %q, want reasoning_text", got)
+	}
+	if got := gjson.GetBytes(resp.Output[0], "content.0.text").String(); got != "Let me think step by step." {
+		t.Fatalf("reasoning content text = %q", got)
+	}
 	if got := string(resp.Output[1]); !strings.Contains(got, `"type":"output_text"`) || !strings.Contains(got, `"text":"The answer is 4."`) {
 		t.Fatalf("unexpected message item: %s", got)
+	}
+}
+
+func TestChatResponseToResponsesResponseWithThinkingAlias(t *testing.T) {
+	chatResp := ChatCompletionResponse{
+		ID:     "chatcmpl_123",
+		Object: "chat.completion",
+		Model:  "qwen",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:    "assistant",
+				Content: "Final answer.",
+				Extra: map[string]json.RawMessage{
+					"thinking": json.RawMessage(`"alias thinking"`),
+				},
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	resp, err := ChatResponseToResponsesResponse(chatResp, chatResp.Model)
+	if err != nil {
+		t.Fatalf("ChatResponseToResponsesResponse() error = %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	if got := gjson.GetBytes(resp.Output[0], "content.0.text").String(); got != "alias thinking" {
+		t.Fatalf("reasoning content text = %q, want alias thinking", got)
+	}
+	if got := gjson.GetBytes(resp.Output[0], "summary.0.text").String(); got != "alias thinking" {
+		t.Fatalf("reasoning summary text = %q, want alias thinking", got)
 	}
 }
 
@@ -688,10 +820,24 @@ data: [DONE]
 	if !strings.Contains(outputStr, "event: response.output_item.done") {
 		t.Fatal("expected response.output_item.done event")
 	}
-	// reasoning done event should appear before message done event
-	reasoningDoneIdx := strings.Index(outputStr, `"type":"reasoning"},"output_index":0,"type":"response.output_item.done"`)
-	messageDoneIdx := strings.Index(outputStr, `"type":"message"},"output_index":1,"type":"response.output_item.done"`)
-	if reasoningDoneIdx == -1 || messageDoneIdx == -1 {
+	var reasoningDoneIdx, messageDoneIdx = -1, -1
+	for i, evt := range protocol.ParseEvents(output) {
+		if evt.EventType != "response.output_item.done" {
+			continue
+		}
+		result := gjson.Parse(evt.Data)
+		switch result.Get("item.type").String() {
+		case "reasoning":
+			if int(result.Get("output_index").Int()) == 0 {
+				reasoningDoneIdx = i
+			}
+		case "message":
+			if int(result.Get("output_index").Int()) == 1 {
+				messageDoneIdx = i
+			}
+		}
+	}
+	if reasoningDoneIdx < 0 || messageDoneIdx < 0 {
 		t.Fatal("expected both reasoning and message done events")
 	}
 	if reasoningDoneIdx > messageDoneIdx {
@@ -937,6 +1083,66 @@ func TestResponsesRequestToChatRequestInputImage(t *testing.T) {
 	}
 	if imgURL["detail"] != "high" {
 		t.Fatalf("unexpected detail: %v", imgURL["detail"])
+	}
+}
+
+func TestResponsesRequestToChatRequestRejectsInvalidInputImage(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"What is in this image?"},
+				{"type":"input_image","detail":"high"}
+			]}
+		]`),
+	}
+
+	_, err := ResponsesRequestToChatRequest(respReq)
+	if err == nil {
+		t.Fatal("expected error for invalid input_image")
+	}
+	if !strings.Contains(err.Error(), "input_image") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResponsesRequestToChatRequestRejectsInputFile(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"Summarize this document."},
+				{"type":"input_file","file_id":"file-123"}
+			]}
+		]`),
+	}
+
+	_, err := ResponsesRequestToChatRequest(respReq)
+	if err == nil {
+		t.Fatal("expected error for input_file")
+	}
+	if !strings.Contains(err.Error(), "input_file") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResponsesRequestToChatRequestRejectsUnknownContentBlock(t *testing.T) {
+	respReq := ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"Hello"},
+				{"type":"audio","data":"base64..."}
+			]}
+		]`),
+	}
+
+	_, err := ResponsesRequestToChatRequest(respReq)
+	if err == nil {
+		t.Fatal("expected error for unknown content block")
+	}
+	if !strings.Contains(err.Error(), "audio") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -126,14 +126,14 @@ func convertResponsesRequestExtras(messages []Message, extra map[string]json.Raw
 				// preserve original reasoning object for upstream providers that understand it
 				chatExtra["reasoning"] = raw
 			}
-		case "include", "truncation":
-			// ignored: Responses-only features not available in Chat Completions
+		case "include", "truncation", "text", "prompt_cache_key":
+			// Silently ignore Responses-only features not available in Chat Completions.
 		default:
 			if _, ok := responsesToChatAllowedExtraFields[key]; ok {
 				chatExtra[key] = raw
 			}
-			// unknown fields are silently ignored to avoid breaking clients that send
-			// Responses-only features (e.g. prompt_cache_key, text, include)
+			// Unknown fields are silently ignored to avoid breaking clients that send
+			// Responses-only features.
 		}
 	}
 
@@ -396,7 +396,7 @@ func convertResponsesContentToChatContent(raw json.RawMessage) (any, error) {
 
 	var arr []any
 	if err := json.Unmarshal(raw, &arr); err == nil {
-		return normalizeResponsesBlocksToChat(arr), nil
+		return normalizeResponsesBlocksToChat(arr)
 	}
 
 	var v any
@@ -407,7 +407,7 @@ func convertResponsesContentToChatContent(raw json.RawMessage) (any, error) {
 	return nil, fmt.Errorf("unmarshal content")
 }
 
-func normalizeResponsesBlocksToChat(blocks []any) []any {
+func normalizeResponsesBlocksToChat(blocks []any) ([]any, error) {
 	normalized := make([]any, 0, len(blocks))
 	for _, block := range blocks {
 		bm, ok := block.(map[string]any)
@@ -436,14 +436,19 @@ func normalizeResponsesBlocksToChat(blocks []any) []any {
 					cloned["image_url"] = imageURLObj
 					delete(cloned, "detail")
 				} else {
-					// Drop invalid input_image blocks that can't be mapped to Chat Completions.
-					continue
+					return nil, fmt.Errorf("input_image block is missing image_url")
 				}
+			case "text", "image_url":
+				// Already Chat-compatible: passthrough.
+			case "input_file":
+				return nil, fmt.Errorf("input_file block is not supported in responses_to_chat mode")
+			default:
+				return nil, fmt.Errorf("content block type %q is not supported in responses_to_chat mode", typ)
 			}
 		}
 		normalized = append(normalized, cloned)
 	}
-	return normalized
+	return normalized, nil
 }
 
 // coalesceSystemMessages merges multiple system/developer messages into a single
@@ -540,13 +545,9 @@ func convertResponsesToolToChatTool(raw json.RawMessage) (Tool, bool, error) {
 	if err := json.Unmarshal(raw, &typeCheck); err != nil {
 		return Tool{}, false, fmt.Errorf("unmarshal tool type: %w", err)
 	}
-	if typeCheck.Type == "custom" {
-		// Custom tools use free-form grammar input instead of JSON Schema
-		// parameters, so they cannot be mapped to Chat Completions function
-		// tools. Silently drop them.
-		return Tool{}, false, nil
-	}
 	if typeCheck.Type != "function" {
+		// Silently drop non-function tools (custom, tool_search, web_search, etc.)
+		// since Chat Completions only supports function tools.
 		return Tool{}, false, nil
 	}
 
