@@ -324,7 +324,6 @@ func TestStreamAnthropicAsResponsesWithToolUse(t *testing.T) {
 	}
 }
 
-
 func TestReadSSEFrameMultiLineData(t *testing.T) {
 	t.Parallel()
 
