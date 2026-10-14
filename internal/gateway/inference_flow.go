@@ -209,20 +209,8 @@ func (g *Gateway) handleInferenceBuffered(
 
 	spec.writeNonStream(w, respBody)
 	completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
-	observepkg.RecordSuccess(completedLogParams, respBody, observeJSONTokenUsage(spec.serviceProtocol, respBody), nil, g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
-	runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
-		if len(asyncVerdicts) == 0 {
-			return
-		}
-		observepkg.RecordSuccess(
-			completedLogParams,
-			respBody,
-			observeJSONTokenUsage(spec.serviceProtocol, respBody),
-			nil,
-			nil,
-			append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
-			g.recordAndBroadcast,
-		)
+	g.recordWithAsyncHooks(runAsync, blockVerdicts, func(verdicts []toolhook.HookVerdict, recordTokens func(telemetrypkg.Labels, tokenusagepkg.Observation, int64)) {
+		observepkg.RecordSuccess(completedLogParams, respBody, observeJSONTokenUsage(spec.serviceProtocol, respBody), nil, recordTokens, verdicts, g.recordAndBroadcast)
 	})
 	return false
 }
@@ -234,28 +222,8 @@ func (g *Gateway) finishInferenceNonStreamFallback(r *http.Request, session *inf
 	respBody, blockVerdicts, runAsync := spec.runToolHooks(r.Context(), session.providerProtocol, respBody, false)
 	spec.writeNonStream(session.writer, respBody)
 	completedLogParams := logParams.WithDuration(time.Since(logParams.StartTime).Milliseconds())
-	observepkg.RecordSuccess(
-		completedLogParams,
-		respBody,
-		observeJSONTokenUsage(session.serviceProtocol, respBody),
-		nil,
-		g.RecordTokenMetrics,
-		blockVerdicts,
-		g.recordAndBroadcast,
-	)
-	runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
-		if len(asyncVerdicts) == 0 {
-			return
-		}
-		observepkg.RecordSuccess(
-			completedLogParams,
-			respBody,
-			observeJSONTokenUsage(session.serviceProtocol, respBody),
-			nil,
-			nil,
-			append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
-			g.recordAndBroadcast,
-		)
+	g.recordWithAsyncHooks(runAsync, blockVerdicts, func(verdicts []toolhook.HookVerdict, recordTokens func(telemetrypkg.Labels, tokenusagepkg.Observation, int64)) {
+		observepkg.RecordSuccess(completedLogParams, respBody, observeJSONTokenUsage(session.serviceProtocol, respBody), nil, recordTokens, verdicts, g.recordAndBroadcast)
 	})
 }
 
@@ -276,11 +244,5 @@ func (g *Gateway) recordInferenceStreamResponse(session *inferenceSession, spec 
 			g.recordAndBroadcast,
 		)
 	}
-	emit(blockVerdicts, g.RecordTokenMetrics)
-	runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
-		if len(asyncVerdicts) == 0 {
-			return
-		}
-		emit(append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...), nil)
-	})
+	g.recordWithAsyncHooks(runAsync, blockVerdicts, emit)
 }

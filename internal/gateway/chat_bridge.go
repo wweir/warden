@@ -178,20 +178,8 @@ func (g *Gateway) handleChatBridge(
 		}
 		writeJSONResponse(w, respBody, spec.writeResponseWarn)
 		completedLogParams := logParams.WithTTFT(latency).WithDuration(time.Since(logParams.StartTime).Milliseconds())
-		observepkg.RecordSuccess(completedLogParams, respBody, observeBridgeJSONTokenUsage(respBody), nil, g.RecordTokenMetrics, blockVerdicts, g.recordAndBroadcast)
-		runAsync(func(asyncVerdicts []toolhook.HookVerdict) {
-			if len(asyncVerdicts) == 0 {
-				return
-			}
-			observepkg.RecordSuccess(
-				completedLogParams,
-				respBody,
-				observeBridgeJSONTokenUsage(respBody),
-				nil,
-				nil,
-				append(append([]toolhook.HookVerdict{}, blockVerdicts...), asyncVerdicts...),
-				g.recordAndBroadcast,
-			)
+		g.recordWithAsyncHooks(runAsync, blockVerdicts, func(verdicts []toolhook.HookVerdict, recordTokens func(telemetrypkg.Labels, tokenusagepkg.Observation, int64)) {
+			observepkg.RecordSuccess(completedLogParams, respBody, observeBridgeJSONTokenUsage(respBody), nil, recordTokens, verdicts, g.recordAndBroadcast)
 		})
 		return nil
 	}
