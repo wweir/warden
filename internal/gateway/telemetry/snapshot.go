@@ -28,30 +28,19 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTr
 	collectRequestStats := func(collector *prometheus.CounterVec) []requestStat {
 		var rows []requestStat
 		for _, met := range CollectMetrics(collector) {
-			row := requestStat{Value: int(met.GetCounter().GetValue())}
-			for _, l := range met.GetLabel() {
-				switch l.GetName() {
-				case "route":
-					row.Route = l.GetValue()
-				case "protocol":
-					row.Protocol = l.GetValue()
-				case "route_model":
-					row.RouteModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "matched_pattern":
-					row.MatchedPattern = l.GetValue()
-				case "provider":
-					row.Provider = l.GetValue()
-				case "provider_model":
-					row.ProviderModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "endpoint":
-					row.Endpoint = l.GetValue()
-				case "status":
-					row.Status = l.GetValue()
-				}
-			}
-			rows = append(rows, row)
+			l := parseMetricLabels(met.GetLabel())
+			rows = append(rows, requestStat{
+				Route:          l.Route,
+				Protocol:       l.Protocol,
+				RouteModel:     l.RouteModel,
+				MatchedPattern: l.MatchedPattern,
+				Provider:       l.Provider,
+				ProviderModel:  l.ProviderModel,
+				Model:          l.Model,
+				Endpoint:       l.Endpoint,
+				Status:         l.Status,
+				Value:          int(met.GetCounter().GetValue()),
+			})
 		}
 		return rows
 	}
@@ -71,32 +60,23 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTr
 	collectDurationStats := func(collector *prometheus.HistogramVec) []durationBucket {
 		var rows []durationBucket
 		for _, met := range CollectMetrics(collector) {
+			l := parseMetricLabels(met.GetLabel())
 			for _, b := range met.GetHistogram().GetBucket() {
 				if b.GetUpperBound() == float64(1<<63-1) {
 					continue
 				}
-				row := durationBucket{Le: b.GetUpperBound(), Value: int(b.GetCumulativeCount())}
-				for _, l := range met.GetLabel() {
-					switch l.GetName() {
-					case "route":
-						row.Route = l.GetValue()
-					case "protocol":
-						row.Protocol = l.GetValue()
-					case "route_model":
-						row.RouteModel = l.GetValue()
-						row.Model = l.GetValue()
-					case "matched_pattern":
-						row.MatchedPattern = l.GetValue()
-					case "provider":
-						row.Provider = l.GetValue()
-					case "provider_model":
-						row.ProviderModel = l.GetValue()
-						row.Model = l.GetValue()
-					case "endpoint":
-						row.Endpoint = l.GetValue()
-					}
-				}
-				rows = append(rows, row)
+				rows = append(rows, durationBucket{
+					Route:          l.Route,
+					Protocol:       l.Protocol,
+					RouteModel:     l.RouteModel,
+					MatchedPattern: l.MatchedPattern,
+					Provider:       l.Provider,
+					ProviderModel:  l.ProviderModel,
+					Model:          l.Model,
+					Endpoint:       l.Endpoint,
+					Le:             b.GetUpperBound(),
+					Value:          int(b.GetCumulativeCount()),
+				})
 			}
 		}
 		return rows
@@ -116,28 +96,18 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTr
 	collectTokenStats := func(collector *prometheus.CounterVec) []tokenStat {
 		var rows []tokenStat
 		for _, met := range CollectMetrics(collector) {
-			row := tokenStat{Value: met.GetCounter().GetValue()}
-			for _, l := range met.GetLabel() {
-				switch l.GetName() {
-				case "route":
-					row.Route = l.GetValue()
-				case "protocol":
-					row.Protocol = l.GetValue()
-				case "route_model":
-					row.RouteModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "matched_pattern":
-					row.MatchedPattern = l.GetValue()
-				case "provider":
-					row.Provider = l.GetValue()
-				case "provider_model":
-					row.ProviderModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "type":
-					row.Type = l.GetValue()
-				}
-			}
-			rows = append(rows, row)
+			l := parseMetricLabels(met.GetLabel())
+			rows = append(rows, tokenStat{
+				Route:          l.Route,
+				Protocol:       l.Protocol,
+				RouteModel:     l.RouteModel,
+				MatchedPattern: l.MatchedPattern,
+				Provider:       l.Provider,
+				ProviderModel:  l.ProviderModel,
+				Model:          l.Model,
+				Type:           l.Type,
+				Value:          met.GetCounter().GetValue(),
+			})
 		}
 		return rows
 	}
@@ -158,32 +128,20 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTr
 	collectTokenObservationStats := func(collector *prometheus.CounterVec) []tokenObservationStat {
 		var rows []tokenObservationStat
 		for _, met := range CollectMetrics(collector) {
-			row := tokenObservationStat{Value: met.GetCounter().GetValue()}
-			for _, l := range met.GetLabel() {
-				switch l.GetName() {
-				case "route":
-					row.Route = l.GetValue()
-				case "protocol":
-					row.Protocol = l.GetValue()
-				case "route_model":
-					row.RouteModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "matched_pattern":
-					row.MatchedPattern = l.GetValue()
-				case "provider":
-					row.Provider = l.GetValue()
-				case "provider_model":
-					row.ProviderModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "endpoint":
-					row.Endpoint = l.GetValue()
-				case "completeness":
-					row.Completeness = l.GetValue()
-				case "source":
-					row.Source = l.GetValue()
-				}
-			}
-			rows = append(rows, row)
+			l := parseMetricLabels(met.GetLabel())
+			rows = append(rows, tokenObservationStat{
+				Route:          l.Route,
+				Protocol:       l.Protocol,
+				RouteModel:     l.RouteModel,
+				MatchedPattern: l.MatchedPattern,
+				Provider:       l.Provider,
+				ProviderModel:  l.ProviderModel,
+				Model:          l.Model,
+				Endpoint:       l.Endpoint,
+				Completeness:   l.Completeness,
+				Source:         l.Source,
+				Value:          met.GetCounter().GetValue(),
+			})
 		}
 		return rows
 	}
@@ -271,31 +229,19 @@ func CollectMetricsData(statuses []sel.ProviderStatus, outputRates *OutputRateTr
 	collectQuantiles := func(collector *prometheus.HistogramVec, q float64) []quantileStat {
 		var rows []quantileStat
 		for _, met := range CollectMetrics(collector) {
-			row := quantileStat{
-				Value: HistogramQuantile(q, met.GetHistogram().GetBucket()),
-				Count: met.GetHistogram().GetSampleCount(),
-			}
-			for _, l := range met.GetLabel() {
-				switch l.GetName() {
-				case "route":
-					row.Route = l.GetValue()
-				case "protocol":
-					row.Protocol = l.GetValue()
-				case "route_model":
-					row.RouteModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "matched_pattern":
-					row.MatchedPattern = l.GetValue()
-				case "provider":
-					row.Provider = l.GetValue()
-				case "provider_model":
-					row.ProviderModel = l.GetValue()
-					row.Model = l.GetValue()
-				case "endpoint":
-					row.Endpoint = l.GetValue()
-				}
-			}
-			rows = append(rows, row)
+			l := parseMetricLabels(met.GetLabel())
+			rows = append(rows, quantileStat{
+				Route:          l.Route,
+				Protocol:       l.Protocol,
+				RouteModel:     l.RouteModel,
+				MatchedPattern: l.MatchedPattern,
+				Provider:       l.Provider,
+				ProviderModel:  l.ProviderModel,
+				Model:          l.Model,
+				Endpoint:       l.Endpoint,
+				Value:          HistogramQuantile(q, met.GetHistogram().GetBucket()),
+				Count:          met.GetHistogram().GetSampleCount(),
+			})
 		}
 		return rows
 	}
@@ -532,6 +478,57 @@ func ListAPIKeysPayload(routes map[string]*config.RouteConfig) []map[string]any 
 		}
 	}
 	return keys
+}
+
+// metricLabels holds the label values shared by the dashboard metric rows.
+// route_model and provider_model both feed Model, and later labels win when a
+// metric carries both — matching the per-collector switch this replaces.
+type metricLabels struct {
+	Route          string
+	Protocol       string
+	RouteModel     string
+	MatchedPattern string
+	Provider       string
+	ProviderModel  string
+	Model          string
+	Endpoint       string
+	Type           string
+	Status         string
+	Completeness   string
+	Source         string
+}
+
+func parseMetricLabels(pairs []*dto.LabelPair) metricLabels {
+	var l metricLabels
+	for _, p := range pairs {
+		switch p.GetName() {
+		case "route":
+			l.Route = p.GetValue()
+		case "protocol":
+			l.Protocol = p.GetValue()
+		case "route_model":
+			l.RouteModel = p.GetValue()
+			l.Model = p.GetValue()
+		case "matched_pattern":
+			l.MatchedPattern = p.GetValue()
+		case "provider":
+			l.Provider = p.GetValue()
+		case "provider_model":
+			l.ProviderModel = p.GetValue()
+			l.Model = p.GetValue()
+		case "endpoint":
+			l.Endpoint = p.GetValue()
+		case "type":
+			l.Type = p.GetValue()
+		case "status":
+			l.Status = p.GetValue()
+		case "completeness":
+			l.Completeness = p.GetValue()
+		case "source":
+			l.Source = p.GetValue()
+		}
+	}
+	return l
 }
 
 // apiKeyMetricLabels extracts api_key, route, and one additional label from a
