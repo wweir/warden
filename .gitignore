@@ -28,10 +28,11 @@ go.work.sum
 .env
 
 # Editor/IDE
- .idea/
- .vscode/
- CLAUDE.md
+.idea/
+.vscode/
+CLAUDE.md
 .codex
+.claude/
 
 .DS_Store
 ._*
@@ -40,8 +41,8 @@ go.work.sum
 *.tmp
 *~
 
-# Runtime logs
-logs/
+# Runtime logs (repo-root only; do not match source dirs named logs/)
+/logs/
 
 # Build output
 /bin/
@@ -52,12 +53,14 @@ logs/
 web/admin/node_modules/
 web/admin/dist/
 
-# Configuration files (keep examples)
+# Configuration files (keep examples and committed manifests)
+# y?ml matches .yaml only (the ? is a single char), not .yml.
 *.y?ml
 .*/**/*.json
 !*.example.y?ml
 !buf.*yaml
 !*docker-compose.yml
 !deploy/*
-**/test/
+!deploy/**/*.y?ml
+!.github/**
 /warden

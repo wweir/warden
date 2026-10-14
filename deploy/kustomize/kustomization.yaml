@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base
+
+namespace: warden
+
+commonLabels:
+  app: warden
+
+configMapGenerator:
+  - name: warden-config
+    files:
+      - warden.yaml=config.yaml

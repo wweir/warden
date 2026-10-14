@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warden-config
+  namespace: warden
+data:
+  warden.yaml: |
+    addr: ":9832"

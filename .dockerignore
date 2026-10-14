@@ -5,6 +5,7 @@
 # Build artifacts
 bin/
 dist/
+warden
 *.exe
 *.dll
 *.so
@@ -16,6 +17,9 @@ web/admin/node_modules/
 # IDE and editor
 .idea/
 .vscode/
+.claude/
+.codex
+CLAUDE.md
 *.swp
 *.swo
 

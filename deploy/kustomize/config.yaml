@@ -1,0 +1,17 @@
+addr: ":9832"
+
+# Example provider:
+# provider:
+#   openai:
+#     url: "https://api.openai.com/v1"
+#     api_key: "${OPENAI_API_KEY}"
+#     timeout: "120s"
+#
+# route:
+#   "/openai":
+#     protocol: "chat"
+#     exact_models:
+#       gpt-4o:
+#         upstreams:
+#           - provider: "openai"
+#             model: "gpt-4o"
